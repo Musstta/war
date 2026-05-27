@@ -1,0 +1,75 @@
+generator client {
+  provider      = "prisma-client-js"
+  // linux-musl-openssl-3.0.x = Alpine Linux (node:22-alpine uses musl + OpenSSL 3.x)
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Singleton row holding the global tick counter and RNG seed.
+model WorldMeta {
+  id      Int @id @default(1)
+  tick    Int @default(0)
+  rngSeed Int @default(42)
+}
+
+model Nation {
+  id          String  @id
+  name        String
+  isAI        Boolean
+  armySize    Int     @default(0)
+  trust       Float   @default(50)
+  prestige    Float   @default(0)
+  popStock    Float   @default(0)
+  indStock    Float   @default(0)
+  wealthStock Float   @default(0)
+  mandateUsed Int     @default(0)
+
+  territories TerritoryState[]
+  actions     QueuedAction[]
+}
+
+// One row per territory. Territory static data (name, base production, geography,
+// adjacency) lives in the data file — the engine loads it at startup. Only mutable
+// game state lives here.
+model TerritoryState {
+  id                 String  @id
+  ownerId            String?
+  owner              Nation? @relation(fields: [ownerId], references: [id])
+  fortificationLevel Int     @default(0)
+  hasRoad            Boolean @default(false)
+  hasPort            Boolean @default(false)
+  unrest             Float   @default(0)
+
+  // Mutable copy of value traits — may drift over time (design doc §7.5).
+  individualist Float
+  progressive   Float
+  militaristic  Float
+  expansionist  Float
+}
+
+// Actions queued during the Main or Preparation phase, resolved atomically at the
+// midnight tick. Rows are deleted after each tick inside the same transaction.
+// (design doc §17: "store queued intents, not immediate mutations")
+model QueuedAction {
+  id         Int      @id @default(autoincrement())
+  nationId   String
+  nation     Nation   @relation(fields: [nationId], references: [id])
+  phase      String   // 'main' | 'prep'
+  type       String
+  payload    Json
+  tickQueued Int
+  createdAt  DateTime @default(now())
+}
+
+// Append-only world history. Emitted by resolveTick; see design doc §16.
+model EventLog {
+  id      Int    @id @default(autoincrement())
+  tick    Int
+  message String
+
+  @@index([tick])
+}

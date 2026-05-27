@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: war
+      POSTGRES_PASSWORD: war
+      POSTGRES_DB: war
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Exposed on localhost only for running `prisma migrate dev` and DB inspection.
+    # Not reachable from the network — only from the host machine.
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U war -d war"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgresql://war:war@postgres:5432/war
+      PORT: "3001"
+      NODE_ENV: development
+      # [DEFERRED SECURITY] Both secrets below must be changed before any real deployment.
+      # See docs/persistent-world-tech-stack.md §11.
+      ADMIN_KEY: "dev-only-insecure-key"
+      SESSION_SECRET: "dev-only-session-secret-change-before-prod"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./server/src:/app/server/src:ro
+      - ./server/prisma:/app/server/prisma:ro
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "42069:42069"
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./web/src:/app/web/src:ro
+      - ./web/index.html:/app/web/index.html:ro
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: war
+      BACKUP_INTERVAL_SECONDS: "3600"
+      KEEP_DAYS: "7"
+    volumes:
+      - ./backup/backup.sh:/backup.sh:ro
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "/backup.sh"]
+
+volumes:
+  pgdata:
+    name: war_pgdata

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Nation" ADD COLUMN "mandateUsed" INTEGER NOT NULL DEFAULT 0;

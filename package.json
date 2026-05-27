@@ -1,0 +1,13 @@
+{
+  "name": "war",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "engine",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "simulate": "tsx harness/index.ts"
+  }
+}

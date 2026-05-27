@@ -1,0 +1,98 @@
+[
+  {
+    "id": "mexico_yucatan",
+    "name": "Mexico (Yucatán & South)",
+    "basePopulation": 10,
+    "baseIndustry": 4,
+    "baseWealth": 6,
+    "geography": "coastal",
+    "isCoastal": true,
+    "culturalFamily": "latin",
+    "valueTraits": { "individualist": 0.4, "progressive": 0.4, "militaristic": 0.4, "expansionist": 0.5 },
+    "adjacentIds": ["guatemala", "belize"]
+  },
+  {
+    "id": "guatemala",
+    "name": "Guatemala",
+    "basePopulation": 14,
+    "baseIndustry": 4,
+    "baseWealth": 5,
+    "geography": "mountainous",
+    "isCoastal": true,
+    "culturalFamily": "latin",
+    "valueTraits": { "individualist": 0.3, "progressive": 0.3, "militaristic": 0.5, "expansionist": 0.5 },
+    "adjacentIds": ["mexico_yucatan", "belize", "honduras", "el_salvador"]
+  },
+  {
+    "id": "belize",
+    "name": "Belize",
+    "basePopulation": 3,
+    "baseIndustry": 2,
+    "baseWealth": 4,
+    "geography": "coastal",
+    "isCoastal": true,
+    "culturalFamily": "european",
+    "valueTraits": { "individualist": 0.6, "progressive": 0.6, "militaristic": 0.2, "expansionist": 0.2 },
+    "adjacentIds": ["mexico_yucatan", "guatemala"]
+  },
+  {
+    "id": "honduras",
+    "name": "Honduras",
+    "basePopulation": 9,
+    "baseIndustry": 3,
+    "baseWealth": 3,
+    "geography": "coastal",
+    "isCoastal": true,
+    "culturalFamily": "latin",
+    "valueTraits": { "individualist": 0.3, "progressive": 0.3, "militaristic": 0.5, "expansionist": 0.4 },
+    "adjacentIds": ["guatemala", "el_salvador", "nicaragua"]
+  },
+  {
+    "id": "el_salvador",
+    "name": "El Salvador",
+    "basePopulation": 6,
+    "baseIndustry": 4,
+    "baseWealth": 4,
+    "geography": "coastal",
+    "isCoastal": true,
+    "culturalFamily": "latin",
+    "valueTraits": { "individualist": 0.4, "progressive": 0.4, "militaristic": 0.4, "expansionist": 0.3 },
+    "adjacentIds": ["guatemala", "honduras"]
+  },
+  {
+    "id": "nicaragua",
+    "name": "Nicaragua",
+    "basePopulation": 6,
+    "baseIndustry": 2,
+    "baseWealth": 3,
+    "geography": "coastal",
+    "isCoastal": true,
+    "culturalFamily": "latin",
+    "valueTraits": { "individualist": 0.3, "progressive": 0.4, "militaristic": 0.4, "expansionist": 0.4 },
+    "adjacentIds": ["honduras", "costa_rica"]
+  },
+  {
+    "id": "costa_rica",
+    "name": "Costa Rica",
+    "basePopulation": 5,
+    "baseIndustry": 5,
+    "baseWealth": 7,
+    "geography": "coastal",
+    "isCoastal": true,
+    "culturalFamily": "latin",
+    "valueTraits": { "individualist": 0.5, "progressive": 0.6, "militaristic": 0.1, "expansionist": 0.2 },
+    "adjacentIds": ["nicaragua", "panama"]
+  },
+  {
+    "id": "panama",
+    "name": "Panama",
+    "basePopulation": 4,
+    "baseIndustry": 4,
+    "baseWealth": 8,
+    "geography": "coastal",
+    "isCoastal": true,
+    "culturalFamily": "latin",
+    "valueTraits": { "individualist": 0.5, "progressive": 0.5, "militaristic": 0.3, "expansionist": 0.3 },
+    "adjacentIds": ["costa_rica"]
+  }
+]
