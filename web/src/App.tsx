@@ -111,7 +111,9 @@ export default function App() {
         }}>
           <span style={{ color: '#444', marginRight: '0.4rem', letterSpacing: '0.05em' }}>LOG</span>
           {world.recentEvents.map((e, i) => (
-            <div key={i} style={{ color: i === 0 ? '#aaa' : '#666', padding: '0.05rem 0' }}>{e}</div>
+            <div key={i} style={{ color: i === 0 ? '#aaa' : '#666', padding: '0.05rem 0' }}>
+              <span style={{ color: '#333', marginRight: '0.35rem' }}>[T{e.tick}]</span>{e.message}
+            </div>
           ))}
         </div>
       )}

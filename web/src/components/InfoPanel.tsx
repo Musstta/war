@@ -226,7 +226,21 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
         <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#f0a500', padding: '0.3rem 0.4rem', background: '#1a1a2e', borderRadius: 3 }}>
           {constructionStatus}
           {pending && (
-            <div style={{ color: '#7ecfff', marginTop: '0.15rem' }}>↳ {pendingLabel(pending)}</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.15rem' }}>
+              <span style={{ color: '#7ecfff' }}>↳ {pendingLabel(pending)}</span>
+              {isOwn && (
+                <button
+                  onClick={async () => {
+                    try { await api.action('cancel_pending_construction', { territoryId }); onActionQueued(); }
+                    catch (err) { alert(err instanceof Error ? err.message : 'Cancel failed'); }
+                  }}
+                  style={{ marginLeft: '0.4rem', padding: '0.1rem 0.35rem', background: 'transparent', border: '1px solid #5a2222', borderRadius: 3, color: '#cc4444', fontFamily: 'monospace', fontSize: '0.68rem', cursor: 'pointer' }}
+                  title="Refunds mandate and industry"
+                >
+                  ✕ Cancel
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

@@ -176,12 +176,17 @@ Items **intentionally deferred** until before any real-world or wider-audience d
 | Player credentials | Plaintext in `server/src/auth.ts` | Hashed + salted; stored outside the repo |
 | Cookie transport | HTTP (signed, not encrypted) | HTTPS-only; `secure: true` on cookie |
 | `POST /admin/set-phase` | Dev-only endpoint bypasses real clock | **Remove entirely** (or gate on `NODE_ENV !== 'production'`) |
+| `/api/admin/*` endpoints | Key-gated; key typed into browser | **Disable entirely** before public deployment; never forward to a public host |
+| `/admin` route in web bundle | Ships in the same bundle as player UI | Move to a separate build or gate behind a build-time flag; players can visit `/admin` and see the key prompt |
+| `/api/dev/*` endpoints | Session-gated to `nation_costa_rica` | Remove or replace with real RBAC |
 
 **How to harden (checklist for future session):**
 1. Generate `SESSION_SECRET` with `openssl rand -hex 32`, set it in the server's env (Docker Compose or `.env` — add `.env` to `.gitignore`).
 2. Change `ADMIN_KEY` to a random value, set in env.
 3. Move player passwords out of `auth.ts`; load from env vars or a secrets file.
 4. Enable HTTPS (Cloudflare Tunnel already terminates TLS — the issue is cookie `secure` flag + SameSite policy when behind the tunnel).
+5. Disable `/api/admin/*` and `/api/dev/*` server routes entirely (or guard with `NODE_ENV`).
+6. Remove the `AdminApp` import and `/admin` routing from `main.tsx` (or compile it out with an env flag).
 
 ---
 

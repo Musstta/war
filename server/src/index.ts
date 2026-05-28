@@ -10,6 +10,16 @@ import { ADMIN_KEY, DATA_FILE, PORT, SESSION_SECRET } from './config';
 import { authenticate } from './auth';
 import { currentPhase, getPhaseOverride, setPhaseOverride, mandateBudget, ACTION_COSTS, ACTION_PHASE, FORT_MANDATE_COSTS } from './phase';
 
+/** Mandate refunded when a pending construction is cancelled. Must stay in sync
+ *  with the costs charged in the /api/action deferred paths below. */
+const PENDING_MANDATE_COST: Record<string, number> = {
+  road: ACTION_COSTS['build_road']!,
+  port: ACTION_COSTS['build_port']!,
+  fort_l1: FORT_MANDATE_COSTS[1],
+  fort_l2: FORT_MANDATE_COSTS[2],
+  fort_l3: FORT_MANDATE_COSTS[3],
+};
+
 const app = Fastify({ logger: true });
 
 // [DEFERRED SECURITY] Signed cookie — not encrypted. Fine for the private 5-player
@@ -185,7 +195,7 @@ const start = async () => {
       mandateUsed: myNationRow?.mandateUsed ?? 0,
       nations,
       territories,
-      recentEvents: events.map((e) => e.message),
+      recentEvents: events.map((e) => ({ tick: e.tick, message: e.message })),
     };
   });
 
@@ -198,6 +208,28 @@ const start = async () => {
     const body = request.body as { type?: string; payload?: unknown };
     const { type, payload } = body;
     if (!type) return reply.code(400).send({ error: 'Missing action type' });
+    // cancel_pending_construction is handled immediately — not via QueuedAction.
+    // It refunds the mandate + industry pre-paid at deferred-queue time.
+    if (type === 'cancel_pending_construction') {
+      const p = payload as { territoryId?: string };
+      if (!p?.territoryId) return reply.code(400).send({ error: 'Missing territoryId' });
+      const territory = await prisma.territoryState.findUnique({ where: { id: p.territoryId } });
+      if (!territory) return reply.code(404).send({ error: 'Territory not found' });
+      if (territory.ownerId !== nationId) return reply.code(403).send({ error: 'Not your territory' });
+      if (!territory.pendingConstructionType) return reply.code(400).send({ error: 'No pending construction to cancel' });
+      const pendingType = territory.pendingConstructionType;
+      const mandateRefund = PENDING_MANDATE_COST[pendingType] ?? 0;
+      const industryRefund = BUILD_INDUSTRY[pendingType] ?? 0;
+      await prisma.$transaction([
+        prisma.territoryState.update({ where: { id: p.territoryId }, data: { pendingConstructionType: null } }),
+        prisma.nation.update({ where: { id: nationId }, data: {
+          mandateUsed: { decrement: mandateRefund },
+          indStock: { increment: industryRefund },
+        }}),
+      ]);
+      return { ok: true };
+    }
+
     if (!(type in ACTION_COSTS)) return reply.code(400).send({ error: `Unknown action type: ${type}` });
 
     const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
@@ -361,6 +393,147 @@ const start = async () => {
     ]);
     await ensureWorldInitialized(defs);
     return { ok: true, message: 'World reset to tick 0 with Phase 3 nations.' };
+  });
+
+  // ── Admin API via /api/admin/* (proxied through Vite /api prefix) ───────────
+  // [DEFERRED SECURITY] Full god's-eye view + direct world mutation.
+  // Gated by X-Admin-Key header — key never sent to player sessions.
+  // Must be disabled/removed before any public deployment. See docs §11.
+
+  function requireAdminKey(request: FastifyRequest, reply: FastifyReply): boolean {
+    const key = (request.headers as Record<string, string>)['x-admin-key'];
+    if (key !== ADMIN_KEY) { void reply.code(401).send({ error: 'unauthorized' }); return false; }
+    return true;
+  }
+
+  app.post('/api/admin/tick', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    try { return { ok: true, tick: (await runTick(defs)).tick }; }
+    catch (err: unknown) { return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  app.post('/api/admin/set-phase', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { phase } = request.query as { phase?: string };
+    if (phase !== undefined && phase !== 'main' && phase !== 'prep') {
+      return reply.code(400).send({ error: 'phase must be "main" or "prep" (omit to clear)' });
+    }
+    setPhaseOverride(phase === 'main' ? 'main' : phase === 'prep' ? 'prep' : null);
+    return { ok: true, phase: currentPhase(), override: getPhaseOverride() };
+  });
+
+  app.post('/api/admin/reset-world', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    await prisma.$transaction([
+      prisma.queuedAction.deleteMany(),
+      prisma.eventLog.deleteMany(),
+      prisma.territoryState.deleteMany(),
+      prisma.nation.deleteMany(),
+      prisma.worldMeta.deleteMany(),
+    ]);
+    await ensureWorldInitialized(defs);
+    return { ok: true, message: 'World reset to tick 0.' };
+  });
+
+  app.get('/api/admin/world-full', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    if (!meta) return reply.code(503).send({ error: 'World not initialized' });
+    const [nationRows, territoryRows, events] = await Promise.all([
+      prisma.nation.findMany(),
+      prisma.territoryState.findMany(),
+      prisma.eventLog.findMany({ orderBy: { id: 'desc' }, take: 50 }),
+    ]);
+    const adjacency: Record<string, readonly string[]> = Object.fromEntries(defs.map((d) => [d.id, d.adjacentIds]));
+    const allTerritories: Record<string, { def: TerritoryDef; state: TerritoryState }> = {};
+    for (const row of territoryRows) {
+      const def = defById.get(row.id);
+      if (!def) continue;
+      allTerritories[row.id] = {
+        def,
+        state: {
+          ownerId: row.ownerId, fortificationLevel: row.fortificationLevel,
+          hasRoad: row.hasRoad, hasPort: row.hasPort, unrest: row.unrest,
+          isInRevolt: row.isInRevolt,
+          valueTraits: { individualist: row.individualist, progressive: row.progressive, militaristic: row.militaristic, expansionist: row.expansionist },
+          constructionType: (row.constructionType ?? null) as TerritoryState['constructionType'],
+          constructionTicksLeft: row.constructionTicksLeft ?? null,
+          pendingConstructionType: (row.pendingConstructionType ?? null) as TerritoryState['pendingConstructionType'],
+        },
+      };
+    }
+    const nationCultures: Record<string, ReturnType<typeof computeNationCulture>> = {};
+    for (const n of nationRows) nationCultures[n.id] = computeNationCulture(n.id, allTerritories);
+    const territoryCounts: Record<string, number> = {};
+    for (const row of territoryRows) {
+      if (row.ownerId) territoryCounts[row.ownerId] = (territoryCounts[row.ownerId] ?? 0) + 1;
+    }
+    const nationNameMap = Object.fromEntries(nationRows.map((n) => [n.id, n.name]));
+    const territories = territoryRows.map((t) => {
+      const def = defById.get(t.id);
+      const nc = t.ownerId ? nationCultures[t.ownerId] : null;
+      const ownerRow = t.ownerId ? nationRows.find((n) => n.id === t.ownerId) : null;
+      let compatibility = null, unrestCauses = null;
+      if (t.ownerId && nc && def) {
+        const terrTraits = { individualist: t.individualist, progressive: t.progressive, militaristic: t.militaristic, expansionist: t.expansionist };
+        compatibility = computeCompatibility(terrTraits, def.culturalFamily, nc);
+        const hops = ownerRow?.capitalTerritoryId ? bfsDistance(adjacency, ownerRow.capitalTerritoryId, t.id) : 0;
+        unrestCauses = computeUnrestEquilibrium(compatibility, hops, t.hasRoad, territoryCounts[t.ownerId!] ?? 1);
+      }
+      return {
+        id: t.id, name: def?.name ?? t.id,
+        ownerId: t.ownerId, ownerName: t.ownerId ? (nationNameMap[t.ownerId] ?? null) : null,
+        unrest: t.unrest, unrestCauses, isInRevolt: t.isInRevolt,
+        fortificationLevel: t.fortificationLevel, hasRoad: t.hasRoad, hasPort: t.hasPort,
+        isCoastal: def?.isCoastal ?? false,
+        constructionType: t.constructionType ?? null,
+        constructionTicksLeft: t.constructionTicksLeft ?? null,
+        pendingConstructionType: t.pendingConstructionType ?? null,
+        compatibility,
+        culture: { individualist: t.individualist, progressive: t.progressive, militaristic: t.militaristic, expansionist: t.expansionist, family: def?.culturalFamily ?? 'unknown' },
+      };
+    });
+    const nations = nationRows.map((n) => ({
+      id: n.id, name: n.name, isAI: n.isAI,
+      stockpiles: { population: n.popStock, industry: n.indStock, wealth: n.wealthStock },
+      armySize: n.armySize, mandateBudget: mandateBudget(n.wealthStock), mandateUsed: n.mandateUsed,
+      capital: n.capitalTerritoryId, culture: nationCultures[n.id] ?? null,
+    }));
+    return {
+      tick: meta.tick, phase: currentPhase(), nations, territories,
+      recentEvents: events.map((e) => ({ tick: e.tick, message: e.message })),
+    };
+  });
+
+  app.post('/api/admin/territory/:id/set-unrest', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { value } = request.body as { value?: number };
+    if (typeof value !== 'number' || value < 0 || value > 1) return reply.code(400).send({ error: 'value must be 0.0–1.0' });
+    await prisma.territoryState.update({ where: { id }, data: { unrest: value } });
+    return { ok: true };
+  });
+
+  app.post('/api/admin/territory/:id/set-trait', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { trait, value } = request.body as { trait?: string; value?: number };
+    const validTraits = ['individualist', 'progressive', 'militaristic', 'expansionist'] as const;
+    if (!trait || !validTraits.includes(trait as typeof validTraits[number])) {
+      return reply.code(400).send({ error: `trait must be one of: ${validTraits.join(', ')}` });
+    }
+    if (typeof value !== 'number' || value < -1 || value > 1) return reply.code(400).send({ error: 'value must be −1.0–+1.0' });
+    await prisma.territoryState.update({ where: { id }, data: { [trait]: value } });
+    return { ok: true };
+  });
+
+  app.post('/api/admin/territory/:id/toggle-revolt', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const t = await prisma.territoryState.findUnique({ where: { id } });
+    if (!t) return reply.code(404).send({ error: 'Territory not found' });
+    await prisma.territoryState.update({ where: { id }, data: { isInRevolt: !t.isInRevolt } });
+    return { ok: true, isInRevolt: !t.isInRevolt };
   });
 
   // ── Dev endpoints (session-gated to player1 / nation_costa_rica) ───────────

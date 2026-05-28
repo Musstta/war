@@ -248,6 +248,78 @@ curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/territory/costa_r
 
 ---
 
+## 12. Admin Panel (web UI)
+
+The admin panel is a separate view of the same web bundle. Navigate to:
+
+```
+http://localhost:42069/admin
+```
+
+Enter the admin key (`dev-only-insecure-key`) when prompted. The key is stored only in React state — never persisted. You will be asked again on each page load.
+
+**Panel controls:**
+
+| Control | Action |
+|---------|--------|
+| → Main / → Prep | Force phase |
+| → Clock | Clear phase override |
+| ⚡ Tick | Advance one tick |
+| Run N ticks | Sequential tick loop (useful for watching drift/revolt converge) |
+| ↺ Reset | Wipe world and restart at tick 0 |
+
+**Territory table:** click any **Unrest** cell to set a value; click the **Culture** cell (I column) to nudge a specific axis; click the **Revolt** cell to toggle revolt state.
+
+**Nations table:** stockpiles, mandate used/budget, culture axes, capital.
+
+**Event log:** last 50 entries, most recent first, tagged with tick number.
+
+The panel auto-refreshes every 5 seconds.
+
+### Equivalent curl commands (admin-key auth)
+
+```bash
+# God's-eye world view
+curl http://localhost:3001/api/admin/world-full \
+  -H "X-Admin-Key: dev-only-insecure-key" | jq .
+
+# Advance tick
+curl -X POST http://localhost:3001/api/admin/tick \
+  -H "X-Admin-Key: dev-only-insecure-key"
+
+# Run 10 ticks
+for i in $(seq 10); do
+  curl -s -X POST http://localhost:3001/api/admin/tick \
+    -H "X-Admin-Key: dev-only-insecure-key" > /dev/null
+done
+
+# Set phase
+curl -X POST "http://localhost:3001/api/admin/set-phase?phase=main" \
+  -H "X-Admin-Key: dev-only-insecure-key"
+
+# Reset world
+curl -X POST http://localhost:3001/api/admin/reset-world \
+  -H "X-Admin-Key: dev-only-insecure-key"
+
+# Set unrest
+curl -X POST http://localhost:3001/api/admin/territory/costa_rica/set-unrest \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" -d '{"value":0.85}'
+
+# Nudge culture trait
+curl -X POST http://localhost:3001/api/admin/territory/costa_rica/set-trait \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" -d '{"trait":"militaristic","value":0.5}'
+
+# Toggle revolt
+curl -X POST http://localhost:3001/api/admin/territory/costa_rica/toggle-revolt \
+  -H "X-Admin-Key: dev-only-insecure-key"
+```
+
+> **Security note:** The admin panel and `/api/admin/*` endpoints must be disabled before public deployment. See `docs/persistent-world-tech-stack.md` §11.
+
+---
+
 ## Player credentials (dev)
 
 | Username | Password | Nation     |
