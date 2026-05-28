@@ -89,10 +89,11 @@ const start = async () => {
     const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
     if (!meta) return reply.code(503).send({ error: 'World not initialized' });
 
-    const [nationRows, territoryRows, events] = await Promise.all([
+    const [nationRows, territoryRows, events, myQueued] = await Promise.all([
       prisma.nation.findMany(),
       prisma.territoryState.findMany(),
       prisma.eventLog.findMany({ orderBy: { id: 'desc' }, take: 10 }),
+      prisma.queuedAction.findMany({ where: { nationId } }),
     ]);
 
     // Visibility: own territories + all their adjacent territories
@@ -200,6 +201,7 @@ const start = async () => {
       nations,
       territories,
       recentEvents: events.map((e) => ({ tick: e.tick, message: e.message })),
+      myQueuedActions: myQueued.map((a) => ({ type: a.type, payload: a.payload })),
     };
   });
 

@@ -75,6 +75,7 @@ export interface WorldView {
   nations: Record<string, NationView>;
   territories: Record<string, TerritoryView>;
   recentEvents: Array<{ tick: number; message: string }>;
+  myQueuedActions: Array<{ type: string; payload: unknown }>;
 }
 
 export interface TerritoryDevState {

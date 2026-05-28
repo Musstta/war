@@ -1,29 +1,20 @@
+import { useState, useEffect } from 'react';
 import { TerritoryView, NationView, WorldView, CompatibilityBreakdown, UnrestCauses, api } from '../api';
 
 interface Props {
   territoryId: string | null;
   world: WorldView;
-  defNames: Record<string, string>;  // id → display name from geojson
+  defNames: Record<string, string>;
   onActionQueued: () => void;
 }
 
 const FORT_MANDATE_COSTS: Record<number, number> = { 1: 2, 2: 3, 3: 4 };
 const BUILD_IND: Record<string, number> = { port: 5, fort_l1: 3, fort_l2: 6, fort_l3: 10 };
+const BUILD_TICKS: Record<string, number> = { port: 3, fort_l1: 3, fort_l2: 7, fort_l3: 14 };
 
 const CONSTRUCTION_NAMES: Record<string, string> = {
   port: 'Port', fort_l1: 'Fort L1', fort_l2: 'Fort L2', fort_l3: 'Fort L3', road: 'Road',
 };
-
-function constructionLabel(type: string | null | undefined, ticksLeft: number | null | undefined): string | null {
-  if (!type || ticksLeft == null) return null;
-  const name = CONSTRUCTION_NAMES[type] ?? type;
-  return `Building ${name} — ${ticksLeft} tick${ticksLeft !== 1 ? 's' : ''} left`;
-}
-
-function pendingLabel(type: string | null | undefined): string | null {
-  if (!type) return null;
-  return `Queued next: ${CONSTRUCTION_NAMES[type] ?? type}`;
-}
 
 const TRAIT_LABELS: Record<string, string> = {
   individualist: 'Ind', progressive: 'Prog', militaristic: 'Mil', expansionist: 'Exp',
@@ -40,8 +31,28 @@ const CAUSE_LABELS: Record<keyof UnrestCauses, string> = {
   equilibrium: 'Equilibrium',
 };
 
+function constructionLabel(type: string | null | undefined, ticksLeft: number | null | undefined): string | null {
+  if (!type || ticksLeft == null) return null;
+  return `Building ${CONSTRUCTION_NAMES[type] ?? type} — ${ticksLeft} tick${ticksLeft !== 1 ? 's' : ''} left`;
+}
+
+function queuedActionLabel(type: string, payload: unknown): string {
+  const p = payload as { targetLevel?: number };
+  if (type === 'build_road') return 'Road — resolves at next tick';
+  if (type === 'build_port') return `Port — ${BUILD_TICKS['port']} ticks to complete`;
+  if (type === 'build_fort') return `Fort L${p.targetLevel ?? '?'} — ${BUILD_TICKS[`fort_l${p.targetLevel}`] ?? '?'} ticks`;
+  return type;
+}
+
 function fmt2(n: number): string { return (n >= 0 ? '+' : '') + n.toFixed(2); }
 function fmtCompat(n: number): string { return n.toFixed(2); }
+
+interface ConfirmState {
+  title: string;
+  costLine: string;
+  timingLine: string;
+  execute: () => Promise<void>;
+}
 
 function UnrestPanel({ unrest, causes }: { unrest: number; causes: UnrestCauses }) {
   const direction = unrest < causes.equilibrium ? '↑' : unrest > causes.equilibrium ? '↓' : '=';
@@ -74,10 +85,8 @@ function UnrestPanel({ unrest, causes }: { unrest: number; causes: UnrestCauses 
 
 function CompatPanel({ compat }: { compat: CompatibilityBreakdown }) {
   const gapKeys: [keyof CompatibilityBreakdown, string][] = [
-    ['individualistGap', 'Ind gap'],
-    ['progressiveGap', 'Prog gap'],
-    ['militaristicGap', 'Mil gap'],
-    ['expansionistGap', 'Exp gap'],
+    ['individualistGap', 'Ind gap'], ['progressiveGap', 'Prog gap'],
+    ['militaristicGap', 'Mil gap'], ['expansionistGap', 'Exp gap'],
   ];
   return (
     <div style={{ marginTop: '0.4rem', padding: '0.35rem 0.4rem', background: '#0d0d1a', borderRadius: 3 }}>
@@ -101,6 +110,12 @@ function CompatPanel({ compat }: { compat: CompatibilityBreakdown }) {
 }
 
 export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Props) {
+  const [confirming, setConfirming] = useState<ConfirmState | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Clear confirm state when the selected territory changes.
+  useEffect(() => { setConfirming(null); }, [territoryId]);
+
   if (!territoryId) {
     return (
       <div style={panelStyle}>
@@ -123,47 +138,37 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
   const nextFortLevel = (t?.fortificationLevel ?? 0) + 1;
   const fortMandateCost = FORT_MANDATE_COSTS[nextFortLevel] ?? 4;
   const fortIndCost = BUILD_IND[`fort_l${nextFortLevel}`] ?? 10;
-
   const myInd = myStockpiles?.industry ?? 0;
-  // Slot is free for a NEW queue entry only when no pending is already set.
-  // If constructing=null and no pending: same-tick queue. If constructing≠null and no pending: deferred queue.
   const slotAvailable = pending === null;
 
-  const canBuildRoad =
-    isOwn && !t?.hasRoad && phase === 'main' && mandateLeft >= 1 && slotAvailable;
-  const canBuildPort =
-    isOwn && !!t?.isCoastal && !t?.hasPort && phase === 'main' && mandateLeft >= 2 && myInd >= BUILD_IND['port']! && slotAvailable;
-  const canBuildFort =
-    isOwn && (t?.fortificationLevel ?? 0) < 3 && phase === 'main' && mandateLeft >= fortMandateCost && myInd >= fortIndCost && slotAvailable;
+  const canBuildRoad = isOwn && !t?.hasRoad && phase === 'main' && mandateLeft >= 1 && slotAvailable;
+  const canBuildPort = isOwn && !!t?.isCoastal && !t?.hasPort && phase === 'main' && mandateLeft >= 2 && myInd >= BUILD_IND['port']! && slotAvailable;
+  const canBuildFort = isOwn && (t?.fortificationLevel ?? 0) < 3 && phase === 'main' && mandateLeft >= fortMandateCost && myInd >= fortIndCost && slotAvailable;
 
-  const buildRoad = async () => {
+  // Actions queued by this player for the current territory this tick.
+  const territoryQueued = world.myQueuedActions.filter(
+    (a) => (a.payload as { territoryId?: string }).territoryId === territoryId,
+  );
+
+  // Stage an action for confirmation instead of firing immediately.
+  const stage = (s: ConfirmState) => setConfirming(s);
+
+  const executeConfirmed = async () => {
+    if (!confirming) return;
+    setSubmitting(true);
     try {
-      await api.action('build_road', { territoryId });
-      onActionQueued();
+      await confirming.execute();
+      setConfirming(null);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Action failed');
-    }
-  };
-
-  const buildPort = async () => {
-    try {
-      await api.action('build_port', { territoryId });
-      onActionQueued();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Action failed');
-    }
-  };
-
-  const buildFort = async () => {
-    try {
-      await api.action('build_fort', { territoryId });
-      onActionQueued();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Action failed');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const constructionStatus = constructionLabel(t?.constructionType, t?.constructionTicksLeft);
+
+  const isDeferred = constructing !== null;
 
   return (
     <div style={panelStyle}>
@@ -181,25 +186,29 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
       <Row label="Coastal" value={t?.isCoastal ? 'Yes' : 'No'} />
       <Row label="Road" value={t?.hasRoad ? 'Yes' : 'No'} />
       <Row label="Port" value={t?.hasPort ? 'Yes' : (t?.isCoastal ? 'No' : '—')} />
-
       {t?.fortificationLevel !== undefined && (
         <Row label="Fortification" value={String(t.fortificationLevel)} />
       )}
 
+      {/* Active construction + deferred queue */}
       {constructionStatus && (
         <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#f0a500', padding: '0.3rem 0.4rem', background: '#1a1a2e', borderRadius: 3 }}>
           {constructionStatus}
           {pending && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.15rem' }}>
-              <span style={{ color: '#7ecfff' }}>↳ {pendingLabel(pending)}</span>
+              <span style={{ color: '#7ecfff' }}>↳ Queued next: {CONSTRUCTION_NAMES[pending] ?? pending}</span>
               {isOwn && (
                 <button
-                  onClick={async () => {
-                    try { await api.action('cancel_pending_construction', { territoryId }); onActionQueued(); }
-                    catch (err) { alert(err instanceof Error ? err.message : 'Cancel failed'); }
-                  }}
+                  onClick={() => stage({
+                    title: 'Cancel queued build',
+                    costLine: `Refunds mandate + industry for ${CONSTRUCTION_NAMES[pending] ?? pending}`,
+                    timingLine: 'Takes effect immediately',
+                    execute: async () => {
+                      await api.action('cancel_pending_construction', { territoryId });
+                      onActionQueued();
+                    },
+                  })}
                   style={{ marginLeft: '0.4rem', padding: '0.1rem 0.35rem', background: 'transparent', border: '1px solid #5a2222', borderRadius: 3, color: '#cc4444', fontFamily: 'monospace', fontSize: '0.68rem', cursor: 'pointer' }}
-                  title="Refunds mandate and industry"
                 >
                   ✕ Cancel
                 </button>
@@ -209,7 +218,18 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
         </div>
       )}
 
-      {/* Unrest & causes — shown whenever we have the data */}
+      {/* Queued-this-tick indicator */}
+      {territoryQueued.length > 0 && (
+        <div style={{ marginTop: '0.35rem' }}>
+          {territoryQueued.map((a, i) => (
+            <div key={i} style={{ fontSize: '0.73rem', color: '#4caf50', padding: '0.1rem 0.4rem', background: '#0a1a0a', borderRadius: 3, marginBottom: '0.1rem' }}>
+              ✓ Queued: {queuedActionLabel(a.type, a.payload)}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Unrest & causes */}
       {t?.unrest !== undefined && t?.unrestCauses && (
         <UnrestPanel unrest={t.unrest} causes={t.unrestCauses} />
       )}
@@ -222,7 +242,7 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
       {/* Compatibility breakdown */}
       {t?.compatibility && <CompatPanel compat={t.compatibility} />}
 
-      {/* Nation culture axes (own nation only for now) */}
+      {/* Nation culture axes */}
       {isOwn && owner?.culture && (
         <div style={{ marginTop: '0.4rem', padding: '0.35rem 0.4rem', background: '#0d0d1a', borderRadius: 3 }}>
           <div style={{ fontSize: '0.7rem', color: '#555', marginBottom: '0.2rem', letterSpacing: '0.05em' }}>
@@ -240,6 +260,7 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
         </div>
       )}
 
+      {/* Stockpiles */}
       {isOwn && myStockpiles && (
         <div style={{ marginTop: '0.75rem', padding: '0.4rem 0.5rem', background: '#0d0d1a', borderRadius: 3 }}>
           <div style={{ fontSize: '0.7rem', color: '#555', marginBottom: '0.25rem', letterSpacing: '0.05em' }}>STOCKPILES</div>
@@ -251,29 +272,71 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
         </div>
       )}
 
+      {/* Build actions */}
       {isOwn && (
         <div style={{ marginTop: '0.75rem' }}>
           <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.4rem' }}>YOUR TERRITORY</div>
 
+          {/* Confirm box — appears when an action is staged */}
+          {confirming && (
+            <div style={{ marginBottom: '0.5rem', padding: '0.5rem 0.55rem', background: '#09142a', border: '1px solid #1a4a7a', borderRadius: 4 }}>
+              <div style={{ fontSize: '0.68rem', color: '#4a8aba', letterSpacing: '0.07em', marginBottom: '0.25rem' }}>CONFIRM</div>
+              <div style={{ fontSize: '0.83rem', color: '#ddd', marginBottom: '0.1rem' }}>{confirming.title}</div>
+              <div style={{ fontSize: '0.72rem', color: '#888', marginBottom: '0.06rem' }}>{confirming.costLine}</div>
+              <div style={{ fontSize: '0.72rem', color: '#555', marginBottom: '0.4rem' }}>{confirming.timingLine}</div>
+              <div style={{ display: 'flex', gap: '0.3rem' }}>
+                <button
+                  onClick={executeConfirmed}
+                  disabled={submitting}
+                  style={{ flex: 1, padding: '0.3rem', background: '#0f3460', border: '1px solid #1a5276', borderRadius: 3, color: '#7ecfff', fontFamily: 'monospace', fontSize: '0.78rem', cursor: 'pointer' }}
+                >
+                  {submitting ? '…' : '✓ Confirm'}
+                </button>
+                <button
+                  onClick={() => setConfirming(null)}
+                  disabled={submitting}
+                  style={{ flex: 1, padding: '0.3rem', background: 'transparent', border: '1px solid #3a3a5a', borderRadius: 3, color: '#666', fontFamily: 'monospace', fontSize: '0.78rem', cursor: 'pointer' }}
+                >
+                  ✗ Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Road */}
           <button
-            onClick={buildRoad}
+            onClick={() => stage({
+              title: isDeferred ? 'Queue next: Road' : 'Build Road',
+              costLine: '1 mandate',
+              timingLine: isDeferred
+                ? `Starts after ${CONSTRUCTION_NAMES[constructing!] ?? constructing} completes`
+                : 'Instant — resolves at next tick',
+              execute: async () => { await api.action('build_road', { territoryId }); onActionQueued(); },
+            })}
             disabled={!canBuildRoad}
             title={
               t?.hasRoad ? 'Already has a road'
               : pending !== null ? 'Next construction already queued'
               : phase !== 'main' ? 'Only during Main Phase'
               : mandateLeft < 1 ? 'No mandates left'
-              : constructing !== null ? 'Queue next: Road starts when current build finishes (1 mandate)'
-              : 'Queue: Build Road (1 mandate, instant)'
+              : undefined
             }
             style={{ ...actionBtn, opacity: canBuildRoad ? 1 : 0.4, cursor: canBuildRoad ? 'pointer' : 'not-allowed', marginBottom: '0.3rem' }}
           >
-            {t?.hasRoad ? 'Road built' : constructing !== null ? 'Queue next: Road (1M)' : 'Build Road (1 mandate)'}
+            {t?.hasRoad ? 'Road built' : isDeferred ? 'Queue next: Road (1M)' : 'Build Road (1 mandate)'}
           </button>
 
+          {/* Port */}
           {t?.isCoastal && (
             <button
-              onClick={buildPort}
+              onClick={() => stage({
+                title: isDeferred ? 'Queue next: Port' : 'Build Port',
+                costLine: `2 mandates · ${BUILD_IND['port']} industry`,
+                timingLine: isDeferred
+                  ? `Starts after ${CONSTRUCTION_NAMES[constructing!] ?? constructing} completes · ${BUILD_TICKS['port']} ticks to build`
+                  : `${BUILD_TICKS['port']} ticks to complete`,
+                execute: async () => { await api.action('build_port', { territoryId }); onActionQueued(); },
+              })}
               disabled={!canBuildPort}
               title={
                 t?.hasPort ? 'Already has a port'
@@ -281,30 +344,36 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
                 : phase !== 'main' ? 'Only during Main Phase'
                 : myInd < BUILD_IND['port']! ? `Need ${BUILD_IND['port']} industry (have ${Math.floor(myInd)})`
                 : mandateLeft < 2 ? 'Not enough mandates'
-                : constructing !== null ? `Queue next: Port starts when current build finishes (2M / ${BUILD_IND['port']}ind)`
-                : `Queue: Build Port (2 mandates, ${BUILD_IND['port']} ind, 3 ticks)`
+                : undefined
               }
               style={{ ...actionBtn, opacity: canBuildPort ? 1 : 0.4, cursor: canBuildPort ? 'pointer' : 'not-allowed', marginBottom: '0.3rem' }}
             >
-              {t?.hasPort ? 'Port built' : constructing !== null ? `Queue next: Port (2M/${BUILD_IND['port']}ind)` : `Build Port (2M / ${BUILD_IND['port']}ind)`}
+              {t?.hasPort ? 'Port built' : isDeferred ? `Queue next: Port (2M / ${BUILD_IND['port']}ind)` : `Build Port (2M / ${BUILD_IND['port']}ind)`}
             </button>
           )}
 
+          {/* Fort */}
           {(t?.fortificationLevel ?? 0) < 3 && (
             <button
-              onClick={buildFort}
+              onClick={() => stage({
+                title: isDeferred ? `Queue next: Fort L${nextFortLevel}` : `Build Fort L${nextFortLevel}`,
+                costLine: `${fortMandateCost} mandates · ${fortIndCost} industry`,
+                timingLine: isDeferred
+                  ? `Starts after ${CONSTRUCTION_NAMES[constructing!] ?? constructing} completes · ${BUILD_TICKS[`fort_l${nextFortLevel}`] ?? '?'} ticks to build`
+                  : `${BUILD_TICKS[`fort_l${nextFortLevel}`] ?? '?'} ticks to complete`,
+                execute: async () => { await api.action('build_fort', { territoryId }); onActionQueued(); },
+              })}
               disabled={!canBuildFort}
               title={
                 pending !== null ? 'Next construction already queued'
                 : phase !== 'main' ? 'Only during Main Phase'
                 : myInd < fortIndCost ? `Need ${fortIndCost} industry (have ${Math.floor(myInd)})`
                 : mandateLeft < fortMandateCost ? 'Not enough mandates'
-                : constructing !== null ? `Queue next: Fort L${nextFortLevel} starts when current build finishes`
-                : `Queue: Build Fort L${nextFortLevel} (${fortMandateCost} mandates, ${fortIndCost} ind)`
+                : undefined
               }
               style={{ ...actionBtn, opacity: canBuildFort ? 1 : 0.4, cursor: canBuildFort ? 'pointer' : 'not-allowed' }}
             >
-              {constructing !== null ? `Queue next: Fort L${nextFortLevel} (${fortMandateCost}M/${fortIndCost}ind)` : `Fort L${nextFortLevel} (${fortMandateCost}M / ${fortIndCost}ind)`}
+              {isDeferred ? `Queue next: Fort L${nextFortLevel} (${fortMandateCost}M / ${fortIndCost}ind)` : `Fort L${nextFortLevel} (${fortMandateCost}M / ${fortIndCost}ind)`}
             </button>
           )}
         </div>
