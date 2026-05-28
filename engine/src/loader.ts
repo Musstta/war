@@ -32,7 +32,10 @@ function initialState(def: TerritoryDef): TerritoryState {
     hasRoad: false,
     hasPort: false,
     unrest: 0,
+    isInRevolt: false,
     valueTraits: { ...def.valueTraits },
+    constructionType: null,
+    constructionTicksLeft: null,
   };
 }
 
@@ -71,6 +74,7 @@ export function buildWorldState(
       armySize: init.armySize ?? 0,
       trust: 50,
       prestige: 0,
+      capitalTerritoryId: init.startingTerritoryIds[0] ?? null,
     };
   }
 

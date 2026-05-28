@@ -1,15 +1,14 @@
 import Fastify from 'fastify';
-import type { FastifyRequest } from 'fastify';
+import type { FastifyRequest, FastifyReply } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
-import { loadTerritoryDefs } from '@war/engine';
-import type { TerritoryDef } from '@war/engine';
+import { loadTerritoryDefs, BUILD_INDUSTRY, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, bfsDistance } from '@war/engine';
+import type { TerritoryDef, TerritoryState } from '@war/engine';
 import { prisma } from './db';
 import { ensureWorldInitialized } from './world';
 import { runTick, startScheduler } from './tick';
 import { ADMIN_KEY, DATA_FILE, PORT, SESSION_SECRET } from './config';
 import { authenticate } from './auth';
 import { currentPhase, getPhaseOverride, setPhaseOverride, mandateBudget, ACTION_COSTS, ACTION_PHASE, FORT_MANDATE_COSTS } from './phase';
-import { BUILD_INDUSTRY } from '@war/engine';
 
 const app = Fastify({ logger: true });
 
@@ -90,7 +89,44 @@ const start = async () => {
       defById.get(id)?.adjacentIds.forEach((adj) => visibleIds.add(adj));
     }
 
-    // All territories show ownership; visible ones also show detailed stats
+    // Build lightweight Territory objects for culture computation.
+    const adjacency: Record<string, readonly string[]> = Object.fromEntries(
+      defs.map((d) => [d.id, d.adjacentIds]),
+    );
+    const allTerritories: Record<string, { def: TerritoryDef; state: TerritoryState }> = {};
+    for (const row of territoryRows) {
+      const def = defById.get(row.id);
+      if (!def) continue;
+      allTerritories[row.id] = {
+        def,
+        state: {
+          ownerId: row.ownerId,
+          fortificationLevel: row.fortificationLevel,
+          hasRoad: row.hasRoad,
+          hasPort: row.hasPort,
+          unrest: row.unrest,
+          isInRevolt: row.isInRevolt,
+          valueTraits: { individualist: row.individualist, progressive: row.progressive, militaristic: row.militaristic, expansionist: row.expansionist },
+          constructionType: (row.constructionType ?? null) as TerritoryState['constructionType'],
+          constructionTicksLeft: row.constructionTicksLeft ?? null,
+        },
+      };
+    }
+
+    // Compute nation cultures (emergent weighted averages). Exposed for all nations.
+    // [PLACEHOLDER — fog-of-war rules for opponent nation culture TBD]
+    const nationCultures: Record<string, ReturnType<typeof computeNationCulture>> = {};
+    for (const n of nationRows) {
+      nationCultures[n.id] = computeNationCulture(n.id, allTerritories);
+    }
+
+    // Territory counts per nation for overexpansion.
+    const territoryCounts: Record<string, number> = {};
+    for (const row of territoryRows) {
+      if (row.ownerId) territoryCounts[row.ownerId] = (territoryCounts[row.ownerId] ?? 0) + 1;
+    }
+
+    // All territories show ownership; visible ones also show detailed stats + culture.
     const territories: Record<string, object> = {};
     for (const t of territoryRows) {
       const def = defById.get(t.id);
@@ -100,21 +136,38 @@ const start = async () => {
         hasRoad: t.hasRoad,
         hasPort: t.hasPort,
         isCoastal: def?.isCoastal ?? false,
+        isInRevolt: t.isInRevolt,
       };
-      if (visibleIds.has(t.id)) {
+      if (visibleIds.has(t.id) && def) {
         entry.fortificationLevel = t.fortificationLevel;
         entry.unrest = t.unrest;
         entry.constructionType = t.constructionType ?? null;
         entry.constructionTicksLeft = t.constructionTicksLeft ?? null;
+
+        // Culture breakdown — only meaningful when territory has an owner.
+        if (t.ownerId && nationCultures[t.ownerId]) {
+          const nc = nationCultures[t.ownerId]!;
+          const terrTraits = { individualist: t.individualist, progressive: t.progressive, militaristic: t.militaristic, expansionist: t.expansionist };
+          const compat = computeCompatibility(terrTraits, def.culturalFamily, nc);
+
+          const ownerRow = nationRows.find((n) => n.id === t.ownerId);
+          const capital = ownerRow?.capitalTerritoryId ?? null;
+          const hops = capital ? bfsDistance(adjacency, capital, t.id) : 0;
+          const tcount = territoryCounts[t.ownerId] ?? 1;
+          const causes = computeUnrestEquilibrium(compat, hops, t.hasRoad, tcount);
+
+          entry.compatibility = compat;
+          entry.unrestCauses = causes;
+        }
       }
       territories[t.id] = entry;
     }
 
-    // All nations show name; own nation also shows resources
+    // All nations show name + culture; own nation also shows stockpiles.
     const nations: Record<string, object> = {};
     const myNationRow = nationRows.find((n) => n.id === nationId);
     for (const n of nationRows) {
-      const entry: Record<string, unknown> = { id: n.id, name: n.name };
+      const entry: Record<string, unknown> = { id: n.id, name: n.name, culture: nationCultures[n.id] };
       if (n.id === nationId) {
         entry.stockpiles = { population: n.popStock, industry: n.indStock, wealth: n.wealthStock };
         entry.armySize = n.armySize;
@@ -273,6 +326,85 @@ const start = async () => {
     ]);
     await ensureWorldInitialized(defs);
     return { ok: true, message: 'World reset to tick 0 with Phase 3 nations.' };
+  });
+
+  // ── Dev endpoints (session-gated to player1 / nation_costa_rica) ───────────
+  // [DEV-ONLY] Session-gated wrappers so the web UI can call admin functions
+  // without the admin key ever reaching the browser.
+  // [DEFERRED SECURITY] Remove or replace with real RBAC before production. §11.
+
+  const DEV_NATION_ID = 'nation_costa_rica';
+  const CULTURE_TRAITS = ['individualist', 'progressive', 'militaristic', 'expansionist'] as const;
+
+  function requireDev(request: FastifyRequest, reply: FastifyReply): string | null {
+    const nationId = getSession(request);
+    if (nationId !== DEV_NATION_ID) {
+      reply.code(403).send({ error: 'Dev endpoints require the player1 session' });
+      return null;
+    }
+    return nationId;
+  }
+
+  app.post('/api/dev/tick', async (request, reply) => {
+    if (!requireDev(request, reply)) return;
+    try { return { ok: true, tick: (await runTick(defs)).tick }; }
+    catch (err: unknown) { return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  app.post('/api/dev/set-phase', async (request, reply) => {
+    if (!requireDev(request, reply)) return;
+    const { phase } = request.query as { phase?: string };
+    if (phase !== undefined && phase !== 'main' && phase !== 'prep') {
+      return reply.code(400).send({ error: 'phase must be "main" or "prep" (omit to clear)' });
+    }
+    setPhaseOverride(phase === 'main' ? 'main' : phase === 'prep' ? 'prep' : null);
+    return { ok: true, phase: currentPhase(), override: getPhaseOverride() };
+  });
+
+  app.post('/api/dev/reset-world', async (request, reply) => {
+    if (!requireDev(request, reply)) return;
+    await prisma.$transaction([
+      prisma.queuedAction.deleteMany(),
+      prisma.eventLog.deleteMany(),
+      prisma.territoryState.deleteMany(),
+      prisma.nation.deleteMany(),
+      prisma.worldMeta.deleteMany(),
+    ]);
+    await ensureWorldInitialized(defs);
+    return { ok: true, message: 'World reset to tick 0.' };
+  });
+
+  app.get('/api/dev/territory/:id', async (request, reply) => {
+    if (!requireDev(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const t = await prisma.territoryState.findUnique({ where: { id } });
+    if (!t) return reply.code(404).send({ error: 'Territory not found' });
+    return t;
+  });
+
+  app.post('/api/dev/territory/:id/set-unrest', async (request, reply) => {
+    if (!requireDev(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { value } = request.body as { value?: number };
+    if (typeof value !== 'number' || value < 0 || value > 1) {
+      return reply.code(400).send({ error: 'value must be 0.0–1.0' });
+    }
+    await prisma.territoryState.update({ where: { id }, data: { unrest: value } });
+    return { ok: true };
+  });
+
+  app.post('/api/dev/territory/:id/set-trait', async (request, reply) => {
+    if (!requireDev(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { trait, value } = request.body as { trait?: string; value?: number };
+    if (!trait || !CULTURE_TRAITS.includes(trait as typeof CULTURE_TRAITS[number])) {
+      return reply.code(400).send({ error: `trait must be one of: ${CULTURE_TRAITS.join(', ')}` });
+    }
+    if (typeof value !== 'number' || value < -1 || value > 1) {
+      return reply.code(400).send({ error: 'value must be −1.0–+1.0' });
+    }
+    await prisma.territoryState.update({ where: { id }, data: { [trait]: value } });
+    return { ok: true };
   });
 
   // ── Startup ────────────────────────────────────────────────────────────────

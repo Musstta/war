@@ -17,16 +17,18 @@ model WorldMeta {
 }
 
 model Nation {
-  id          String  @id
-  name        String
-  isAI        Boolean
-  armySize    Int     @default(0)
-  trust       Float   @default(50)
-  prestige    Float   @default(0)
-  popStock    Float   @default(0)
-  indStock    Float   @default(0)
-  wealthStock Float   @default(0)
-  mandateUsed Int     @default(0)
+  id                 String  @id
+  name               String
+  isAI               Boolean
+  armySize           Int     @default(0)
+  trust              Float   @default(50)
+  prestige           Float   @default(0)
+  popStock           Float   @default(0)
+  indStock           Float   @default(0)
+  wealthStock        Float   @default(0)
+  mandateUsed        Int     @default(0)
+  // Territory considered the nation's capital for distance-from-capital unrest.
+  capitalTerritoryId String?
 
   territories TerritoryState[]
   actions     QueuedAction[]
@@ -50,8 +52,11 @@ model TerritoryState {
   militaristic  Float
   expansionist  Float
 
+  // Phase 4 Culture: territory has crossed the revolt threshold and stops producing.
+  isInRevolt            Boolean @default(false)
+
   // Phase 4: single construction slot for ports and forts (roads are immediate).
-  constructionType     String? // 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3'
+  constructionType      String? // 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3'
   constructionTicksLeft Int?
 }
 

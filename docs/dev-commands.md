@@ -193,6 +193,61 @@ done
 
 ---
 
+## 11. Dev panel (player1 only) — in-browser shortcuts
+
+When logged in as **player1 / Costa Rica**, two extra UI elements appear:
+
+**DevToolbar** (top bar, always visible):
+
+| Button | Action |
+|--------|--------|
+| → Main | Force Main Phase |
+| → Prep | Force Prep Phase |
+| → Clock | Clear phase override (return to real clock) |
+| ⚡ Tick | Advance world by one tick |
+| ↺ Reset | Wipe all game data and restart from tick 0 (confirms first) |
+
+**InfoPanel dev section** (bottom of territory sidebar, when a territory is selected):
+
+Shows Unrest and 4 culture traits (Ind / Prog / Mil / Exp) as clickable rows. Clicking any row opens a prompt to set the value (0.00–1.00).
+
+### Equivalent curl commands (session-cookie auth, not admin-key)
+
+```bash
+# First log in to get a session cookie
+curl -c /tmp/war.cookies -X POST http://localhost:3001/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"player1","password":"war1"}'
+
+# Force phase
+curl -b /tmp/war.cookies -X POST "http://localhost:3001/api/dev/set-phase?phase=main"
+curl -b /tmp/war.cookies -X POST "http://localhost:3001/api/dev/set-phase?phase=prep"
+curl -b /tmp/war.cookies -X POST "http://localhost:3001/api/dev/set-phase"  # clear
+
+# Manual tick
+curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/tick
+# → {"ok":true,"tick":N}
+
+# Reset world
+curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/reset-world
+
+# Inspect territory dev state (unrest + culture traits + construction)
+curl -b /tmp/war.cookies http://localhost:3001/api/dev/territory/costa_rica
+
+# Set unrest on a territory
+curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/territory/costa_rica/set-unrest \
+  -H "Content-Type: application/json" -d '{"value":0.8}'
+
+# Set a culture trait
+curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/territory/costa_rica/set-trait \
+  -H "Content-Type: application/json" -d '{"trait":"militaristic","value":0.9}'
+# trait: individualist | progressive | militaristic | expansionist
+```
+
+> **Security note:** `/api/dev/*` endpoints are session-gated to `nation_costa_rica`. They must be removed or replaced with real RBAC before the game goes beyond local + tunnel testing. See `docs/persistent-world-tech-stack.md` §11.
+
+---
+
 ## Player credentials (dev)
 
 | Username | Password | Nation     |

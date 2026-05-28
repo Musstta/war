@@ -28,6 +28,7 @@ export async function loadWorldState(
         hasRoad: s.hasRoad,
         hasPort: s.hasPort,
         unrest: s.unrest,
+        isInRevolt: s.isInRevolt,
         valueTraits: {
           individualist: s.individualist,
           progressive: s.progressive,
@@ -54,6 +55,7 @@ export async function loadWorldState(
       armySize: n.armySize,
       trust: n.trust,
       prestige: n.prestige,
+      capitalTerritoryId: n.capitalTerritoryId ?? null,
     };
   }
 
@@ -77,6 +79,7 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         armySize: nation.armySize,
         trust: nation.trust,
         prestige: nation.prestige,
+        capitalTerritoryId: nation.capitalTerritoryId,
       },
     });
   }
@@ -90,6 +93,7 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         hasRoad: state.hasRoad,
         hasPort: state.hasPort,
         unrest: state.unrest,
+        isInRevolt: state.isInRevolt,
         individualist: state.valueTraits.individualist,
         progressive: state.valueTraits.progressive,
         militaristic: state.valueTraits.militaristic,
@@ -130,7 +134,13 @@ export async function ensureWorldInitialized(defs: TerritoryDef[]): Promise<void
     const ownerOf = new Map<string, string>();
     for (const n of INITIAL_NATIONS) {
       await tx.nation.create({
-        data: { id: n.id, name: n.name, isAI: n.isAI, armySize: n.armySize },
+        data: {
+          id: n.id,
+          name: n.name,
+          isAI: n.isAI,
+          armySize: n.armySize,
+          capitalTerritoryId: n.territories[0],
+        },
       });
       for (const tid of n.territories) ownerOf.set(tid, n.id);
     }

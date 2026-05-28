@@ -1,5 +1,15 @@
-import type { WorldState, QueuedAction, ActionResult, Stockpiles } from './types';
+import type { WorldState, QueuedAction, ActionResult, Stockpiles, ValueTraits } from './types';
 import { tickRng } from './rng';
+import {
+  computeNationCulture,
+  computeCompatibility,
+  computeUnrestEquilibrium,
+  applyDrift,
+  bfsDistance,
+  UNREST_DRIFT_RATE,
+  REVOLT_THRESHOLD,
+  REVOLT_HYSTERESIS,
+} from './culture';
 
 // ── Placeholder constants ─────────────────────────────────────────────────────
 // These numbers are not final. All tuning happens via the simulation harness
@@ -23,16 +33,20 @@ export const BUILD_INDUSTRY: Record<string, number> = {
 };
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Sums base resource production for a nation, excluding revolting territories.
+ * "Production" is the per-tick yield of each territory — not stored stockpiles.
+ */
 function sumProduction(world: WorldState, nationId: string): Stockpiles {
   let population = 0;
   let industry = 0;
   let wealth = 0;
   for (const t of Object.values(world.territories)) {
-    if (t.state.ownerId === nationId) {
-      population += t.def.basePopulation;
-      industry += t.def.baseIndustry;
-      wealth += t.def.baseWealth;
-    }
+    if (t.state.ownerId !== nationId) continue;
+    if (t.state.isInRevolt) continue; // revolting territory produces nothing
+    population += t.def.basePopulation;
+    industry += t.def.baseIndustry;
+    wealth += t.def.baseWealth;
   }
   return { population, industry, wealth };
 }
@@ -43,17 +57,24 @@ function sumProduction(world: WorldState, nationId: string): Stockpiles {
  * result record for every action (applied or discarded with reason).
  *
  * See design doc §17: pure in, pure out. No HTTP, no DB.
+ *
+ * Immer note: ValueTraits is now explicitly spread in the clone step below so
+ * drift mutations don't bleed into the input world. No deeper nesting exists yet,
+ * so full Immer adoption remains deferred (design doc §13).
  */
 export function resolveTick(
   world: WorldState,
   actions: QueuedAction[],
 ): { world: WorldState; actionResults: ActionResult[] } {
-  const _rng = tickRng(world.rngSeed, world.tick);
-  void _rng;
+  const rng = tickRng(world.rngSeed, world.tick);
 
   const nations = { ...world.nations };
+  // Explicitly spread ValueTraits so culture drift doesn't mutate the input world.
   const territories = Object.fromEntries(
-    Object.entries(world.territories).map(([k, v]) => [k, { ...v, state: { ...v.state } }]),
+    Object.entries(world.territories).map(([k, v]) => [
+      k,
+      { ...v, state: { ...v.state, valueTraits: { ...v.state.valueTraits } } },
+    ]),
   );
   const eventLog = [...world.eventLog];
   const actionResults: ActionResult[] = [];
@@ -153,6 +174,63 @@ export function resolveTick(
         message: `${ownerName} completed fortification level ${t.state.fortificationLevel} in ${t.def.name}.`,
       });
     }
+  }
+
+  // ── Culture & Unrest ──────────────────────────────────────────────────────
+  // Build adjacency map once for BFS distance lookups.
+  const adjacency: Record<string, readonly string[]> = Object.fromEntries(
+    Object.entries(territories).map(([k, v]) => [k, v.def.adjacentIds]),
+  );
+
+  // Count territories per nation for overexpansion pressure.
+  const territoryCounts: Record<string, number> = {};
+  for (const t of Object.values(territories)) {
+    if (t.state.ownerId) {
+      territoryCounts[t.state.ownerId] = (territoryCounts[t.state.ownerId] ?? 0) + 1;
+    }
+  }
+
+  // Compute each nation's current culture (weighted average of its territories).
+  const nationCultures: Record<string, ReturnType<typeof computeNationCulture>> = {};
+  for (const nationId of Object.keys(nations)) {
+    nationCultures[nationId] = computeNationCulture(nationId, territories);
+  }
+
+  // Process each owned territory: drift unrest, check revolt, apply cultural drift.
+  for (const t of Object.values(territories)) {
+    const ownerId = t.state.ownerId;
+    if (!ownerId) continue;
+
+    const nationCulture = nationCultures[ownerId];
+    if (!nationCulture) continue;
+
+    const capital = nations[ownerId]?.capitalTerritoryId ?? null;
+    const hops = capital ? bfsDistance(adjacency, capital, t.def.id) : 0;
+    const tcount = territoryCounts[ownerId] ?? 1;
+
+    const compat = computeCompatibility(t.state.valueTraits, t.def.culturalFamily, nationCulture);
+    const causes = computeUnrestEquilibrium(compat, hops, t.state.hasRoad, tcount);
+
+    // Drift unrest toward equilibrium.
+    t.state.unrest = t.state.unrest + UNREST_DRIFT_RATE * (causes.equilibrium - t.state.unrest);
+
+    // Revolt hysteresis: enter above threshold, exit only when well below it.
+    if (!t.state.isInRevolt && t.state.unrest >= REVOLT_THRESHOLD) {
+      t.state.isInRevolt = true;
+      eventLog.push({
+        tick: world.tick + 1,
+        message: `${t.def.name} has risen in revolt against ${nations[ownerId]?.name ?? ownerId}!`,
+      });
+    } else if (t.state.isInRevolt && t.state.unrest < REVOLT_THRESHOLD - REVOLT_HYSTERESIS) {
+      t.state.isInRevolt = false;
+      eventLog.push({
+        tick: world.tick + 1,
+        message: `The revolt in ${t.def.name} has been suppressed.`,
+      });
+    }
+
+    // Cultural drift: high unrest slows assimilation.
+    t.state.valueTraits = applyDrift(t.state.valueTraits, nationCulture, t.state.unrest, rng);
   }
 
   // ── Production + upkeep ───────────────────────────────────────────────────

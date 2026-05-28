@@ -1,4 +1,5 @@
-import { TerritoryView, NationView, WorldView, api } from '../api';
+import { useState, useEffect } from 'react';
+import { TerritoryView, NationView, WorldView, TerritoryDevState, CompatibilityBreakdown, UnrestCauses, api } from '../api';
 
 interface Props {
   territoryId: string | null;
@@ -20,7 +21,117 @@ function constructionLabel(type: string | null | undefined, ticksLeft: number | 
   return `Building ${name} — ${ticksLeft} tick${ticksLeft !== 1 ? 's' : ''} left`;
 }
 
+const TRAIT_LABELS: Record<string, string> = {
+  individualist: 'Ind', progressive: 'Prog', militaristic: 'Mil', expansionist: 'Exp',
+};
+
+const CAUSE_LABELS: Record<keyof UnrestCauses, string> = {
+  base: 'Base floor',
+  compatibilityPressure: 'Compat clash',
+  distancePressure: 'Distance from capital',
+  noRoadPressure: 'No road',
+  overexpansionPressure: 'Overexpansion',
+  roadBonus: 'Road integration',
+  militaryBonus: 'Military presence',
+  equilibrium: 'Equilibrium',
+};
+
+function fmt2(n: number): string { return (n >= 0 ? '+' : '') + n.toFixed(2); }
+function fmtCompat(n: number): string { return n.toFixed(2); }
+
+function UnrestPanel({ unrest, causes }: { unrest: number; causes: UnrestCauses }) {
+  const direction = unrest < causes.equilibrium ? '↑' : unrest > causes.equilibrium ? '↓' : '=';
+  const causeKeys: (keyof UnrestCauses)[] = [
+    'base', 'compatibilityPressure', 'distancePressure',
+    'noRoadPressure', 'overexpansionPressure', 'roadBonus', 'militaryBonus',
+  ];
+  return (
+    <div style={{ marginTop: '0.5rem', padding: '0.35rem 0.4rem', background: '#0d0d1a', borderRadius: 3 }}>
+      <div style={{ fontSize: '0.7rem', color: '#555', marginBottom: '0.2rem', letterSpacing: '0.05em' }}>UNREST</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', marginBottom: '0.25rem' }}>
+        <span style={{ color: '#888' }}>Now → Eq.</span>
+        <span style={{ color: unrest > 0.6 ? '#ff6b6b' : unrest > 0.3 ? '#f0a500' : '#ccc' }}>
+          {unrest.toFixed(3)} {direction} {causes.equilibrium.toFixed(3)}
+        </span>
+      </div>
+      {causeKeys.map((k) => {
+        const v = causes[k];
+        if (v === 0) return null;
+        return (
+          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', padding: '0.05rem 0' }}>
+            <span style={{ color: '#555' }}>{CAUSE_LABELS[k]}</span>
+            <span style={{ color: v < 0 ? '#4caf50' : '#f0a500' }}>{fmt2(v)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function CompatPanel({ compat }: { compat: CompatibilityBreakdown }) {
+  const gapKeys: [keyof CompatibilityBreakdown, string][] = [
+    ['individualistGap', 'Ind gap'],
+    ['progressiveGap', 'Prog gap'],
+    ['militaristicGap', 'Mil gap'],
+    ['expansionistGap', 'Exp gap'],
+  ];
+  return (
+    <div style={{ marginTop: '0.4rem', padding: '0.35rem 0.4rem', background: '#0d0d1a', borderRadius: 3 }}>
+      <div style={{ fontSize: '0.7rem', color: '#555', marginBottom: '0.2rem', letterSpacing: '0.05em' }}>COMPATIBILITY</div>
+      {gapKeys.map(([k, label]) => (
+        <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', padding: '0.05rem 0' }}>
+          <span style={{ color: '#555' }}>{label}</span>
+          <span style={{ color: (compat[k] as number) > 0.4 ? '#ff6b6b' : '#888' }}>{fmtCompat(compat[k] as number)}</span>
+        </div>
+      ))}
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', padding: '0.05rem 0' }}>
+        <span style={{ color: '#555' }}>Family match</span>
+        <span style={{ color: compat.familyCloseness > 0.5 ? '#4caf50' : '#f0a500' }}>{fmtCompat(compat.familyCloseness)}</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', padding: '0.1rem 0', borderTop: '1px solid #1a1a2e', marginTop: '0.1rem' }}>
+        <span style={{ color: '#777' }}>Total compat</span>
+        <span style={{ color: compat.total > 0.6 ? '#4caf50' : compat.total > 0.35 ? '#f0a500' : '#ff6b6b' }}>{fmtCompat(compat.total)}</span>
+      </div>
+    </div>
+  );
+}
+
 export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Props) {
+  const isDev = world.myNationId === 'nation_costa_rica';
+  const [devState, setDevState] = useState<TerritoryDevState | null>(null);
+
+  useEffect(() => {
+    if (!isDev || !territoryId) { setDevState(null); return; }
+    api.dev.territory(territoryId).then(setDevState).catch(() => setDevState(null));
+  }, [isDev, territoryId]);
+
+  const refreshDevState = () => {
+    if (!isDev || !territoryId) return;
+    api.dev.territory(territoryId).then(setDevState).catch(() => setDevState(null));
+  };
+
+  const devPromptTrait = async (
+    label: string,
+    current: number,
+    fn: (v: number) => Promise<unknown>,
+  ) => {
+    const raw = window.prompt(`Set ${label} (−1.00 to +1.00):`, current.toFixed(3));
+    if (raw === null) return;
+    const v = parseFloat(raw);
+    if (isNaN(v) || v < -1 || v > 1) { alert('Invalid value — must be −1.0 to +1.0'); return; }
+    try { await fn(v); onActionQueued(); refreshDevState(); }
+    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
+  };
+
+  const devPromptUnrest = async (current: number) => {
+    const raw = window.prompt('Set unrest (0.00 to 1.00):', current.toFixed(3));
+    if (raw === null) return;
+    const v = parseFloat(raw);
+    if (isNaN(v) || v < 0 || v > 1) { alert('Invalid value — must be 0.0 to 1.0'); return; }
+    try { await api.dev.setUnrest(territoryId!, v); onActionQueued(); refreshDevState(); }
+    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
+  };
+
   if (!territoryId) {
     return (
       <div style={panelStyle}>
@@ -86,6 +197,13 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
       <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', color: '#eee' }}>
         {defNames[territoryId] ?? territoryId}
       </h3>
+
+      {t?.isInRevolt && (
+        <div style={{ marginBottom: '0.5rem', padding: '0.25rem 0.4rem', background: '#3a0000', border: '1px solid #7a0000', borderRadius: 3, fontSize: '0.75rem', color: '#ff6b6b' }}>
+          IN REVOLT — not producing
+        </div>
+      )}
+
       <Row label="Owner" value={owner ? owner.name : '— unclaimed'} />
       <Row label="Coastal" value={t?.isCoastal ? 'Yes' : 'No'} />
       <Row label="Road" value={t?.hasRoad ? 'Yes' : 'No'} />
@@ -94,13 +212,41 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
       {t?.fortificationLevel !== undefined && (
         <Row label="Fortification" value={String(t.fortificationLevel)} />
       )}
-      {t?.unrest !== undefined && (
-        <Row label="Unrest" value={t.unrest.toFixed(2)} />
-      )}
 
       {constructionStatus && (
         <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#f0a500', padding: '0.3rem 0.4rem', background: '#1a1a2e', borderRadius: 3 }}>
           {constructionStatus}
+        </div>
+      )}
+
+      {/* Unrest & causes — shown whenever we have the data */}
+      {t?.unrest !== undefined && t?.unrestCauses && (
+        <UnrestPanel unrest={t.unrest} causes={t.unrestCauses} />
+      )}
+      {t?.unrest !== undefined && !t?.unrestCauses && (
+        <div style={{ marginTop: '0.4rem' }}>
+          <Row label="Unrest" value={t.unrest.toFixed(3)} />
+        </div>
+      )}
+
+      {/* Compatibility breakdown */}
+      {t?.compatibility && <CompatPanel compat={t.compatibility} />}
+
+      {/* Nation culture axes (own nation only for now) */}
+      {isOwn && owner?.culture && (
+        <div style={{ marginTop: '0.4rem', padding: '0.35rem 0.4rem', background: '#0d0d1a', borderRadius: 3 }}>
+          <div style={{ fontSize: '0.7rem', color: '#555', marginBottom: '0.2rem', letterSpacing: '0.05em' }}>
+            NATION CULTURE <span style={{ color: '#333' }}>({owner.culture.primaryFamily ?? '—'})</span>
+          </div>
+          {(['individualist', 'progressive', 'militaristic', 'expansionist'] as const).map((axis) => {
+            const v = (owner.culture as NonNullable<typeof owner.culture>)[axis];
+            return (
+              <div key={axis} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', padding: '0.05rem 0' }}>
+                <span style={{ color: '#555' }}>{TRAIT_LABELS[axis]}</span>
+                <span style={{ color: v > 0.2 ? '#7ecfff' : v < -0.2 ? '#f0a500' : '#888' }}>{v >= 0 ? '+' : ''}{v.toFixed(3)}</span>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -112,6 +258,32 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
             <span><span style={{ color: '#555' }}>Ind </span><span style={{ color: '#f0a500' }}>{Math.floor(myStockpiles.industry)}</span></span>
             <span><span style={{ color: '#555' }}>Wlth </span><span style={{ color: '#ccc' }}>{Math.floor(myStockpiles.wealth)}</span></span>
           </div>
+        </div>
+      )}
+
+      {/* Dev: territory raw culture state (player1 only) */}
+      {isDev && devState && (
+        <div style={{ marginTop: '0.75rem', padding: '0.4rem 0.5rem', background: '#0d0d1a', borderRadius: 3 }}>
+          <div style={{ fontSize: '0.7rem', color: '#f0a500', marginBottom: '0.25rem', letterSpacing: '0.05em' }}>DEV — TERRITORY RAW</div>
+          <div
+            onClick={() => devPromptUnrest(devState.unrest)}
+            style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', cursor: 'pointer', padding: '0.1rem 0' }}
+            title="Click to set unrest (0–1)"
+          >
+            <span style={{ color: '#666' }}>Unrest</span>
+            <span style={{ color: '#7ecfff' }}>{devState.unrest.toFixed(3)}</span>
+          </div>
+          {(['individualist', 'progressive', 'militaristic', 'expansionist'] as const).map((tr) => (
+            <div
+              key={tr}
+              onClick={() => devPromptTrait(TRAIT_LABELS[tr]!, devState[tr], (v) => api.dev.setTrait(territoryId, tr, v))}
+              style={{ display: 'flex', justifyContent: 'space-between', padding: '0.1rem 0', fontSize: '0.78rem', cursor: 'pointer' }}
+              title={`Click to set ${TRAIT_LABELS[tr]} (−1 to +1)`}
+            >
+              <span style={{ color: '#666' }}>{TRAIT_LABELS[tr]}</span>
+              <span style={{ color: '#7ecfff' }}>{devState[tr] >= 0 ? '+' : ''}{devState[tr].toFixed(3)}</span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -184,7 +356,7 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 const panelStyle: React.CSSProperties = {
-  width: 220, flexShrink: 0, background: '#16213e', padding: '1rem',
+  width: 240, flexShrink: 0, background: '#16213e', padding: '1rem',
   borderLeft: '1px solid #2a2a4a', overflowY: 'auto', fontFamily: 'monospace',
 };
 
