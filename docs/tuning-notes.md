@@ -79,6 +79,18 @@ Rapid-expansion pressure now uses a linear-decay window (RECENT_ACQUISITION_WIND
 
 ---
 
+## Harness findings (post Culture-v3)
+
+Observations from running the three seed scenarios (belize-neglect, belize-integrate, overexpansion) after the conditional shock-decay fix.
+
+**Overexpansion doesn't produce revolts in 30 ticks** — UNREST_DRIFT_RATE (0.10) is too slow relative to RECENT_ACQUISITION_WINDOW (12). The drift cannot reach the elevated equilibrium before the window expires and pressure begins to ease. The system is mechanically correct; the constants just don't produce the crisis pace intended for rapid expansion. Target for the post-Phase-4 tuning sweep: extend the window to 15–20 ticks rather than speed up drift (slow drift is intentional for legibility). Verify by sweep when the full system is in.
+
+**Unrest lags equilibrium on the way down** (e.g. overexpansion scenario, T20: unrest 52% vs equilibrium 50%). This is intentional — drift-based dynamics produce sticky unrest by design. A territory that was high-unrest doesn't instantly calm when equilibrium drops; it drifts down over several ticks. Not a bug.
+
+**Stability-score zero-clipping during high-pressure periods** correctly prevents shock decay when a territory is structurally troubled — the compat/stability components are suppressed until infra AND lower structural equilibrium bring the stability factor above zero. The eventual un-clip when pressure subsides is the system working. Noted for clarity, not change.
+
+---
+
 ## Trait flip at midpoint — potential bias
 
 **Current behavior:** When cultural drift would move a trait value across zero (e.g. from -0.01 toward positive), the flip is decided 50/50 by seeded RNG — equal chance of allowing the cross or bouncing back.

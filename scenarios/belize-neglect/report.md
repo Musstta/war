@@ -12,7 +12,7 @@
 
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
-| Costa Rica | belize, costa_rica | 19.6% | 37.0% | 0 |
+| Costa Rica | belize, costa_rica | 33.7% | 65.2% | 0 |
 | Guatemala | guatemala | 2.0% | 2.0% | 0 |
 | Honduras | honduras | 2.0% | 2.0% | 0 |
 | Nicaragua | nicaragua | 2.0% | 2.0% | 0 |
@@ -27,16 +27,16 @@
 | Tick | Owner | Unrest | Eq. | Shock | Compat | Infra | Distance |
 |------|-------|--------|-----|-------|--------|-------|----------|
 | T0 | — | 0.0% | 0.0% | 0.000 | — | — | — |
-| T1 | nation_costa_rica | 7.2% | 69.9% | 0.320 | 0.737 | 0.000 | 0.160 |
-| T2 | nation_costa_rica | 13.5% | 67.9% | 0.305 | 0.737 | 0.000 | 0.160 |
-| T5 | nation_costa_rica | 27.7% | 62.4% | 0.265 | 0.738 | 0.000 | 0.160 |
-| T10 | nation_costa_rica | 40.4% | 54.2% | 0.209 | 0.740 | 0.000 | 0.160 |
-| T15 | nation_costa_rica | 44.9% | 48.6% | 0.164 | 0.741 | 0.000 | 0.160 |
-| T20 | nation_costa_rica | 45.7% | 44.9% | 0.128 | 0.742 | 0.000 | 0.160 |
-| T25 | nation_costa_rica | 44.8% | 42.1% | 0.100 | 0.743 | 0.000 | 0.160 |
-| T30 | nation_costa_rica | 43.3% | 39.8% | 0.077 | 0.744 | 0.000 | 0.160 |
-| T40 | nation_costa_rica | 39.8% | 36.6% | 0.047 | 0.746 | 0.000 | 0.160 |
-| T50 | nation_costa_rica | 37.0% | 34.7% | 0.028 | 0.748 | 0.000 | 0.160 |
+| T1 | nation_costa_rica | 7.2% | 71.5% | 0.335 | 0.737 | 0.000 | 0.160 |
+| T2 | nation_costa_rica | 13.6% | 71.0% | 0.335 | 0.737 | 0.000 | 0.160 |
+| T5 | nation_costa_rica | 29.0% | 69.4% | 0.335 | 0.738 | 0.000 | 0.160 |
+| T10 | nation_costa_rica | 45.1% | 66.8% | 0.335 | 0.740 | 0.000 | 0.160 |
+| T15 | nation_costa_rica | 53.7% | 65.8% | 0.335 | 0.741 | 0.000 | 0.160 |
+| T20 | nation_costa_rica | 58.6% | 65.7% | 0.335 | 0.742 | 0.000 | 0.160 |
+| T25 | nation_costa_rica | 61.5% | 65.6% | 0.335 | 0.743 | 0.000 | 0.160 |
+| T30 | nation_costa_rica | 63.2% | 65.6% | 0.335 | 0.744 | 0.000 | 0.160 |
+| T40 | nation_costa_rica | 64.7% | 65.5% | 0.335 | 0.745 | 0.000 | 0.160 |
+| T50 | nation_costa_rica | 65.2% | 65.4% | 0.335 | 0.747 | 0.000 | 0.160 |
 
 
 ---

@@ -337,9 +337,10 @@ export function computeUnrestEquilibrium(
 
 /**
  * Computes the effective ownership-shock decay rate for this tick.
- * Scales with integration progress — infrastructure, structural stability, and cultural
- * alignment all contribute. Neglected territory → near 0%/tick; fully integrated → up to
- * CONQUEST_SHOCK_BASE_DECAY per tick. Time alone does not heal. [PLACEHOLDER weights]
+ * Infrastructure investment is the gate — without it, shock does not decay at all.
+ * Cultural compatibility and structural stability amplify decay when infra is present,
+ * but cannot substitute for it. Design intent: player action is causal to integration.
+ * [PLACEHOLDER weights]
  */
 export function computeShockDecayRate(
   hasRoad: boolean,
@@ -353,6 +354,10 @@ export function computeShockDecayRate(
     + (fortificationLevel * FORT_INFRA_CONTRIBUTION_PER_LEVEL);
   const infraMax = ROAD_INFRA_CONTRIBUTION + PORT_INFRA_CONTRIBUTION + 3 * FORT_INFRA_CONTRIBUTION_PER_LEVEL;
   const infraScore = infraRaw / infraMax;
+
+  // Zero infrastructure → zero decay. No amount of cultural compatibility heals a
+  // neglected territory; building any single structure unlocks compat-driven recovery.
+  if (infraScore === 0) return 0;
 
   // Structural equilibrium excluding the shock — measures underlying trouble.
   const structuralEq = Math.max(0, causes.equilibrium - causes.ownershipShock);
