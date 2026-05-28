@@ -93,6 +93,12 @@ export interface TerritoryState {
   /** Phase 4: single construction slot — ports and forts occupy this slot; roads are immediate. */
   constructionType: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | null;
   constructionTicksLeft: number | null;
+  /**
+   * Next build queued to start automatically when constructionType completes.
+   * Mandate + industry are already deducted at queue time.
+   * 'road' is instant when it fires; 'port'/'fort_*' start multi-tick construction.
+   */
+  pendingConstructionType: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | 'road' | null;
 }
 
 export interface Territory {

@@ -52,6 +52,7 @@ export interface TerritoryView {
   unrest?: number;
   constructionType?: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | null;
   constructionTicksLeft?: number | null;
+  pendingConstructionType?: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | 'road' | null;
   compatibility?: CompatibilityBreakdown;
   unrestCauses?: UnrestCauses;
 }

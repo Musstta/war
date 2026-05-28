@@ -58,6 +58,8 @@ model TerritoryState {
   // Phase 4: single construction slot for ports and forts (roads are immediate).
   constructionType      String? // 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3'
   constructionTicksLeft Int?
+  // Next build queued to auto-start when constructionType completes (mandate+industry pre-paid).
+  pendingConstructionType String? // 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | 'road'
 }
 
 // Actions queued during the Main or Preparation phase, resolved atomically at the

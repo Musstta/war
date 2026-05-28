@@ -11,14 +11,19 @@ interface Props {
 const FORT_MANDATE_COSTS: Record<number, number> = { 1: 2, 2: 3, 3: 4 };
 const BUILD_IND: Record<string, number> = { port: 5, fort_l1: 3, fort_l2: 6, fort_l3: 10 };
 
+const CONSTRUCTION_NAMES: Record<string, string> = {
+  port: 'Port', fort_l1: 'Fort L1', fort_l2: 'Fort L2', fort_l3: 'Fort L3', road: 'Road',
+};
+
 function constructionLabel(type: string | null | undefined, ticksLeft: number | null | undefined): string | null {
   if (!type || ticksLeft == null) return null;
-  const name =
-    type === 'port' ? 'Port'
-    : type === 'fort_l1' ? 'Fort L1'
-    : type === 'fort_l2' ? 'Fort L2'
-    : 'Fort L3';
+  const name = CONSTRUCTION_NAMES[type] ?? type;
   return `Building ${name} — ${ticksLeft} tick${ticksLeft !== 1 ? 's' : ''} left`;
+}
+
+function pendingLabel(type: string | null | undefined): string | null {
+  if (!type) return null;
+  return `Queued next: ${CONSTRUCTION_NAMES[type] ?? type}`;
 }
 
 const TRAIT_LABELS: Record<string, string> = {
@@ -150,18 +155,22 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
   const myStockpiles = world.nations[world.myNationId]?.stockpiles;
 
   const constructing = t?.constructionType ?? null;
+  const pending = t?.pendingConstructionType ?? null;
   const nextFortLevel = (t?.fortificationLevel ?? 0) + 1;
   const fortMandateCost = FORT_MANDATE_COSTS[nextFortLevel] ?? 4;
   const fortIndCost = BUILD_IND[`fort_l${nextFortLevel}`] ?? 10;
 
   const myInd = myStockpiles?.industry ?? 0;
+  // Slot is free for a NEW queue entry only when no pending is already set.
+  // If constructing=null and no pending: same-tick queue. If constructing≠null and no pending: deferred queue.
+  const slotAvailable = pending === null;
 
   const canBuildRoad =
-    isOwn && !t?.hasRoad && phase === 'main' && mandateLeft >= 1 && constructing === null;
+    isOwn && !t?.hasRoad && phase === 'main' && mandateLeft >= 1 && slotAvailable;
   const canBuildPort =
-    isOwn && !!t?.isCoastal && !t?.hasPort && phase === 'main' && mandateLeft >= 2 && myInd >= BUILD_IND['port']! && constructing === null;
+    isOwn && !!t?.isCoastal && !t?.hasPort && phase === 'main' && mandateLeft >= 2 && myInd >= BUILD_IND['port']! && slotAvailable;
   const canBuildFort =
-    isOwn && (t?.fortificationLevel ?? 0) < 3 && phase === 'main' && mandateLeft >= fortMandateCost && myInd >= fortIndCost && constructing === null;
+    isOwn && (t?.fortificationLevel ?? 0) < 3 && phase === 'main' && mandateLeft >= fortMandateCost && myInd >= fortIndCost && slotAvailable;
 
   const buildRoad = async () => {
     try {
@@ -216,6 +225,9 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
       {constructionStatus && (
         <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#f0a500', padding: '0.3rem 0.4rem', background: '#1a1a2e', borderRadius: 3 }}>
           {constructionStatus}
+          {pending && (
+            <div style={{ color: '#7ecfff', marginTop: '0.15rem' }}>↳ {pendingLabel(pending)}</div>
+          )}
         </div>
       )}
 
@@ -296,14 +308,15 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
             disabled={!canBuildRoad}
             title={
               t?.hasRoad ? 'Already has a road'
-              : constructing !== null ? 'Construction in progress'
+              : pending !== null ? 'Next construction already queued'
               : phase !== 'main' ? 'Only during Main Phase'
               : mandateLeft < 1 ? 'No mandates left'
+              : constructing !== null ? 'Queue next: Road starts when current build finishes (1 mandate)'
               : 'Queue: Build Road (1 mandate, instant)'
             }
             style={{ ...actionBtn, opacity: canBuildRoad ? 1 : 0.4, cursor: canBuildRoad ? 'pointer' : 'not-allowed', marginBottom: '0.3rem' }}
           >
-            {t?.hasRoad ? 'Road built' : 'Build Road (1 mandate)'}
+            {t?.hasRoad ? 'Road built' : constructing !== null ? 'Queue next: Road (1M)' : 'Build Road (1 mandate)'}
           </button>
 
           {t?.isCoastal && (
@@ -312,15 +325,16 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
               disabled={!canBuildPort}
               title={
                 t?.hasPort ? 'Already has a port'
-                : constructing !== null ? 'Construction in progress'
+                : pending !== null ? 'Next construction already queued'
                 : phase !== 'main' ? 'Only during Main Phase'
                 : myInd < BUILD_IND['port']! ? `Need ${BUILD_IND['port']} industry (have ${Math.floor(myInd)})`
                 : mandateLeft < 2 ? 'Not enough mandates'
+                : constructing !== null ? `Queue next: Port starts when current build finishes (2M / ${BUILD_IND['port']}ind)`
                 : `Queue: Build Port (2 mandates, ${BUILD_IND['port']} ind, 3 ticks)`
               }
               style={{ ...actionBtn, opacity: canBuildPort ? 1 : 0.4, cursor: canBuildPort ? 'pointer' : 'not-allowed', marginBottom: '0.3rem' }}
             >
-              {t?.hasPort ? 'Port built' : `Build Port (2M / ${BUILD_IND['port']}ind)`}
+              {t?.hasPort ? 'Port built' : constructing !== null ? `Queue next: Port (2M/${BUILD_IND['port']}ind)` : `Build Port (2M / ${BUILD_IND['port']}ind)`}
             </button>
           )}
 
@@ -329,15 +343,16 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
               onClick={buildFort}
               disabled={!canBuildFort}
               title={
-                constructing !== null ? 'Construction in progress'
+                pending !== null ? 'Next construction already queued'
                 : phase !== 'main' ? 'Only during Main Phase'
                 : myInd < fortIndCost ? `Need ${fortIndCost} industry (have ${Math.floor(myInd)})`
                 : mandateLeft < fortMandateCost ? 'Not enough mandates'
+                : constructing !== null ? `Queue next: Fort L${nextFortLevel} starts when current build finishes`
                 : `Queue: Build Fort L${nextFortLevel} (${fortMandateCost} mandates, ${fortIndCost} ind)`
               }
               style={{ ...actionBtn, opacity: canBuildFort ? 1 : 0.4, cursor: canBuildFort ? 'pointer' : 'not-allowed' }}
             >
-              {`Fort L${nextFortLevel} (${fortMandateCost}M / ${fortIndCost}ind)`}
+              {constructing !== null ? `Queue next: Fort L${nextFortLevel} (${fortMandateCost}M/${fortIndCost}ind)` : `Fort L${nextFortLevel} (${fortMandateCost}M / ${fortIndCost}ind)`}
             </button>
           )}
         </div>

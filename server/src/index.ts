@@ -109,6 +109,7 @@ const start = async () => {
           valueTraits: { individualist: row.individualist, progressive: row.progressive, militaristic: row.militaristic, expansionist: row.expansionist },
           constructionType: (row.constructionType ?? null) as TerritoryState['constructionType'],
           constructionTicksLeft: row.constructionTicksLeft ?? null,
+          pendingConstructionType: (row.pendingConstructionType ?? null) as TerritoryState['pendingConstructionType'],
         },
       };
     }
@@ -143,6 +144,7 @@ const start = async () => {
         entry.unrest = t.unrest;
         entry.constructionType = t.constructionType ?? null;
         entry.constructionTicksLeft = t.constructionTicksLeft ?? null;
+        entry.pendingConstructionType = t.pendingConstructionType ?? null;
 
         // Culture breakdown — only meaningful when territory has an owner.
         if (t.ownerId && nationCultures[t.ownerId]) {
@@ -226,7 +228,18 @@ const start = async () => {
       if (!territory) return reply.code(404).send({ error: 'Territory not found' });
       if (territory.ownerId !== nationId) return reply.code(403).send({ error: 'Not your territory' });
       if (territory.hasRoad) return reply.code(400).send({ error: 'Territory already has a road' });
-      if (territory.constructionType !== null) return reply.code(400).send({ error: 'Territory has construction in progress' });
+      if (territory.pendingConstructionType !== null) return reply.code(400).send({ error: 'Next construction already queued' });
+
+      if (territory.constructionType !== null) {
+        // DEFERRED PATH: queue road to fire when current construction finishes.
+        if (nation.mandateUsed + cost > mandateBudget(nation.wealthStock)) return reply.code(400).send({ error: 'Insufficient mandates' });
+        await prisma.$transaction([
+          prisma.territoryState.update({ where: { id: p.territoryId }, data: { pendingConstructionType: 'road' } }),
+          prisma.nation.update({ where: { id: nationId }, data: { mandateUsed: { increment: cost } } }),
+        ]);
+        return { ok: true };
+      }
+
       const alreadyQueued = await prisma.queuedAction.findFirst({
         where: { payload: { path: ['territoryId'], equals: p.territoryId } },
       });
@@ -241,8 +254,19 @@ const start = async () => {
       if (territory.ownerId !== nationId) return reply.code(403).send({ error: 'Not your territory' });
       if (!defById.get(p.territoryId)?.isCoastal) return reply.code(400).send({ error: 'Territory is not coastal' });
       if (territory.hasPort) return reply.code(400).send({ error: 'Territory already has a port' });
-      if (territory.constructionType !== null) return reply.code(400).send({ error: 'Territory has construction in progress' });
+      if (territory.pendingConstructionType !== null) return reply.code(400).send({ error: 'Next construction already queued' });
       if (nation.indStock < BUILD_INDUSTRY['port']!) return reply.code(400).send({ error: 'Insufficient industry stockpile' });
+
+      if (territory.constructionType !== null) {
+        // DEFERRED PATH: queue port build to start when current construction finishes.
+        if (nation.mandateUsed + cost > mandateBudget(nation.wealthStock)) return reply.code(400).send({ error: 'Insufficient mandates' });
+        await prisma.$transaction([
+          prisma.territoryState.update({ where: { id: p.territoryId }, data: { pendingConstructionType: 'port' } }),
+          prisma.nation.update({ where: { id: nationId }, data: { mandateUsed: { increment: cost }, indStock: { decrement: BUILD_INDUSTRY['port']! } } }),
+        ]);
+        return { ok: true };
+      }
+
       const alreadyQueued = await prisma.queuedAction.findFirst({
         where: { payload: { path: ['territoryId'], equals: p.territoryId } },
       });
@@ -256,16 +280,27 @@ const start = async () => {
       if (!territory) return reply.code(404).send({ error: 'Territory not found' });
       if (territory.ownerId !== nationId) return reply.code(403).send({ error: 'Not your territory' });
       if (territory.fortificationLevel >= 3) return reply.code(400).send({ error: 'Fortification already at maximum level' });
-      if (territory.constructionType !== null) return reply.code(400).send({ error: 'Territory has construction in progress' });
+      if (territory.pendingConstructionType !== null) return reply.code(400).send({ error: 'Next construction already queued' });
       const targetLevel = (territory.fortificationLevel + 1) as 1 | 2 | 3;
       const constructionType = `fort_l${targetLevel}` as const;
       if (nation.indStock < BUILD_INDUSTRY[constructionType]!) return reply.code(400).send({ error: 'Insufficient industry stockpile' });
+      cost = FORT_MANDATE_COSTS[targetLevel];
+      finalPayload = { territoryId: p.territoryId, targetLevel };
+
+      if (territory.constructionType !== null) {
+        // DEFERRED PATH: queue fort build to start when current construction finishes.
+        if (nation.mandateUsed + cost > mandateBudget(nation.wealthStock)) return reply.code(400).send({ error: 'Insufficient mandates' });
+        await prisma.$transaction([
+          prisma.territoryState.update({ where: { id: p.territoryId }, data: { pendingConstructionType: constructionType } }),
+          prisma.nation.update({ where: { id: nationId }, data: { mandateUsed: { increment: cost }, indStock: { decrement: BUILD_INDUSTRY[constructionType]! } } }),
+        ]);
+        return { ok: true };
+      }
+
       const alreadyQueued = await prisma.queuedAction.findFirst({
         where: { payload: { path: ['territoryId'], equals: p.territoryId } },
       });
       if (alreadyQueued) return reply.code(400).send({ error: 'A build is already queued for this territory this tick' });
-      cost = FORT_MANDATE_COSTS[targetLevel];
-      finalPayload = { territoryId: p.territoryId, targetLevel };
     }
 
     if (nation.mandateUsed + cost > mandateBudget(nation.wealthStock)) {

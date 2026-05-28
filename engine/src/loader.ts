@@ -36,6 +36,7 @@ function initialState(def: TerritoryDef): TerritoryState {
     valueTraits: { ...def.valueTraits },
     constructionType: null,
     constructionTicksLeft: null,
+    pendingConstructionType: null,
   };
 }
 

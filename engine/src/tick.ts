@@ -160,9 +160,14 @@ export function resolveTick(
     if (t.state.constructionType === null || t.state.constructionTicksLeft === null) continue;
     t.state.constructionTicksLeft -= 1;
     if (t.state.constructionTicksLeft > 0) continue;
+
+    // Construction complete — capture both completed type and pending before clearing.
     const completedType = t.state.constructionType;
+    const pending = t.state.pendingConstructionType;
     t.state.constructionType = null;
     t.state.constructionTicksLeft = null;
+    t.state.pendingConstructionType = null;
+
     const ownerName = t.state.ownerId ? (nations[t.state.ownerId]?.name ?? t.state.ownerId) : 'Unknown';
     if (completedType === 'port') {
       t.state.hasPort = true;
@@ -173,6 +178,17 @@ export function resolveTick(
         tick: world.tick + 1,
         message: `${ownerName} completed fortification level ${t.state.fortificationLevel} in ${t.def.name}.`,
       });
+    }
+
+    // Start queued pending build immediately.
+    // Mandate + industry were deducted at queue time; just start the work here.
+    if (pending === 'road') {
+      t.state.hasRoad = true;
+      eventLog.push({ tick: world.tick + 1, message: `${ownerName} completed a queued road in ${t.def.name}.` });
+    } else if (pending) {
+      t.state.constructionType = pending;
+      t.state.constructionTicksLeft = BUILD_TICKS[pending]!;
+      eventLog.push({ tick: world.tick + 1, message: `${ownerName} started queued ${pending} construction in ${t.def.name}.` });
     }
   }
 

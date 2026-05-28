@@ -8,7 +8,7 @@ import { DevToolbar } from './components/DevToolbar';
 
 type AuthState = 'loading' | 'logged-out' | 'logged-in';
 
-const REFRESH_INTERVAL_MS = 30_000;
+const REFRESH_INTERVAL_MS = 5_000;
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState>('loading');
@@ -105,11 +105,14 @@ export default function App() {
       </div>
       {world.recentEvents.length > 0 && (
         <div style={{
-          background: '#0d0d1a', borderTop: '1px solid #2a2a4a', padding: '0.3rem 1rem',
-          fontFamily: 'monospace', fontSize: '0.75rem', color: '#888', flexShrink: 0,
+          background: '#0d0d1a', borderTop: '1px solid #2a2a4a', padding: '0.25rem 1rem',
+          fontFamily: 'monospace', fontSize: '0.73rem', color: '#888', flexShrink: 0,
+          maxHeight: '5rem', overflowY: 'auto',
         }}>
-          <span style={{ color: '#555', marginRight: '0.5rem' }}>Events:</span>
-          {world.recentEvents[0]}
+          <span style={{ color: '#444', marginRight: '0.4rem', letterSpacing: '0.05em' }}>LOG</span>
+          {world.recentEvents.map((e, i) => (
+            <div key={i} style={{ color: i === 0 ? '#aaa' : '#666', padding: '0.05rem 0' }}>{e}</div>
+          ))}
         </div>
       )}
     </div>
