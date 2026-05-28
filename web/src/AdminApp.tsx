@@ -42,11 +42,12 @@ function ConstructionCell({ row }: { row: AdminTerritoryRow }) {
 
 interface TerritoryRowProps {
   row: AdminTerritoryRow;
+  nations: AdminNationRow[];
   adminKey: string;
   onRefresh: () => void;
 }
 
-function TerritoryTableRow({ row, adminKey, onRefresh }: TerritoryRowProps) {
+function TerritoryTableRow({ row, nations, adminKey, onRefresh }: TerritoryRowProps) {
   const eq = row.unrestCauses?.equilibrium ?? null;
   const dir = eq !== null ? (row.unrest < eq ? '↑' : row.unrest > eq ? '↓' : '=') : '';
   const unrestColor = row.unrest > 0.6 ? '#ff6b6b' : row.unrest > 0.3 ? '#f0a500' : '#888';
@@ -60,6 +61,8 @@ function TerritoryTableRow({ row, adminKey, onRefresh }: TerritoryRowProps) {
     catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
   };
 
+  const VALID_FAMILIES = ['latin', 'european', 'arab', 'slavic', 'east_asian', 'african', 'south_asian', 'indigenous'];
+
   const promptTrait = async (trait: 'individualist' | 'progressive' | 'militaristic' | 'expansionist') => {
     const cur = row.culture[trait];
     const raw = window.prompt(`Set ${trait} for ${row.name} (−1.00–+1.00):`, fmt(cur));
@@ -70,16 +73,64 @@ function TerritoryTableRow({ row, adminKey, onRefresh }: TerritoryRowProps) {
     catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
   };
 
+  const promptFamily = async () => {
+    const raw = window.prompt(
+      `Set cultural family for ${row.name}:\n${VALID_FAMILIES.join(', ')}\n(leave blank to clear override)`,
+      row.culture.family,
+    );
+    if (raw === null) return;
+    const val = raw.trim() === '' ? null : raw.trim();
+    if (val && !VALID_FAMILIES.includes(val)) { alert(`Invalid family. Must be one of: ${VALID_FAMILIES.join(', ')}`); return; }
+    try { await api.admin.setFamily(adminKey, row.id, val); onRefresh(); }
+    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
+  };
+
+  const promptOwner = async (nations: AdminNationRow[]) => {
+    const ids = nations.map((n) => `${n.id} (${n.name})`).join('\n');
+    const raw = window.prompt(`Set owner for ${row.name}:\n${ids}\n\nEnter nation ID, or leave blank to unclaim:`, row.ownerId ?? '');
+    if (raw === null) return;
+    const val = raw.trim() === '' ? null : raw.trim();
+    try { await api.admin.setOwner(adminKey, row.id, val); onRefresh(); }
+    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
+  };
+
+  const promptFort = async () => {
+    const raw = window.prompt(`Set fort level for ${row.name} (0–3):`, String(row.fortificationLevel));
+    if (raw === null) return;
+    const v = parseInt(raw, 10);
+    if (isNaN(v) || v < 0 || v > 3) { alert('Must be 0–3'); return; }
+    try { await api.admin.setFort(adminKey, row.id, v); onRefresh(); }
+    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
+  };
+
   const toggleRevolt = async () => {
-    if (!window.confirm(`Toggle revolt on ${row.name}?`)) return;
     try { await api.admin.toggleRevolt(adminKey, row.id); onRefresh(); }
+    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
+  };
+
+  const toggleRoad = async () => {
+    try { await api.admin.toggleRoad(adminKey, row.id); onRefresh(); }
+    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
+  };
+
+  const togglePort = async () => {
+    if (!row.isCoastal && !row.hasPort) { alert('Territory is not coastal'); return; }
+    try { await api.admin.togglePort(adminKey, row.id); onRefresh(); }
+    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
+  };
+
+  const clearConstruction = async () => {
+    if (!row.constructionType && !row.pendingConstructionType) return;
+    try { await api.admin.clearConstruction(adminKey, row.id); onRefresh(); }
     catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
   };
 
   return (
     <tr style={{ background: row.isInRevolt ? '#1a0000' : 'transparent' }}>
       <td style={td}>{row.name}</td>
-      <td style={td}><span style={{ color: '#888' }}>{row.ownerName ?? '—'}</span></td>
+      <td style={{ ...td, cursor: 'pointer' }} onClick={() => promptOwner(nations)} title="Click to reassign">
+        <span style={{ color: '#888' }}>{row.ownerName ?? <span style={{ color: '#333' }}>unclaimed</span>}</span>
+      </td>
       <td style={{ ...td, cursor: 'pointer' }} onClick={promptUnrest} title="Click to set">
         <span style={{ color: unrestColor }}>{fmtU(row.unrest)}</span>
         {eq !== null && <span style={{ color: '#444' }}> {dir} {fmtU(eq)}</span>}
@@ -88,14 +139,22 @@ function TerritoryTableRow({ row, adminKey, onRefresh }: TerritoryRowProps) {
         {row.isInRevolt ? <span style={{ color: '#ff4444' }}>REVOLT</span> : <span style={{ color: '#333' }}>—</span>}
       </td>
       <td style={td}>
-        {row.hasRoad ? <span style={{ color: '#4caf50' }}>R</span> : <span style={{ color: '#333' }}>—</span>}
-        {row.hasPort ? <span style={{ color: '#7ecfff' }}> P</span> : ''}
-        {row.fortificationLevel > 0 ? <span style={{ color: '#f0a500' }}> F{row.fortificationLevel}</span> : ''}
+        <span style={{ cursor: 'pointer', color: row.hasRoad ? '#4caf50' : '#444' }} onClick={toggleRoad} title="Click to toggle road">R</span>
+        {row.isCoastal && <span style={{ cursor: 'pointer', color: row.hasPort ? '#7ecfff' : '#444', marginLeft: '0.3rem' }} onClick={togglePort} title="Click to toggle port">P</span>}
+        <span style={{ cursor: 'pointer', color: row.fortificationLevel > 0 ? '#f0a500' : '#444', marginLeft: '0.3rem' }} onClick={promptFort} title="Click to set fort level">F{row.fortificationLevel}</span>
       </td>
-      <td style={td}><ConstructionCell row={row} /></td>
-      <td style={{ ...td, cursor: 'pointer' }} onClick={() => promptTrait('individualist')} title="Click to nudge">
-        <CultureAxes c={row.culture} />
-        <span style={{ color: '#444', marginLeft: '0.2rem' }}>{row.culture.family.slice(0, 4)}</span>
+      <td style={{ ...td, cursor: row.constructionType ? 'pointer' : 'default' }} onClick={clearConstruction} title={row.constructionType ? 'Click to clear construction' : undefined}>
+        <ConstructionCell row={row} />
+      </td>
+      <td style={{ ...td, cursor: 'pointer' }} title="Click any axis to nudge">
+        {(['individualist', 'progressive', 'militaristic', 'expansionist'] as const).map((t) => (
+          <span key={t} onClick={() => promptTrait(t)} style={{ marginRight: '0.25rem', cursor: 'pointer', color: row.culture[t] > 0.15 ? '#7ecfff' : row.culture[t] < -0.15 ? '#f0a500' : '#555' }}>
+            {t[0].toUpperCase()}:{fmt(row.culture[t], 1)}
+          </span>
+        ))}
+        <span onClick={promptFamily} style={{ cursor: 'pointer', color: '#444', marginLeft: '0.1rem' }} title="Click to change family">
+          [{row.culture.family}]
+        </span>
       </td>
       <td style={td}>
         {row.compatibility !== null
@@ -150,26 +209,27 @@ function NationsTable({ nations }: { nations: AdminNationRow[] }) {
 
 interface TerritoriesTableProps {
   territories: AdminTerritoryRow[];
+  nations: AdminNationRow[];
   adminKey: string;
   onRefresh: () => void;
 }
 
-function TerritoriesTable({ territories, adminKey, onRefresh }: TerritoriesTableProps) {
+function TerritoriesTable({ territories, nations, adminKey, onRefresh }: TerritoriesTableProps) {
   return (
     <>
-      <div style={sectionHead}>TERRITORIES <span style={{ color: '#333' }}>(click unrest/culture to nudge; click revolt to toggle)</span></div>
+      <div style={sectionHead}>TERRITORIES <span style={{ color: '#333' }}>(all cells are clickable — owner, unrest, revolt, infra R/P/F, construction, culture axes, family, compat)</span></div>
       <div style={{ overflowX: 'auto' }}>
         <table style={tblStyle}>
           <thead>
             <tr>
-              {['Name', 'Owner', 'Unrest → Eq.', 'Revolt', 'Infra', 'Construction', 'Culture (click I to nudge all)', 'Compat'].map((h) => (
+              {['Name', 'Owner ✎', 'Unrest → Eq. ✎', 'Revolt ✎', 'R/P/F ✎', 'Construction ✎', 'Culture axes ✎ [family ✎]', 'Compat'].map((h) => (
                 <th key={h} style={th}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {territories.map((row) => (
-              <TerritoryTableRow key={row.id} row={row} adminKey={adminKey} onRefresh={onRefresh} />
+              <TerritoryTableRow key={row.id} row={row} nations={nations} adminKey={adminKey} onRefresh={onRefresh} />
             ))}
           </tbody>
         </table>
@@ -322,7 +382,7 @@ export default function AdminApp() {
       {/* Body */}
       <div style={{ padding: '0 1rem 2rem' }}>
         <NationsTable nations={world.nations} />
-        <TerritoriesTable territories={world.territories} adminKey={key} onRefresh={() => loadWorld(key)} />
+        <TerritoriesTable territories={world.territories} nations={world.nations} adminKey={key} onRefresh={() => loadWorld(key)} />
         <EventLog events={world.recentEvents} />
       </div>
     </div>

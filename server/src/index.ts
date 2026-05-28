@@ -163,7 +163,8 @@ const start = async () => {
         if (t.ownerId && nationCultures[t.ownerId]) {
           const nc = nationCultures[t.ownerId]!;
           const terrTraits = { individualist: t.individualist, progressive: t.progressive, militaristic: t.militaristic, expansionist: t.expansionist };
-          const compat = computeCompatibility(terrTraits, def.culturalFamily, nc);
+          const effectiveFamily = (t.culturalFamily ?? def.culturalFamily) as import('@war/engine').CulturalFamily;
+          const compat = computeCompatibility(terrTraits, effectiveFamily, nc);
 
           const ownerRow = nationRows.find((n) => n.id === t.ownerId);
           const capital = ownerRow?.capitalTerritoryId ?? null;
@@ -483,7 +484,8 @@ const start = async () => {
       let compatibility = null, unrestCauses = null;
       if (t.ownerId && nc && def) {
         const terrTraits = { individualist: t.individualist, progressive: t.progressive, militaristic: t.militaristic, expansionist: t.expansionist };
-        compatibility = computeCompatibility(terrTraits, def.culturalFamily, nc);
+        const effectiveFamily = (t.culturalFamily ?? def.culturalFamily) as import('@war/engine').CulturalFamily;
+        compatibility = computeCompatibility(terrTraits, effectiveFamily, nc);
         const hops = ownerRow?.capitalTerritoryId ? bfsDistance(adjacency, ownerRow.capitalTerritoryId, t.id) : 0;
         unrestCauses = computeUnrestEquilibrium(compatibility, hops, t.hasRoad, territoryCounts[t.ownerId!] ?? 1);
       }
@@ -497,7 +499,11 @@ const start = async () => {
         constructionTicksLeft: t.constructionTicksLeft ?? null,
         pendingConstructionType: t.pendingConstructionType ?? null,
         compatibility,
-        culture: { individualist: t.individualist, progressive: t.progressive, militaristic: t.militaristic, expansionist: t.expansionist, family: def?.culturalFamily ?? 'unknown' },
+        culture: {
+          individualist: t.individualist, progressive: t.progressive,
+          militaristic: t.militaristic, expansionist: t.expansionist,
+          family: t.culturalFamily ?? def?.culturalFamily ?? 'unknown',
+        },
       };
     });
     const nations = nationRows.map((n) => ({
@@ -541,6 +547,66 @@ const start = async () => {
     if (!t) return reply.code(404).send({ error: 'Territory not found' });
     await prisma.territoryState.update({ where: { id }, data: { isInRevolt: !t.isInRevolt } });
     return { ok: true, isInRevolt: !t.isInRevolt };
+  });
+
+  app.post('/api/admin/territory/:id/set-family', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { family } = request.body as { family?: string | null };
+    const validFamilies = ['latin', 'european', 'arab', 'slavic', 'east_asian', 'african', 'south_asian', 'indigenous'] as const;
+    if (family !== null && family !== undefined && !validFamilies.includes(family as typeof validFamilies[number])) {
+      return reply.code(400).send({ error: `family must be one of: ${validFamilies.join(', ')} (or null to clear override)` });
+    }
+    await prisma.territoryState.update({ where: { id }, data: { culturalFamily: family ?? null } });
+    return { ok: true, culturalFamily: family ?? null };
+  });
+
+  app.post('/api/admin/territory/:id/set-owner', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { ownerId } = request.body as { ownerId?: string | null };
+    if (ownerId !== null && ownerId !== undefined) {
+      const nation = await prisma.nation.findUnique({ where: { id: ownerId } });
+      if (!nation) return reply.code(400).send({ error: `Nation not found: ${ownerId}` });
+    }
+    await prisma.territoryState.update({ where: { id }, data: { ownerId: ownerId ?? null } });
+    return { ok: true, ownerId: ownerId ?? null };
+  });
+
+  app.post('/api/admin/territory/:id/set-fort', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { level } = request.body as { level?: number };
+    if (typeof level !== 'number' || !Number.isInteger(level) || level < 0 || level > 3) {
+      return reply.code(400).send({ error: 'level must be 0–3' });
+    }
+    await prisma.territoryState.update({ where: { id }, data: { fortificationLevel: level } });
+    return { ok: true };
+  });
+
+  app.post('/api/admin/territory/:id/toggle-road', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const t = await prisma.territoryState.findUnique({ where: { id } });
+    if (!t) return reply.code(404).send({ error: 'Territory not found' });
+    await prisma.territoryState.update({ where: { id }, data: { hasRoad: !t.hasRoad } });
+    return { ok: true, hasRoad: !t.hasRoad };
+  });
+
+  app.post('/api/admin/territory/:id/toggle-port', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const t = await prisma.territoryState.findUnique({ where: { id } });
+    if (!t) return reply.code(404).send({ error: 'Territory not found' });
+    await prisma.territoryState.update({ where: { id }, data: { hasPort: !t.hasPort } });
+    return { ok: true, hasPort: !t.hasPort };
+  });
+
+  app.post('/api/admin/territory/:id/clear-construction', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    await prisma.territoryState.update({ where: { id }, data: { constructionType: null, constructionTicksLeft: null, pendingConstructionType: null } });
+    return { ok: true };
   });
 
   // ── Dev endpoints (session-gated to player1 / nation_costa_rica) ───────────

@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState } from '@war/engine';
+import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState, CulturalFamily } from '@war/engine';
 import { prisma } from './db';
 
 type TxClient = Prisma.TransactionClient;
@@ -20,8 +20,12 @@ export async function loadWorldState(
   for (const def of defs) {
     const s = stateById.get(def.id);
     if (!s) throw new Error(`No DB state row for territory "${def.id}"`);
+    // Apply DB override for culturalFamily if set (admin tuning tool).
+    const effectiveDef: TerritoryDef = s.culturalFamily
+      ? { ...def, culturalFamily: s.culturalFamily as CulturalFamily }
+      : def;
     territories[def.id] = {
-      def,
+      def: effectiveDef,
       state: {
         ownerId: s.ownerId,
         fortificationLevel: s.fortificationLevel,

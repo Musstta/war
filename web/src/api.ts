@@ -215,8 +215,37 @@ export const api = {
       }),
     toggleRevolt: (key: string, id: string) =>
       apiFetch<{ ok: boolean; isInRevolt: boolean }>(`/api/admin/territory/${id}/toggle-revolt`, {
+        method: 'POST', headers: adminHeaders(key),
+      }),
+    setFamily: (key: string, id: string, family: string | null) =>
+      apiFetch<{ ok: boolean }>(`/api/admin/territory/${id}/set-family`, {
         method: 'POST',
-        headers: adminHeaders(key),
+        headers: adminHeaders(key, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ family }),
+      }),
+    setOwner: (key: string, id: string, ownerId: string | null) =>
+      apiFetch<{ ok: boolean }>(`/api/admin/territory/${id}/set-owner`, {
+        method: 'POST',
+        headers: adminHeaders(key, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ ownerId }),
+      }),
+    setFort: (key: string, id: string, level: number) =>
+      apiFetch<{ ok: boolean }>(`/api/admin/territory/${id}/set-fort`, {
+        method: 'POST',
+        headers: adminHeaders(key, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ level }),
+      }),
+    toggleRoad: (key: string, id: string) =>
+      apiFetch<{ ok: boolean }>(`/api/admin/territory/${id}/toggle-road`, {
+        method: 'POST', headers: adminHeaders(key),
+      }),
+    togglePort: (key: string, id: string) =>
+      apiFetch<{ ok: boolean }>(`/api/admin/territory/${id}/toggle-port`, {
+        method: 'POST', headers: adminHeaders(key),
+      }),
+    clearConstruction: (key: string, id: string) =>
+      apiFetch<{ ok: boolean }>(`/api/admin/territory/${id}/clear-construction`, {
+        method: 'POST', headers: adminHeaders(key),
       }),
   },
 };
