@@ -28,10 +28,12 @@ export function currentPhase(): Phase {
   return crHour >= 19 ? 'prep' : 'main';
 }
 
-// Mandate budget scales with a nation's wealth stockpile.
-// Placeholder formula — tune via harness once more systems exist.
-export function mandateBudget(wealthStock: number): number {
-  return Math.max(1, 3 + Math.floor(wealthStock / 5));
+// [PLACEHOLDER] Mandate budget: flat base + 1 per territory owned beyond the first.
+// Decoupled from stockpiles so the pool doesn't grow unboundedly as wealth accumulates.
+// Territory count is a non-accumulating signal that scales with expansion pressure.
+// Tune base and per-territory increment via harness once combat/diplomacy exist.
+export function mandateBudget(territoryCount: number): number {
+  return 3 + Math.max(0, territoryCount - 1);
 }
 
 // Mandate cost per action type. build_fort cost is variable — see FORT_MANDATE_COSTS.

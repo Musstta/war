@@ -60,13 +60,16 @@ app.post('/api/logout', async (_request, reply) => {
 app.get('/api/me', async (request, reply) => {
   const nationId = getSession(request);
   if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
-  const nation = await prisma.nation.findUnique({ where: { id: nationId } });
+  const [nation, tcount] = await Promise.all([
+    prisma.nation.findUnique({ where: { id: nationId } }),
+    prisma.territoryState.count({ where: { ownerId: nationId } }),
+  ]);
   if (!nation) return reply.code(404).send({ error: 'Nation not found' });
   return {
     nationId,
     name: nation.name,
     phase: currentPhase(),
-    mandateBudget: mandateBudget(nation.wealthStock),
+    mandateBudget: mandateBudget(tcount),
     mandateUsed: nation.mandateUsed,
   };
 });
@@ -191,7 +194,7 @@ const start = async () => {
       tick: meta.tick,
       phase: currentPhase(),
       myNationId: nationId,
-      mandateBudget: myNationRow ? mandateBudget(myNationRow.wealthStock) : 0,
+      mandateBudget: mandateBudget(territoryCounts[nationId] ?? 0),
       mandateUsed: myNationRow?.mandateUsed ?? 0,
       nations,
       territories,
@@ -240,8 +243,12 @@ const start = async () => {
       return reply.code(400).send({ error: `${type} can only be queued during ${allowedPhase} phase` });
     }
 
-    const nation = await prisma.nation.findUnique({ where: { id: nationId } });
+    const [nation, myTerritoryCount] = await Promise.all([
+      prisma.nation.findUnique({ where: { id: nationId } }),
+      prisma.territoryState.count({ where: { ownerId: nationId } }),
+    ]);
     if (!nation) return reply.code(404).send({ error: 'Nation not found' });
+    const myBudget = mandateBudget(myTerritoryCount);
 
     // cost may be overridden below for build_fort (variable per level).
     // Mandate check runs after type-specific blocks so the real cost is known.
@@ -264,7 +271,7 @@ const start = async () => {
 
       if (territory.constructionType !== null) {
         // DEFERRED PATH: queue road to fire when current construction finishes.
-        if (nation.mandateUsed + cost > mandateBudget(nation.wealthStock)) return reply.code(400).send({ error: 'Insufficient mandates' });
+        if (nation.mandateUsed + cost > myBudget) return reply.code(400).send({ error: 'Insufficient mandates' });
         await prisma.$transaction([
           prisma.territoryState.update({ where: { id: p.territoryId }, data: { pendingConstructionType: 'road' } }),
           prisma.nation.update({ where: { id: nationId }, data: { mandateUsed: { increment: cost } } }),
@@ -291,7 +298,7 @@ const start = async () => {
 
       if (territory.constructionType !== null) {
         // DEFERRED PATH: queue port build to start when current construction finishes.
-        if (nation.mandateUsed + cost > mandateBudget(nation.wealthStock)) return reply.code(400).send({ error: 'Insufficient mandates' });
+        if (nation.mandateUsed + cost > myBudget) return reply.code(400).send({ error: 'Insufficient mandates' });
         await prisma.$transaction([
           prisma.territoryState.update({ where: { id: p.territoryId }, data: { pendingConstructionType: 'port' } }),
           prisma.nation.update({ where: { id: nationId }, data: { mandateUsed: { increment: cost }, indStock: { decrement: BUILD_INDUSTRY['port']! } } }),
@@ -321,7 +328,7 @@ const start = async () => {
 
       if (territory.constructionType !== null) {
         // DEFERRED PATH: queue fort build to start when current construction finishes.
-        if (nation.mandateUsed + cost > mandateBudget(nation.wealthStock)) return reply.code(400).send({ error: 'Insufficient mandates' });
+        if (nation.mandateUsed + cost > myBudget) return reply.code(400).send({ error: 'Insufficient mandates' });
         await prisma.$transaction([
           prisma.territoryState.update({ where: { id: p.territoryId }, data: { pendingConstructionType: constructionType } }),
           prisma.nation.update({ where: { id: nationId }, data: { mandateUsed: { increment: cost }, indStock: { decrement: BUILD_INDUSTRY[constructionType]! } } }),
@@ -335,7 +342,7 @@ const start = async () => {
       if (alreadyQueued) return reply.code(400).send({ error: 'A build is already queued for this territory this tick' });
     }
 
-    if (nation.mandateUsed + cost > mandateBudget(nation.wealthStock)) {
+    if (nation.mandateUsed + cost > myBudget) {
       return reply.code(400).send({ error: 'Insufficient mandates' });
     }
 
@@ -496,7 +503,7 @@ const start = async () => {
     const nations = nationRows.map((n) => ({
       id: n.id, name: n.name, isAI: n.isAI,
       stockpiles: { population: n.popStock, industry: n.indStock, wealth: n.wealthStock },
-      armySize: n.armySize, mandateBudget: mandateBudget(n.wealthStock), mandateUsed: n.mandateUsed,
+      armySize: n.armySize, mandateBudget: mandateBudget(territoryCounts[n.id] ?? 0), mandateUsed: n.mandateUsed,
       capital: n.capitalTerritoryId, culture: nationCultures[n.id] ?? null,
     }));
     return {
