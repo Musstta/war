@@ -11,9 +11,12 @@ export interface TerritoryView {
   ownerId: string | null;
   hasRoad: boolean;
   hasPort: boolean;
+  isCoastal: boolean;
   // present only for own + adjacent territories
   fortificationLevel?: number;
   unrest?: number;
+  constructionType?: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | null;
+  constructionTicksLeft?: number | null;
 }
 
 export interface NationView {

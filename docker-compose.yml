@@ -37,6 +37,8 @@ services:
       postgres:
         condition: service_healthy
     volumes:
+      # server/src and server/prisma are live-mounted — changes take effect on restart.
+      # engine/ is baked into the image — run `docker compose build server` after any engine change.
       - ./server/src:/app/server/src:ro
       - ./server/prisma:/app/server/prisma:ro
 

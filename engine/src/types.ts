@@ -48,6 +48,9 @@ export interface TerritoryState {
   unrest: number; // 0.0–1.0 (design doc §12)
   /** Mutable copy of value traits; drift rules applied here each tick (design doc §7.5). */
   valueTraits: ValueTraits;
+  /** Phase 4: single construction slot — ports and forts occupy this slot; roads are immediate. */
+  constructionType: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | null;
+  constructionTicksLeft: number | null;
 }
 
 export interface Territory {
@@ -89,4 +92,14 @@ export interface QueuedAction {
   nationId: string;
   type: string;
   payload: unknown;
+}
+
+/** Per-action outcome returned by resolveTick. Used by the server for mandate refunds. */
+export interface ActionResult {
+  nationId: string;
+  type: string;
+  payload: unknown;
+  status: 'applied' | 'discarded';
+  /** Present when status === 'discarded'. Human-readable; for logging only. */
+  reason?: string;
 }

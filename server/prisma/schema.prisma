@@ -49,6 +49,10 @@ model TerritoryState {
   progressive   Float
   militaristic  Float
   expansionist  Float
+
+  // Phase 4: single construction slot for ports and forts (roads are immediate).
+  constructionType     String? // 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3'
+  constructionTicksLeft Int?
 }
 
 // Actions queued during the Main or Preparation phase, resolved atomically at the

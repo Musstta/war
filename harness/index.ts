@@ -45,7 +45,7 @@ console.log(sep);
 const fmt = (n: number, w: number) => n.toFixed(1).padStart(w);
 
 for (let i = 0; i < TICKS; i++) {
-  world = resolveTick(world, []);
+  ({ world } = resolveTick(world, []));
   const a = world.nations['nation_a'].stockpiles;
   const b = world.nations['nation_b'].stockpiles;
   console.log(

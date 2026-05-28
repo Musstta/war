@@ -185,8 +185,21 @@ Items **intentionally deferred** until before any real-world or wider-audience d
 
 ---
 
+## 13. Deferred Architecture Tasks
+
+Items that are explicitly **not** acted on yet. Each has a trigger condition — do not address before that trigger.
+
+| Task | What | Trigger |
+|---|---|---|
+| **Action-handler registry / Command Pattern** | Extract per-action validation out of the monolithic `/api/action` endpoint into separate handler files (one per action type), registered in a map. The current inline `if (type === ...)` blocks will become unmanageable. | **Start of the Diplomacy sub-phase**, before adding treaty actions. |
+| **Immer (or equivalent) for engine immutability** | The engine currently clones state with shallow spread (`{ ...v, state: { ...v.state } }`). Once state has nested arrays/objects (e.g. culture trait arrays, treaty lists), shallow spread risks accidental shared-reference bugs — hard to track down. Immer's `produce()` would make immutability structural rather than manual. | **Start of the Culture sub-phase**, when TerritoryState first gains nested structure. Watch specifically for accidental shared references in the engine's action cases, not just performance. |
+| **Move heavy compute outside the tick transaction** | Currently `resolveTick` (pure CPU) runs inside the Prisma transaction, holding a DB connection and row locks for its entire duration. Fine for the current ~10-territory scale. At larger scale, this adds latency to the lock window for no benefit — the computation should happen before the transaction opens, with only the final writes inside it. | **Phase 7 (map scale-up)**, when territory count grows past ~100. |
+
+---
+
 ## 12. Change Log
 
 - **v0.1** — Initial tech stack and build plan. Stack: TypeScript / Node / Fastify / PostgreSQL / Prisma / React / Vite / Tailwind / MapLibre GL JS, Docker Compose, self-hosted via Cloudflare Tunnel. Established the engine-as-pure-package principle, the territory-as-data-file principle, and the 8-phase build order. Map data via Natural Earth.
 - **v0.2** — Phase 0 built. Port assignments locked (web: 42069, API: 3001). Fastify chosen. Named volume `war_pgdata` established. Deferred task logged: switch web to static build served from server/ before production hardening.
 - **v0.3** — Phase 3 built. MapLibre GL JS map with Natural Earth Central America geodata. 5-player auth (signed cookies). Fog-of-war API. Two-phase day (Main until 19:00 CR, Prep until midnight). Mandate budget. `build_road` action end-to-end. Deferred security hardening checklist in §11.
+- **v0.4** — Phase 4 Infrastructure. `build_port` and `build_fort` actions. Strict single construction slot per territory (all build types — road, port, fort — compete for one slot; sequential only). Construction state (`constructionType`, `constructionTicksLeft`) in DB and engine. Industry cost deducted at tick time by engine; validated against snapshot at queue time. `resolveTick` now returns `{ world, actionResults }` — explicit per-action applied/discarded status with reason string; server refund logic consumes this directly instead of diffing state. Deferred architecture tasks logged in §13. All build times and costs tagged `[PLACEHOLDER]`. `engine/` is baked into server image — note in docker-compose.yml and dev-commands.md §9.

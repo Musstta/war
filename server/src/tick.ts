@@ -1,47 +1,20 @@
 import cron from 'node-cron';
 import { resolveTick } from '@war/engine';
-import type { TerritoryDef, QueuedAction, WorldState } from '@war/engine';
-import type { QueuedAction as QueuedActionRow } from '@prisma/client';
+import type { TerritoryDef, QueuedAction, ActionResult } from '@war/engine';
 import { prisma } from './db';
 import { loadWorldState, saveWorldState } from './world';
 import { TICK_SCHEDULE } from './config';
-import { ACTION_COSTS } from './phase';
+import { ACTION_COSTS, FORT_MANDATE_COSTS } from './phase';
 
 let tickInProgress = false;
 
-// Compares pre- and post-tick world states to find actions the engine silently discarded.
-// Returns a map of nationId → mandate units to refund.
-// Add a block here for each new action type introduced in Phase 4+.
-function computeRefunds(
-  rows: QueuedActionRow[],
-  before: WorldState,
-  after: WorldState,
-): Map<string, number> {
-  const refunds = new Map<string, number>();
-
-  // build_road: one road per territory per tick. Queue order determines which action
-  // applied; all others are discarded.
-  const roadsByTerritory = new Map<string, string[]>(); // territoryId → nationId[]
-  for (const row of rows) {
-    if (row.type !== 'build_road') continue;
-    const tid = (row.payload as { territoryId: string }).territoryId;
-    if (!roadsByTerritory.has(tid)) roadsByTerritory.set(tid, []);
-    roadsByTerritory.get(tid)!.push(row.nationId);
+// Maps an action result to the mandate cost that should be refunded if discarded.
+function mandateCostFor(result: ActionResult): number {
+  if (result.type === 'build_fort') {
+    const { targetLevel } = result.payload as { targetLevel: 1 | 2 | 3 };
+    return FORT_MANDATE_COSTS[targetLevel] ?? 0;
   }
-
-  for (const [tid, nationIds] of roadsByTerritory) {
-    const builtThisTick =
-      before.territories[tid]?.state.hasRoad === false &&
-      after.territories[tid]?.state.hasRoad === true;
-    // If built: first entry applied, rest discarded. If not built: all discarded.
-    const discarded = builtThisTick ? nationIds.slice(1) : nationIds;
-    const cost = ACTION_COSTS['build_road'] ?? 1;
-    for (const nid of discarded) {
-      refunds.set(nid, (refunds.get(nid) ?? 0) + cost);
-    }
-  }
-
-  return refunds;
+  return ACTION_COSTS[result.type] ?? 0;
 }
 
 /**
@@ -66,14 +39,16 @@ export async function runTick(defs: TerritoryDef[]): Promise<{ tick: number }> {
         payload: r.payload,
       }));
 
-      const newWorld = resolveTick(world, actions);
+      const { world: newWorld, actionResults } = resolveTick(world, actions);
 
-      // Safety-net refunds: credit back mandates for any action the engine discarded.
-      // Fix A (queue-time validation) prevents this from firing in normal play.
-      const refunds = computeRefunds(rows, world, newWorld);
-      for (const [nid, amount] of refunds) {
-        console.warn(`[tick] mandate refund: nation=${nid} amount=${amount} (action discarded at resolution)`);
-        await tx.nation.update({ where: { id: nid }, data: { mandateUsed: { decrement: amount } } });
+      // Refund mandates for any action the engine discarded.
+      // Queue-time validation prevents this in normal play; this is the safety net.
+      for (const result of actionResults) {
+        if (result.status !== 'discarded') continue;
+        const cost = mandateCostFor(result);
+        if (cost === 0) continue;
+        console.warn(`[tick] mandate refund: nation=${result.nationId} type=${result.type} amount=${cost} reason=${result.reason}`);
+        await tx.nation.update({ where: { id: result.nationId }, data: { mandateUsed: { decrement: cost } } });
       }
 
       await saveWorldState(tx, newWorld);

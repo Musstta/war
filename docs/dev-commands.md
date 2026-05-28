@@ -133,6 +133,66 @@ curl -X POST http://localhost:3001/admin/tick \
 
 ---
 
+## 9. Rebuilding after engine changes
+
+The `engine/` directory is baked into the server container at build time — it is **not** bind-mounted. Any change to `engine/src/` requires a container rebuild before it is visible to the running server:
+
+```bash
+docker compose build server
+docker compose up -d server
+```
+
+Only `server/src/` and `server/prisma/` are live-mounted and picked up on `docker compose restart server`.
+
+---
+
+## 10. Phase 4 — Port & Fort construction
+
+Full loop to verify multi-tick construction:
+
+```bash
+# 1. Force Main Phase
+curl -X POST "http://localhost:3001/admin/set-phase?phase=main" \
+  -H "X-Admin-Key: dev-only-insecure-key"
+
+# 2. Accumulate some industry (6 ticks × 5 industry/tick = 30)
+for i in $(seq 6); do
+  curl -s -X POST http://localhost:3001/admin/tick \
+    -H "X-Admin-Key: dev-only-insecure-key" > /dev/null
+done
+
+# 3. Queue build_port on a coastal territory (costa_rica is coastal)
+curl -X POST http://localhost:3001/api/action \
+  -H "Content-Type: application/json" \
+  -b <session-cookie> \
+  -d '{"type":"build_port","payload":{"territoryId":"costa_rica"}}'
+# → {"ok":true}
+
+# 4. Try to double-queue (should be rejected)
+curl -X POST http://localhost:3001/api/action \
+  -H "Content-Type: application/json" \
+  -b <session-cookie> \
+  -d '{"type":"build_fort","payload":{"territoryId":"costa_rica"}}'
+# → {"error":"Construction already queued for this territory"}
+
+# 5. Tick — construction starts (ticksLeft set to BUILD_TICKS - 1 after first tick)
+curl -X POST http://localhost:3001/admin/tick \
+  -H "X-Admin-Key: dev-only-insecure-key"
+# /api/world → constructionType=port, constructionTicksLeft=2
+
+# 6. Run 2 more ticks — construction completes
+for i in 1 2; do
+  curl -s -X POST http://localhost:3001/admin/tick \
+    -H "X-Admin-Key: dev-only-insecure-key" > /dev/null
+done
+# /api/world → constructionType=null, hasPort=true
+# recentEvents → "... completed a port in ..."
+```
+
+**Fort costs:** L1 = 2 mandates + 3 industry (3 ticks), L2 = 3 mandates + 6 industry (7 ticks), L3 = 4 mandates + 10 industry (14 ticks). All placeholder values tagged `[PLACEHOLDER]`.
+
+---
+
 ## Player credentials (dev)
 
 | Username | Password | Nation     |

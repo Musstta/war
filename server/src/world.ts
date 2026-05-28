@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import type { TerritoryDef, Territory, Nation, WorldState } from '@war/engine';
+import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState } from '@war/engine';
 import { prisma } from './db';
 
 type TxClient = Prisma.TransactionClient;
@@ -34,6 +34,8 @@ export async function loadWorldState(
           militaristic: s.militaristic,
           expansionist: s.expansionist,
         },
+        constructionType: (s.constructionType ?? null) as TerritoryState['constructionType'],
+        constructionTicksLeft: s.constructionTicksLeft ?? null,
       },
     };
   }
@@ -92,6 +94,8 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         progressive: state.valueTraits.progressive,
         militaristic: state.valueTraits.militaristic,
         expansionist: state.valueTraits.expansionist,
+        constructionType: state.constructionType,
+        constructionTicksLeft: state.constructionTicksLeft,
       },
     });
   }
