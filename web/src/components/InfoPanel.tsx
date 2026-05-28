@@ -245,8 +245,9 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
       {/* Nation culture axes */}
       {isOwn && owner?.culture && (
         <div style={{ marginTop: '0.4rem', padding: '0.35rem 0.4rem', background: '#0d0d1a', borderRadius: 3 }}>
-          <div style={{ fontSize: '0.7rem', color: '#555', marginBottom: '0.2rem', letterSpacing: '0.05em' }}>
-            NATION CULTURE <span style={{ color: '#333' }}>({owner.culture.primaryFamily ?? '—'})</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
+            <span style={{ fontSize: '0.7rem', color: '#555', letterSpacing: '0.05em' }}>NATION CULTURE</span>
+            <span style={{ fontSize: '0.67rem', color: '#444' }}>blue=pos · amber=neg</span>
           </div>
           {CULTURE_AXES.map((axis) => {
             const v = (owner.culture as NonNullable<typeof owner.culture>)[axis.key];
@@ -254,13 +255,12 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
             const color = v > 0.1 ? '#7ecfff' : v < -0.1 ? '#f0a500' : '#888';
             return (
               <div key={axis.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', padding: '0.05rem 0' }}>
-                <span style={{ color: '#555' }}>{axis.label}</span>
-                <span style={{ color }} title={pole}>
-                  {v >= 0 ? '+' : ''}{v.toFixed(2)} <span style={{ color: '#444', fontSize: '0.65rem' }}>({pole})</span>
-                </span>
+                <span style={{ color }}>{v >= 0 ? '+' : ''}{v.toFixed(2)}</span>
+                <span style={{ color: '#555' }}>({pole})</span>
               </div>
             );
           })}
+          <div style={{ fontSize: '0.65rem', color: '#333', marginTop: '0.15rem' }}>{owner.culture.primaryFamily ?? '—'} family</div>
         </div>
       )}
 

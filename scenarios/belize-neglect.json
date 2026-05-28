@@ -1,0 +1,25 @@
+{
+  "name": "belize-neglect",
+  "description": "Costa Rica conquers Belize at T1, no investment. Shock should persist; equilibrium stays elevated.",
+  "ticks": 50,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    { "tick": 1, "type": "assign_territory", "payload": { "territoryId": "belize", "ownerId": "nation_costa_rica" } }
+  ],
+  "metrics": [
+    "unrest_per_territory_per_tick",
+    "equilibrium_components_per_territory_per_tick",
+    "nation_culture_per_tick",
+    "revolt_events",
+    "stockpiles_per_nation_per_tick"
+  ]
+}

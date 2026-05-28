@@ -1,8 +1,9 @@
 # Tuning Notes
 
 Running log of placeholder-value observations discovered during smoke testing.
-Address during harness tuning once more game systems exist.
 Do not touch constants in source until the harness can validate the change end-to-end.
+
+**Harness status:** The simulation harness exists (`npm run scenario`, `npm run sweep`, docs in `docs/harness.md`). It is a qualitative-validation and regression-testing tool — not a calibration tool. Systematic numerical tuning is deferred until all game systems (diplomacy, trade, military, combat) exist and the harness can model the full action set. Use it now to verify that model changes produce the expected directional behavior (shock persists when neglected, fades when integrated, etc.), not to dial in exact numbers.
 
 ---
 

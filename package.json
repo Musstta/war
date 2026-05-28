@@ -8,6 +8,8 @@
     "web"
   ],
   "scripts": {
-    "simulate": "tsx harness/index.ts"
+    "simulate": "tsx harness/index.ts",
+    "scenario": "tsx harness/src/cli.ts",
+    "sweep":    "tsx harness/src/sweep.ts"
   }
 }
