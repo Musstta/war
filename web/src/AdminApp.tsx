@@ -18,11 +18,11 @@ function fmt(n: number, digits = 2): string { return (n >= 0 ? '+' : '') + n.toF
 function fmtU(n: number): string { return n.toFixed(3); }
 
 function CultureAxes({ c }: { c: { individualist: number; progressive: number; militaristic: number; expansionist: number } }) {
-  const axes: [string, number][] = [['I', c.individualist], ['P', c.progressive], ['M', c.militaristic], ['E', c.expansionist]];
+  const axes: [string, number][] = [['Ind', c.individualist], ['Prg', c.progressive], ['Mil', c.militaristic], ['Exp', c.expansionist]];
   return (
     <span>
       {axes.map(([label, v]) => (
-        <span key={label} style={{ marginRight: '0.25rem', color: v > 0.15 ? '#7ecfff' : v < -0.15 ? '#f0a500' : '#555' }}>
+        <span key={label} style={{ marginRight: '0.3rem', color: v > 0.15 ? '#7ecfff' : v < -0.15 ? '#f0a500' : '#555' }}>
           {label}:{fmt(v, 1)}
         </span>
       ))}
@@ -30,12 +30,16 @@ function CultureAxes({ c }: { c: { individualist: number; progressive: number; m
   );
 }
 
+const CNAMES: Record<string, string> = { port: 'Port', fort_l1: 'Fort L1', fort_l2: 'Fort L2', fort_l3: 'Fort L3', road: 'Road' };
+
 function ConstructionCell({ row }: { row: AdminTerritoryRow }) {
   if (!row.constructionType) return <span style={{ color: '#333' }}>—</span>;
   return (
     <span style={{ color: '#f0a500' }}>
-      {row.constructionType} ({row.constructionTicksLeft}t)
-      {row.pendingConstructionType && <span style={{ color: '#7ecfff' }}> → {row.pendingConstructionType}</span>}
+      {CNAMES[row.constructionType] ?? row.constructionType} ({row.constructionTicksLeft}t left)
+      {row.pendingConstructionType && (
+        <span style={{ color: '#7ecfff' }}> → {CNAMES[row.pendingConstructionType] ?? row.pendingConstructionType}</span>
+      )}
     </span>
   );
 }
@@ -156,20 +160,32 @@ function TerritoryTableRow({ row, nations, adminKey, onRefresh }: TerritoryRowPr
         {row.isInRevolt ? <span style={{ color: '#ff4444' }}>REVOLT</span> : <span style={{ color: '#333' }}>—</span>}
       </td>
       <td style={td}>
-        <span style={{ cursor: 'pointer', color: row.hasRoad ? '#4caf50' : '#444' }} onClick={toggleRoad} title="Click to toggle road">R</span>
-        {row.isCoastal && <span style={{ cursor: 'pointer', color: row.hasPort ? '#7ecfff' : '#444', marginLeft: '0.3rem' }} onClick={togglePort} title="Click to toggle port">P</span>}
-        <span style={{ cursor: 'pointer', color: row.fortificationLevel > 0 ? '#f0a500' : '#444', marginLeft: '0.3rem' }} onClick={promptFort} title="Click to set fort level">F{row.fortificationLevel}</span>
+        <span style={{ cursor: 'pointer', color: row.hasRoad ? '#4caf50' : '#444' }} onClick={toggleRoad} title="Toggle road">
+          {row.hasRoad ? 'Road✓' : 'Road✗'}
+        </span>
+        {row.isCoastal && (
+          <span style={{ cursor: 'pointer', color: row.hasPort ? '#7ecfff' : '#444', marginLeft: '0.4rem' }} onClick={togglePort} title="Toggle port">
+            {row.hasPort ? 'Port✓' : 'Port✗'}
+          </span>
+        )}
+        <span style={{ cursor: 'pointer', color: row.fortificationLevel > 0 ? '#f0a500' : '#444', marginLeft: '0.4rem' }} onClick={promptFort} title="Click to set fort level (0–3)">
+          Fort {row.fortificationLevel}
+        </span>
       </td>
       <td style={{ ...td, cursor: row.constructionType ? 'pointer' : 'default' }} onClick={clearConstruction} title={row.constructionType ? 'Click to clear construction' : undefined}>
         <ConstructionCell row={row} />
       </td>
-      <td style={{ ...td, cursor: 'pointer' }} title="Click any axis to nudge">
-        {(['individualist', 'progressive', 'militaristic', 'expansionist'] as const).map((t) => (
-          <span key={t} onClick={() => promptTrait(t)} style={{ marginRight: '0.25rem', cursor: 'pointer', color: row.culture[t] > 0.15 ? '#7ecfff' : row.culture[t] < -0.15 ? '#f0a500' : '#555' }}>
-            {t[0].toUpperCase()}:{fmt(row.culture[t], 1)}
-          </span>
-        ))}
-        <span onClick={promptFamily} style={{ cursor: 'pointer', color: '#444', marginLeft: '0.1rem' }} title="Click to change family">
+      <td style={{ ...td, cursor: 'pointer' }} title="Click any axis label to nudge; click family to change">
+        {(['individualist', 'progressive', 'militaristic', 'expansionist'] as const).map((t, i) => {
+          const labels = ['Ind', 'Prg', 'Mil', 'Exp'];
+          const v = row.culture[t];
+          return (
+            <span key={t} onClick={() => promptTrait(t)} style={{ marginRight: '0.3rem', cursor: 'pointer', color: v > 0.15 ? '#7ecfff' : v < -0.15 ? '#f0a500' : '#555' }}>
+              {labels[i]}:{fmt(v, 1)}
+            </span>
+          );
+        })}
+        <span onClick={promptFamily} style={{ cursor: 'pointer', color: '#666', marginLeft: '0.1rem' }} title="Click to change cultural family">
           [{row.culture.family}]
         </span>
       </td>
@@ -212,8 +228,9 @@ function NationsTable({ nations }: { nations: AdminNationRow[] }) {
                 <span style={{ color: '#888' }}>{n.mandateBudget}</span>
               </td>
               <td style={td}>
-                {n.culture ? <CultureAxes c={n.culture} /> : <span style={{ color: '#333' }}>—</span>}
-                {n.culture?.primaryFamily && <span style={{ color: '#444', marginLeft: '0.2rem' }}>{n.culture.primaryFamily.slice(0, 4)}</span>}
+                {n.culture
+                  ? <><CultureAxes c={n.culture} /><span style={{ color: '#555' }}>[{n.culture.primaryFamily ?? '?'}]</span></>
+                  : <span style={{ color: '#333' }}>—</span>}
               </td>
               <td style={{ ...td, color: n.capital ? '#f0a500' : '#333' }}>
                 {n.capital ? <span>★ {n.capital}</span> : '—'}
@@ -236,12 +253,12 @@ interface TerritoriesTableProps {
 function TerritoriesTable({ territories, nations, adminKey, onRefresh }: TerritoriesTableProps) {
   return (
     <>
-      <div style={sectionHead}>TERRITORIES <span style={{ color: '#333' }}>(all cells are clickable — owner, unrest, revolt, infra R/P/F, construction, culture axes, family, compat)</span></div>
+      <div style={sectionHead}>TERRITORIES <span style={{ color: '#333' }}>(click any cell to edit)</span></div>
       <div style={{ overflowX: 'auto' }}>
         <table style={tblStyle}>
           <thead>
             <tr>
-              {['Name', 'Owner ✎', 'Unrest → Eq. ✎', 'Revolt ✎', 'R/P/F ✎', 'Construction ✎', 'Culture axes ✎ [family ✎]', 'Compat'].map((h) => (
+              {['Name', 'Owner', 'Unrest → Equilibrium', 'Revolt', 'Infrastructure', 'Construction', 'Culture  [family]', 'Compat'].map((h) => (
                 <th key={h} style={th}>{h}</th>
               ))}
             </tr>
