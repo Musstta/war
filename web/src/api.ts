@@ -18,14 +18,15 @@ export interface CompatibilityBreakdown {
   total: number;
 }
 
-/** Named causes of a territory's unrest equilibrium. Bonuses are negative values. */
+/** Named causes of a territory's unrest equilibrium. Bonuses are ≤ 0; pressures are ≥ 0. */
 export interface UnrestCauses {
   base: number;
   compatibilityPressure: number;
   distancePressure: number;
-  noRoadPressure: number;
+  infrastructureBonus: number;
   overexpansionPressure: number;
-  roadBonus: number;
+  ownershipShock: number;
+  recentConquestPressure: number;
   militaryBonus: number;
   equilibrium: number;
 }

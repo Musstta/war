@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
-import { loadTerritoryDefs, BUILD_INDUSTRY, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, bfsDistance } from '@war/engine';
+import { loadTerritoryDefs, BUILD_INDUSTRY, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, bfsDistance, CONQUEST_SHOCK_INITIAL, RECENT_ACQUISITION_TICKS } from '@war/engine';
 import type { TerritoryDef, TerritoryState } from '@war/engine';
 import { prisma } from './db';
 import { ensureWorldInitialized } from './world';
@@ -60,16 +60,17 @@ app.post('/api/logout', async (_request, reply) => {
 app.get('/api/me', async (request, reply) => {
   const nationId = getSession(request);
   if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
-  const [nation, tcount] = await Promise.all([
+  const [nation, devCount, fullCount] = await Promise.all([
     prisma.nation.findUnique({ where: { id: nationId } }),
-    prisma.territoryState.count({ where: { ownerId: nationId } }),
+    prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, hasPort: true, fortificationLevel: { gte: 1 } } }),
+    prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, hasPort: true, fortificationLevel: 3 } }),
   ]);
   if (!nation) return reply.code(404).send({ error: 'Nation not found' });
   return {
     nationId,
     name: nation.name,
     phase: currentPhase(),
-    mandateBudget: mandateBudget(tcount),
+    mandateBudget: mandateBudget(devCount, fullCount),
     mandateUsed: nation.mandateUsed,
   };
 });
@@ -112,7 +113,7 @@ const start = async () => {
       const def = defById.get(row.id);
       if (!def) continue;
       allTerritories[row.id] = {
-        def,
+        def: row.culturalFamily ? { ...def, culturalFamily: row.culturalFamily as import('@war/engine').CulturalFamily } : def,
         state: {
           ownerId: row.ownerId,
           fortificationLevel: row.fortificationLevel,
@@ -124,21 +125,36 @@ const start = async () => {
           constructionType: (row.constructionType ?? null) as TerritoryState['constructionType'],
           constructionTicksLeft: row.constructionTicksLeft ?? null,
           pendingConstructionType: (row.pendingConstructionType ?? null) as TerritoryState['pendingConstructionType'],
+          ownershipShock: row.ownershipShock,
+          acquiredTick: row.acquiredTick ?? null,
         },
       };
     }
 
-    // Compute nation cultures (emergent weighted averages). Exposed for all nations.
-    // [PLACEHOLDER — fog-of-war rules for opponent nation culture TBD]
+    // Compute nation cultures. Pass capital so it gets extra weight. [PLACEHOLDER — fog-of-war TBD]
     const nationCultures: Record<string, ReturnType<typeof computeNationCulture>> = {};
+    const capitalMap = Object.fromEntries(nationRows.map((n) => [n.id, n.capitalTerritoryId ?? null]));
     for (const n of nationRows) {
-      nationCultures[n.id] = computeNationCulture(n.id, allTerritories);
+      nationCultures[n.id] = computeNationCulture(n.id, allTerritories, capitalMap[n.id]);
     }
 
-    // Territory counts per nation for overexpansion.
+    // Territory counts + developed/fortified counts per nation.
     const territoryCounts: Record<string, number> = {};
+    const recentAcquiredCounts: Record<string, number> = {};
+    const developedCounts: Record<string, number> = {};   // road+port+fort≥1
+    const fullyFortCounts: Record<string, number> = {};   // road+port+fort=3
     for (const row of territoryRows) {
-      if (row.ownerId) territoryCounts[row.ownerId] = (territoryCounts[row.ownerId] ?? 0) + 1;
+      if (!row.ownerId) continue;
+      territoryCounts[row.ownerId] = (territoryCounts[row.ownerId] ?? 0) + 1;
+      if (row.acquiredTick !== null && meta.tick - row.acquiredTick <= RECENT_ACQUISITION_TICKS) {
+        recentAcquiredCounts[row.ownerId] = (recentAcquiredCounts[row.ownerId] ?? 0) + 1;
+      }
+      if (row.hasRoad && row.hasPort && row.fortificationLevel >= 1) {
+        developedCounts[row.ownerId] = (developedCounts[row.ownerId] ?? 0) + 1;
+      }
+      if (row.hasRoad && row.hasPort && row.fortificationLevel >= 3) {
+        fullyFortCounts[row.ownerId] = (fullyFortCounts[row.ownerId] ?? 0) + 1;
+      }
     }
 
     // All territories show ownership; visible ones also show detailed stats + culture.
@@ -171,7 +187,10 @@ const start = async () => {
           const capital = ownerRow?.capitalTerritoryId ?? null;
           const hops = capital ? bfsDistance(adjacency, capital, t.id) : 0;
           const tcount = territoryCounts[t.ownerId] ?? 1;
-          const causes = computeUnrestEquilibrium(compat, hops, t.hasRoad, tcount);
+          const causes = computeUnrestEquilibrium(
+            compat, hops, t.hasRoad, t.hasPort, t.fortificationLevel,
+            tcount, t.ownershipShock, recentAcquiredCounts[t.ownerId] ?? 0,
+          );
 
           entry.compatibility = compat;
           entry.unrestCauses = causes;
@@ -196,7 +215,7 @@ const start = async () => {
       tick: meta.tick,
       phase: currentPhase(),
       myNationId: nationId,
-      mandateBudget: mandateBudget(territoryCounts[nationId] ?? 0),
+      mandateBudget: mandateBudget(developedCounts[nationId] ?? 0, fullyFortCounts[nationId] ?? 0),
       mandateUsed: myNationRow?.mandateUsed ?? 0,
       nations,
       territories,
@@ -246,12 +265,13 @@ const start = async () => {
       return reply.code(400).send({ error: `${type} can only be queued during ${allowedPhase} phase` });
     }
 
-    const [nation, myTerritoryCount] = await Promise.all([
+    const [nation, myDevCount, myFullCount] = await Promise.all([
       prisma.nation.findUnique({ where: { id: nationId } }),
-      prisma.territoryState.count({ where: { ownerId: nationId } }),
+      prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, hasPort: true, fortificationLevel: { gte: 1 } } }),
+      prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, hasPort: true, fortificationLevel: 3 } }),
     ]);
     if (!nation) return reply.code(404).send({ error: 'Nation not found' });
-    const myBudget = mandateBudget(myTerritoryCount);
+    const myBudget = mandateBudget(myDevCount, myFullCount);
 
     // cost may be overridden below for build_fort (variable per level).
     // Mandate check runs after type-specific blocks so the real cost is known.
@@ -460,7 +480,7 @@ const start = async () => {
       const def = defById.get(row.id);
       if (!def) continue;
       allTerritories[row.id] = {
-        def,
+        def: row.culturalFamily ? { ...def, culturalFamily: row.culturalFamily as import('@war/engine').CulturalFamily } : def,
         state: {
           ownerId: row.ownerId, fortificationLevel: row.fortificationLevel,
           hasRoad: row.hasRoad, hasPort: row.hasPort, unrest: row.unrest,
@@ -469,14 +489,28 @@ const start = async () => {
           constructionType: (row.constructionType ?? null) as TerritoryState['constructionType'],
           constructionTicksLeft: row.constructionTicksLeft ?? null,
           pendingConstructionType: (row.pendingConstructionType ?? null) as TerritoryState['pendingConstructionType'],
+          ownershipShock: row.ownershipShock,
+          acquiredTick: row.acquiredTick ?? null,
         },
       };
     }
+    const adminCapitalMap = Object.fromEntries(nationRows.map((n) => [n.id, n.capitalTerritoryId ?? null]));
     const nationCultures: Record<string, ReturnType<typeof computeNationCulture>> = {};
-    for (const n of nationRows) nationCultures[n.id] = computeNationCulture(n.id, allTerritories);
+    for (const n of nationRows) nationCultures[n.id] = computeNationCulture(n.id, allTerritories, adminCapitalMap[n.id]);
     const territoryCounts: Record<string, number> = {};
+    const adminRecentAcquired: Record<string, number> = {};
+    const adminDevCounts: Record<string, number> = {};
+    const adminFullCounts: Record<string, number> = {};
     for (const row of territoryRows) {
-      if (row.ownerId) territoryCounts[row.ownerId] = (territoryCounts[row.ownerId] ?? 0) + 1;
+      if (!row.ownerId) continue;
+      territoryCounts[row.ownerId] = (territoryCounts[row.ownerId] ?? 0) + 1;
+      if (row.acquiredTick !== null && meta.tick - row.acquiredTick <= RECENT_ACQUISITION_TICKS) {
+        adminRecentAcquired[row.ownerId] = (adminRecentAcquired[row.ownerId] ?? 0) + 1;
+      }
+      if (row.hasRoad && row.hasPort && row.fortificationLevel >= 1)
+        adminDevCounts[row.ownerId] = (adminDevCounts[row.ownerId] ?? 0) + 1;
+      if (row.hasRoad && row.hasPort && row.fortificationLevel >= 3)
+        adminFullCounts[row.ownerId] = (adminFullCounts[row.ownerId] ?? 0) + 1;
     }
     const nationNameMap = Object.fromEntries(nationRows.map((n) => [n.id, n.name]));
     const territories = territoryRows.map((t) => {
@@ -489,7 +523,10 @@ const start = async () => {
         const effectiveFamily = (t.culturalFamily ?? def.culturalFamily) as import('@war/engine').CulturalFamily;
         compatibility = computeCompatibility(terrTraits, effectiveFamily, nc);
         const hops = ownerRow?.capitalTerritoryId ? bfsDistance(adjacency, ownerRow.capitalTerritoryId, t.id) : 0;
-        unrestCauses = computeUnrestEquilibrium(compatibility, hops, t.hasRoad, territoryCounts[t.ownerId!] ?? 1);
+        unrestCauses = computeUnrestEquilibrium(
+          compatibility, hops, t.hasRoad, t.hasPort, t.fortificationLevel,
+          territoryCounts[t.ownerId!] ?? 1, t.ownershipShock, adminRecentAcquired[t.ownerId!] ?? 0,
+        );
       }
       return {
         id: t.id, name: def?.name ?? t.id,
@@ -511,7 +548,7 @@ const start = async () => {
     const nations = nationRows.map((n) => ({
       id: n.id, name: n.name, isAI: n.isAI,
       stockpiles: { population: n.popStock, industry: n.indStock, wealth: n.wealthStock },
-      armySize: n.armySize, mandateBudget: mandateBudget(territoryCounts[n.id] ?? 0), mandateUsed: n.mandateUsed,
+      armySize: n.armySize, mandateBudget: mandateBudget(adminDevCounts[n.id] ?? 0, adminFullCounts[n.id] ?? 0), mandateUsed: n.mandateUsed,
       capital: n.capitalTerritoryId, culture: nationCultures[n.id] ?? null,
     }));
     return {
@@ -571,7 +608,13 @@ const start = async () => {
       const nation = await prisma.nation.findUnique({ where: { id: ownerId } });
       if (!nation) return reply.code(400).send({ error: `Nation not found: ${ownerId}` });
     }
-    await prisma.territoryState.update({ where: { id }, data: { ownerId: ownerId ?? null } });
+    const worldMeta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    const shockVal = ownerId != null ? CONQUEST_SHOCK_INITIAL : 0;
+    const acquiredTickVal = ownerId != null ? (worldMeta?.tick ?? 0) : null;
+    await prisma.territoryState.update({
+      where: { id },
+      data: { ownerId: ownerId ?? null, ownershipShock: shockVal, acquiredTick: acquiredTickVal },
+    });
     return { ok: true, ownerId: ownerId ?? null };
   });
 

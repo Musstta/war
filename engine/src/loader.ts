@@ -37,6 +37,8 @@ function initialState(def: TerritoryDef): TerritoryState {
     constructionType: null,
     constructionTicksLeft: null,
     pendingConstructionType: null,
+    ownershipShock: 0,
+    acquiredTick: null,
   };
 }
 

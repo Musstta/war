@@ -28,12 +28,16 @@ export function currentPhase(): Phase {
   return crHour >= 19 ? 'prep' : 'main';
 }
 
-// [PLACEHOLDER] Mandate budget: flat base + 1 per territory owned beyond the first.
-// Decoupled from stockpiles so the pool doesn't grow unboundedly as wealth accumulates.
-// Territory count is a non-accumulating signal that scales with expansion pressure.
-// Tune base and per-territory increment via harness once combat/diplomacy exist.
-export function mandateBudget(territoryCount: number): number {
-  return 3 + Math.max(0, territoryCount - 1);
+/**
+ * [PLACEHOLDER] Mandate budget based on infrastructure investment, not raw territory count.
+ * Base: 3 (always).
+ * +1 per territory with road + port + fort L1+ ("developed").
+ * +1 per territory with road + port + fort L3 ("fully fortified") — cumulative with the above.
+ * Inland territories can never earn bonuses (they can't build ports) — intentional.
+ * Tune values via harness once combat/economy are in place.
+ */
+export function mandateBudget(developedCount: number, fullyFortifiedCount: number): number {
+  return 3 + developedCount + fullyFortifiedCount;
 }
 
 // Mandate cost per action type. build_fort cost is variable — see FORT_MANDATE_COSTS.

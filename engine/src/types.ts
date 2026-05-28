@@ -38,14 +38,18 @@ export interface CompatibilityBreakdown {
   total: number;
 }
 
-/** Named contributions to a territory's unrest equilibrium. All values ≥ 0 except bonuses (≤ 0). */
+/** Named contributions to a territory's unrest equilibrium. Bonuses are ≤ 0; pressures are ≥ 0. */
 export interface UnrestCauses {
   base: number;
   compatibilityPressure: number;
   distancePressure: number;
-  noRoadPressure: number;
+  /** Negative — roads/ports/forts each reduce equilibrium. Replaces the old road/no-road split. */
+  infrastructureBonus: number;
   overexpansionPressure: number;
-  roadBonus: number;
+  /** Decays each tick — spike applied when a territory changes owner (design doc §12.1). */
+  ownershipShock: number;
+  /** Nation-wide pressure scaling with count of recently-acquired territories. */
+  recentConquestPressure: number;
   /** Stub — always 0 until troop mechanics exist. */
   militaryBonus: number;
   /** Clamped sum [0, 1]. This is the target unrest asymptotes toward. */
@@ -99,6 +103,13 @@ export interface TerritoryState {
    * 'road' is instant when it fires; 'port'/'fort_*' start multi-tick construction.
    */
   pendingConstructionType: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | 'road' | null;
+  /**
+   * Temporary unrest component applied when a territory changes owner (design doc §12.1).
+   * Starts at CONQUEST_SHOCK_INITIAL and decays each tick toward 0.
+   */
+  ownershipShock: number;
+  /** World tick when this territory last changed owner. null = native (never conquered). */
+  acquiredTick: number | null;
 }
 
 export interface Territory {

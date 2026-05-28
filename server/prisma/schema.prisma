@@ -63,6 +63,11 @@ model TerritoryState {
 
   // Admin override — null means "use the static def value".
   culturalFamily String?
+
+  // Conquest shock (design doc §12.1): decays toward 0 each tick after ownership change.
+  ownershipShock Float   @default(0)
+  // Tick when this territory last changed owner. null = native (never conquered).
+  acquiredTick   Int?
 }
 
 // Actions queued during the Main or Preparation phase, resolved atomically at the

@@ -22,11 +22,12 @@ const TRAIT_LABELS: Record<string, string> = {
 
 const CAUSE_LABELS: Record<keyof UnrestCauses, string> = {
   base: 'Base floor',
-  compatibilityPressure: 'Compat clash',
+  compatibilityPressure: 'Cultural clash',
   distancePressure: 'Distance from capital',
-  noRoadPressure: 'No road',
-  overexpansionPressure: 'Overexpansion',
-  roadBonus: 'Road integration',
+  infrastructureBonus: 'Infrastructure investment',
+  overexpansionPressure: 'Empire size',
+  ownershipShock: 'Conquest shock',
+  recentConquestPressure: 'Rapid expansion',
   militaryBonus: 'Military presence',
   equilibrium: 'Equilibrium',
 };
@@ -58,7 +59,8 @@ function UnrestPanel({ unrest, causes }: { unrest: number; causes: UnrestCauses 
   const direction = unrest < causes.equilibrium ? '↑' : unrest > causes.equilibrium ? '↓' : '=';
   const causeKeys: (keyof UnrestCauses)[] = [
     'base', 'compatibilityPressure', 'distancePressure',
-    'noRoadPressure', 'overexpansionPressure', 'roadBonus', 'militaryBonus',
+    'infrastructureBonus', 'overexpansionPressure', 'ownershipShock',
+    'recentConquestPressure', 'militaryBonus',
   ];
   return (
     <div style={{ marginTop: '0.5rem', padding: '0.35rem 0.4rem', background: '#0d0d1a', borderRadius: 3 }}>

@@ -41,25 +41,49 @@ export const DISTANCE_UNREST_PER_HOP = 0.04;
 /** Hop count at which distance pressure saturates (maps to maximum distance contribution). [PLACEHOLDER] */
 export const MAX_CAPITAL_DISTANCE_HOPS = 6;
 
-/** Flat unrest addition when no road is present. [PLACEHOLDER] */
-export const NO_ROAD_UNREST = 0.08;
-
-/** Unrest reduction applied when a road IS present (integration bonus). [PLACEHOLDER] */
-export const ROAD_INTEGRATION_BONUS = 0.05;
-
-/** Nation territory count above which overexpansion pressure begins. [PLACEHOLDER] */
+/** Nation territory count above which empire-size overexpansion pressure begins. [PLACEHOLDER] */
 export const OVEREXPANSION_THRESHOLD = 3;
 
 /** Unrest added per territory above the overexpansion threshold. [PLACEHOLDER] */
 export const OVEREXPANSION_PER_TERRITORY = 0.03;
 
+// ── Conquest shock (design doc §12.1) ────────────────────────────────────────
+
+/** Unrest component applied immediately when a territory changes owner. [PLACEHOLDER] */
+export const CONQUEST_SHOCK_INITIAL = 0.50;
+
+/** Fraction of ownership shock decayed each tick (exponential decay). [PLACEHOLDER] */
+export const CONQUEST_SHOCK_DECAY_RATE = 0.15;
+
+/** Ticks within which a territory counts as "recently acquired" for nation-wide pressure. [PLACEHOLDER] */
+export const RECENT_ACQUISITION_TICKS = 5;
+
+/** Unrest added to every territory a nation owns per recently-acquired territory. [PLACEHOLDER] */
+export const RECENT_CONQUEST_PRESSURE_PER_TERRITORY = 0.06;
+
+// ── Infrastructure investment ─────────────────────────────────────────────────
+// Each built structure reduces the territory's unrest equilibrium.
+// Roads = integration backbone (largest bonus); ports = economic link; forts = security presence.
+
+/** Unrest reduction from a road. [PLACEHOLDER] */
+export const ROAD_INFRA_CONTRIBUTION = 0.08;
+
+/** Unrest reduction from a port. [PLACEHOLDER] */
+export const PORT_INFRA_CONTRIBUTION = 0.04;
+
+/** Unrest reduction per fortification level. [PLACEHOLDER] */
+export const FORT_INFRA_CONTRIBUTION_PER_LEVEL = 0.02;
+
 // ── Compatibility ─────────────────────────────────────────────────────────────
 
-/** Share of compatibility score contributed by value-axis alignment (must sum to 1 with FAMILY). [PLACEHOLDER] */
-export const COMPAT_AXIS_WEIGHT = 0.75;
+/**
+ * Share of compatibility score contributed by value-axis alignment.
+ * Family is the dominant lever — these must sum to 1. [PLACEHOLDER]
+ */
+export const COMPAT_AXIS_WEIGHT = 0.40;
 
-/** Share of compatibility score contributed by cultural family closeness. [PLACEHOLDER] */
-export const COMPAT_FAMILY_WEIGHT = 0.25;
+/** Share contributed by cultural family closeness — deliberately larger than axis weight. [PLACEHOLDER] */
+export const COMPAT_FAMILY_WEIGHT = 0.60;
 
 // ── Cultural drift ────────────────────────────────────────────────────────────
 
@@ -68,6 +92,13 @@ export const CULTURE_DRIFT_RATE = 0.02;
 
 /** k in weight ≈ pop × (1 + k × normProd). [PLACEHOLDER] */
 export const PRODUCTION_WEIGHT_K = 0.3;
+
+/**
+ * Extra culture weight applied to the capital territory.
+ * The capital disproportionately shapes national identity — it drives culture
+ * toward itself more strongly than other territories of the same size. [PLACEHOLDER]
+ */
+export const CAPITAL_CULTURE_WEIGHT_MULTIPLIER = 2.0;
 
 /** When a trait value crosses zero, probability the cross is allowed vs. bounced back. [PLACEHOLDER] */
 export const TRAIT_FLIP_PROB = 0.5;
@@ -134,6 +165,7 @@ const AXES: (keyof ValueTraits)[] = ['individualist', 'progressive', 'militarist
 export function computeNationCulture(
   nationId: string,
   territories: Record<string, Territory>,
+  capitalTerritoryId?: string | null,
 ): NationCulture {
   // Find max production across ALL territories for normalization denominator.
   let maxProd = 0;
@@ -149,7 +181,8 @@ export function computeNationCulture(
   for (const t of Object.values(territories)) {
     if (t.state.ownerId !== nationId) continue;
     const normProd = maxProd > 0 ? (t.def.baseIndustry + t.def.baseWealth) / maxProd : 0;
-    const weight = t.def.basePopulation * (1 + PRODUCTION_WEIGHT_K * normProd);
+    const capitalMult = capitalTerritoryId && t.def.id === capitalTerritoryId ? CAPITAL_CULTURE_WEIGHT_MULTIPLIER : 1;
+    const weight = t.def.basePopulation * (1 + PRODUCTION_WEIGHT_K * normProd) * capitalMult;
     totalWeight += weight;
     for (const axis of AXES) sum[axis] += weight * t.state.valueTraits[axis];
     const fam = t.def.culturalFamily;
@@ -219,12 +252,18 @@ export function computeCompatibility(
 /**
  * Computes all named contributors to a territory's unrest equilibrium.
  * The territory drifts its unrest value toward `equilibrium` each tick.
+ *
+ * All numeric constants are [PLACEHOLDER] — tune via simulation harness (design doc §17).
  */
 export function computeUnrestEquilibrium(
   compatibility: CompatibilityBreakdown,
   distanceHops: number,
   hasRoad: boolean,
+  hasPort: boolean,
+  fortificationLevel: number,
   nationTerritoryCount: number,
+  ownershipShock: number,
+  recentAcquisitionCount: number,
 ): UnrestCauses {
   const base = BASE_UNREST_FLOOR;
 
@@ -233,28 +272,33 @@ export function computeUnrestEquilibrium(
   const normalizedDist = Math.min(distanceHops / MAX_CAPITAL_DISTANCE_HOPS, 1.0);
   const distancePressure = normalizedDist * (DISTANCE_UNREST_PER_HOP * MAX_CAPITAL_DISTANCE_HOPS);
 
-  const noRoadPressure = hasRoad ? 0 : NO_ROAD_UNREST;
+  // Infrastructure investment: more built structures = lower equilibrium.
+  const infraScore = (hasRoad ? ROAD_INFRA_CONTRIBUTION : 0)
+    + (hasPort ? PORT_INFRA_CONTRIBUTION : 0)
+    + (fortificationLevel * FORT_INFRA_CONTRIBUTION_PER_LEVEL);
+  const infrastructureBonus = -infraScore; // negative = reduces equilibrium
 
   const overCount = Math.max(0, nationTerritoryCount - OVEREXPANSION_THRESHOLD);
   const overexpansionPressure = overCount * OVEREXPANSION_PER_TERRITORY;
-  // [PLACEHOLDER — should use recently-acquired count once conquest exists, not total]
 
-  const roadBonus = hasRoad ? -ROAD_INTEGRATION_BONUS : 0;
+  // Nation-wide pressure from rapid expansion — affects every territory the nation owns.
+  const recentConquestPressure = recentAcquisitionCount * RECENT_CONQUEST_PRESSURE_PER_TERRITORY;
 
-  const militaryBonus = 0; // [STUB] no troop mechanics yet; hook here for future
+  const militaryBonus = 0; // [STUB] no troop mechanics yet
 
   const equilibrium = Math.max(0, Math.min(1,
-    base + compatibilityPressure + distancePressure + noRoadPressure +
-    overexpansionPressure + roadBonus + militaryBonus,
+    base + compatibilityPressure + distancePressure + infrastructureBonus +
+    overexpansionPressure + ownershipShock + recentConquestPressure + militaryBonus,
   ));
 
   return {
     base,
     compatibilityPressure,
     distancePressure,
-    noRoadPressure,
+    infrastructureBonus,
     overexpansionPressure,
-    roadBonus,
+    ownershipShock,
+    recentConquestPressure,
     militaryBonus,
     equilibrium,
   };

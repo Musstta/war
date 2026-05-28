@@ -9,6 +9,8 @@ import {
   UNREST_DRIFT_RATE,
   REVOLT_THRESHOLD,
   REVOLT_HYSTERESIS,
+  CONQUEST_SHOCK_DECAY_RATE,
+  RECENT_ACQUISITION_TICKS,
 } from './culture';
 
 // ── Placeholder constants ─────────────────────────────────────────────────────
@@ -198,24 +200,34 @@ export function resolveTick(
     Object.entries(territories).map(([k, v]) => [k, v.def.adjacentIds]),
   );
 
-  // Count territories per nation for overexpansion pressure.
+  // Count territories per nation (for overexpansion) and recently-acquired (for conquest pressure).
   const territoryCounts: Record<string, number> = {};
+  const recentAcquisitionCounts: Record<string, number> = {};
   for (const t of Object.values(territories)) {
-    if (t.state.ownerId) {
-      territoryCounts[t.state.ownerId] = (territoryCounts[t.state.ownerId] ?? 0) + 1;
+    const oid = t.state.ownerId;
+    if (!oid) continue;
+    territoryCounts[oid] = (territoryCounts[oid] ?? 0) + 1;
+    if (t.state.acquiredTick !== null && world.tick - t.state.acquiredTick <= RECENT_ACQUISITION_TICKS) {
+      recentAcquisitionCounts[oid] = (recentAcquisitionCounts[oid] ?? 0) + 1;
     }
   }
 
-  // Compute each nation's current culture (weighted average of its territories).
+  // Compute each nation's current culture — capital gets extra weight (item 7).
   const nationCultures: Record<string, ReturnType<typeof computeNationCulture>> = {};
   for (const nationId of Object.keys(nations)) {
-    nationCultures[nationId] = computeNationCulture(nationId, territories);
+    const cap = nations[nationId]?.capitalTerritoryId ?? null;
+    nationCultures[nationId] = computeNationCulture(nationId, territories, cap);
   }
 
-  // Process each owned territory: drift unrest, check revolt, apply cultural drift.
+  // Process each owned territory: decay shock, drift unrest, check revolt, apply cultural drift.
   for (const t of Object.values(territories)) {
     const ownerId = t.state.ownerId;
     if (!ownerId) continue;
+
+    // Decay ownership shock exponentially toward 0.
+    if (t.state.ownershipShock > 0) {
+      t.state.ownershipShock = Math.max(0, t.state.ownershipShock * (1 - CONQUEST_SHOCK_DECAY_RATE));
+    }
 
     const nationCulture = nationCultures[ownerId];
     if (!nationCulture) continue;
@@ -223,9 +235,14 @@ export function resolveTick(
     const capital = nations[ownerId]?.capitalTerritoryId ?? null;
     const hops = capital ? bfsDistance(adjacency, capital, t.def.id) : 0;
     const tcount = territoryCounts[ownerId] ?? 1;
+    const recentCount = recentAcquisitionCounts[ownerId] ?? 0;
 
     const compat = computeCompatibility(t.state.valueTraits, t.def.culturalFamily, nationCulture);
-    const causes = computeUnrestEquilibrium(compat, hops, t.state.hasRoad, tcount);
+    const causes = computeUnrestEquilibrium(
+      compat, hops,
+      t.state.hasRoad, t.state.hasPort, t.state.fortificationLevel,
+      tcount, t.state.ownershipShock, recentCount,
+    );
 
     // Drift unrest toward equilibrium.
     t.state.unrest = t.state.unrest + UNREST_DRIFT_RATE * (causes.equilibrium - t.state.unrest);

@@ -51,6 +51,20 @@ function TerritoryTableRow({ row, nations, adminKey, onRefresh }: TerritoryRowPr
   const eq = row.unrestCauses?.equilibrium ?? null;
   const dir = eq !== null ? (row.unrest < eq ? '↑' : row.unrest > eq ? '↓' : '=') : '';
   const unrestColor = row.unrest > 0.6 ? '#ff6b6b' : row.unrest > 0.3 ? '#f0a500' : '#888';
+  const isCapital = nations.some((n) => n.id === row.ownerId && n.capital === row.id);
+
+  // Build tooltip showing all named unrest components.
+  const unrestTooltip = row.unrestCauses ? [
+    `Now: ${fmtU(row.unrest)}  Eq: ${fmtU(row.unrestCauses.equilibrium)}`,
+    `  base: +${row.unrestCauses.base.toFixed(3)}`,
+    `  cultural clash: +${row.unrestCauses.compatibilityPressure.toFixed(3)}`,
+    `  distance: +${row.unrestCauses.distancePressure.toFixed(3)}`,
+    `  infrastructure: ${row.unrestCauses.infrastructureBonus.toFixed(3)}`,
+    `  empire size: +${row.unrestCauses.overexpansionPressure.toFixed(3)}`,
+    `  conquest shock: +${row.unrestCauses.ownershipShock.toFixed(3)}`,
+    `  rapid expansion: +${row.unrestCauses.recentConquestPressure.toFixed(3)}`,
+    `  military: ${row.unrestCauses.militaryBonus.toFixed(3)}`,
+  ].join('\n') : undefined;
 
   const promptUnrest = async () => {
     const raw = window.prompt(`Set unrest for ${row.name} (0.00–1.00):`, fmtU(row.unrest));
@@ -127,11 +141,14 @@ function TerritoryTableRow({ row, nations, adminKey, onRefresh }: TerritoryRowPr
 
   return (
     <tr style={{ background: row.isInRevolt ? '#1a0000' : 'transparent' }}>
-      <td style={td}>{row.name}</td>
+      <td style={td}>
+        {isCapital && <span style={{ color: '#f0a500', marginRight: '0.3rem' }}>★</span>}
+        {row.name}
+      </td>
       <td style={{ ...td, cursor: 'pointer' }} onClick={() => promptOwner(nations)} title="Click to reassign">
         <span style={{ color: '#888' }}>{row.ownerName ?? <span style={{ color: '#333' }}>unclaimed</span>}</span>
       </td>
-      <td style={{ ...td, cursor: 'pointer' }} onClick={promptUnrest} title="Click to set">
+      <td style={{ ...td, cursor: 'pointer' }} onClick={promptUnrest} title={unrestTooltip}>
         <span style={{ color: unrestColor }}>{fmtU(row.unrest)}</span>
         {eq !== null && <span style={{ color: '#444' }}> {dir} {fmtU(eq)}</span>}
       </td>
@@ -198,7 +215,9 @@ function NationsTable({ nations }: { nations: AdminNationRow[] }) {
                 {n.culture ? <CultureAxes c={n.culture} /> : <span style={{ color: '#333' }}>—</span>}
                 {n.culture?.primaryFamily && <span style={{ color: '#444', marginLeft: '0.2rem' }}>{n.culture.primaryFamily.slice(0, 4)}</span>}
               </td>
-              <td style={{ ...td, color: '#555' }}>{n.capital ?? '—'}</td>
+              <td style={{ ...td, color: n.capital ? '#f0a500' : '#333' }}>
+                {n.capital ? <span>★ {n.capital}</span> : '—'}
+              </td>
             </tr>
           ))}
         </tbody>

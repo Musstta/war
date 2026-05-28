@@ -42,6 +42,8 @@ export async function loadWorldState(
         constructionType: (s.constructionType ?? null) as TerritoryState['constructionType'],
         constructionTicksLeft: s.constructionTicksLeft ?? null,
         pendingConstructionType: (s.pendingConstructionType ?? null) as TerritoryState['pendingConstructionType'],
+        ownershipShock: s.ownershipShock,
+        acquiredTick: s.acquiredTick ?? null,
       },
     };
   }
@@ -106,6 +108,8 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         constructionType: state.constructionType,
         constructionTicksLeft: state.constructionTicksLeft,
         pendingConstructionType: state.pendingConstructionType,
+        ownershipShock: state.ownershipShock,
+        acquiredTick: state.acquiredTick,
       },
     });
   }
