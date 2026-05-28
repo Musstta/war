@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { TerritoryView, NationView, WorldView, CompatibilityBreakdown, UnrestCauses, api } from '../api';
+import { CULTURE_AXES, poleName } from '../cultureAxes';
 
 interface Props {
   territoryId: string | null;
@@ -16,9 +17,6 @@ const CONSTRUCTION_NAMES: Record<string, string> = {
   port: 'Port', fort_l1: 'Fort L1', fort_l2: 'Fort L2', fort_l3: 'Fort L3', road: 'Road',
 };
 
-const TRAIT_LABELS: Record<string, string> = {
-  individualist: 'Ind', progressive: 'Prog', militaristic: 'Mil', expansionist: 'Exp',
-};
 
 const CAUSE_LABELS: Record<keyof UnrestCauses, string> = {
   base: 'Base floor',
@@ -250,12 +248,16 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
           <div style={{ fontSize: '0.7rem', color: '#555', marginBottom: '0.2rem', letterSpacing: '0.05em' }}>
             NATION CULTURE <span style={{ color: '#333' }}>({owner.culture.primaryFamily ?? '—'})</span>
           </div>
-          {(['individualist', 'progressive', 'militaristic', 'expansionist'] as const).map((axis) => {
-            const v = (owner.culture as NonNullable<typeof owner.culture>)[axis];
+          {CULTURE_AXES.map((axis) => {
+            const v = (owner.culture as NonNullable<typeof owner.culture>)[axis.key];
+            const pole = poleName(axis, v);
+            const color = v > 0.1 ? '#7ecfff' : v < -0.1 ? '#f0a500' : '#888';
             return (
-              <div key={axis} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', padding: '0.05rem 0' }}>
-                <span style={{ color: '#555' }}>{TRAIT_LABELS[axis]}</span>
-                <span style={{ color: v > 0.2 ? '#7ecfff' : v < -0.2 ? '#f0a500' : '#888' }}>{v >= 0 ? '+' : ''}{v.toFixed(3)}</span>
+              <div key={axis.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', padding: '0.05rem 0' }}>
+                <span style={{ color: '#555' }}>{axis.label}</span>
+                <span style={{ color }} title={pole}>
+                  {v >= 0 ? '+' : ''}{v.toFixed(2)} <span style={{ color: '#444', fontSize: '0.65rem' }}>({pole})</span>
+                </span>
               </div>
             );
           })}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, AdminWorldFull, AdminTerritoryRow, AdminNationRow } from './api';
+import { CULTURE_AXES } from './cultureAxes';
 
 // [DEFERRED SECURITY] Admin key lives in React state only — never persisted to
 // localStorage or cookies. Disable this entire route before public deployment. §11.
@@ -18,14 +19,17 @@ function fmt(n: number, digits = 2): string { return (n >= 0 ? '+' : '') + n.toF
 function fmtU(n: number): string { return n.toFixed(3); }
 
 function CultureAxes({ c }: { c: { individualist: number; progressive: number; militaristic: number; expansionist: number } }) {
-  const axes: [string, number][] = [['Ind', c.individualist], ['Prg', c.progressive], ['Mil', c.militaristic], ['Exp', c.expansionist]];
   return (
     <span>
-      {axes.map(([label, v]) => (
-        <span key={label} style={{ marginRight: '0.3rem', color: v > 0.15 ? '#7ecfff' : v < -0.15 ? '#f0a500' : '#555' }}>
-          {label}:{fmt(v, 1)}
-        </span>
-      ))}
+      {CULTURE_AXES.map((axis) => {
+        const v = c[axis.key];
+        return (
+          <span key={axis.key} style={{ marginRight: '0.35rem', color: v > 0.1 ? '#7ecfff' : v < -0.1 ? '#f0a500' : '#555' }}
+            title={v > 0.05 ? axis.pos : v < -0.05 ? axis.neg : 'Neutral'}>
+            {axis.label}:{fmt(v, 1)}
+          </span>
+        );
+      })}
     </span>
   );
 }
@@ -176,12 +180,12 @@ function TerritoryTableRow({ row, nations, adminKey, onRefresh }: TerritoryRowPr
         <ConstructionCell row={row} />
       </td>
       <td style={{ ...td, cursor: 'pointer' }} title="Click any axis label to nudge; click family to change">
-        {(['individualist', 'progressive', 'militaristic', 'expansionist'] as const).map((t, i) => {
-          const labels = ['Ind', 'Prg', 'Mil', 'Exp'];
-          const v = row.culture[t];
+        {CULTURE_AXES.map((axis) => {
+          const v = row.culture[axis.key];
           return (
-            <span key={t} onClick={() => promptTrait(t)} style={{ marginRight: '0.3rem', cursor: 'pointer', color: v > 0.15 ? '#7ecfff' : v < -0.15 ? '#f0a500' : '#555' }}>
-              {labels[i]}:{fmt(v, 1)}
+            <span key={axis.key} onClick={() => promptTrait(axis.key)} style={{ marginRight: '0.35rem', cursor: 'pointer', color: v > 0.1 ? '#7ecfff' : v < -0.1 ? '#f0a500' : '#555' }}
+              title={`${axis.label}: click to set. Currently: ${v > 0.05 ? axis.pos : v < -0.05 ? axis.neg : 'Neutral'}`}>
+              {axis.label}:{fmt(v, 1)}
             </span>
           );
         })}
@@ -198,45 +202,79 @@ function TerritoryTableRow({ row, nations, adminKey, onRefresh }: TerritoryRowPr
   );
 }
 
-function NationsTable({ nations }: { nations: AdminNationRow[] }) {
+function NationsTable({ nations, territories }: { nations: AdminNationRow[]; territories: AdminTerritoryRow[] }) {
   return (
     <>
       <div style={sectionHead}>NATIONS</div>
       <table style={tblStyle}>
         <thead>
           <tr>
-            {['Name', 'Pop / Ind / Wealth', 'Army', 'Mandate', 'Culture', 'Capital'].map((h) => (
+            {['Name', 'Pop / Ind / Wealth', 'Army', 'Mandate', 'Culture  [family]', 'Unrest factors', 'Capital'].map((h) => (
               <th key={h} style={th}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {nations.map((n) => (
-            <tr key={n.id}>
-              <td style={td}>{n.name}{n.isAI && <span style={{ color: '#444', marginLeft: '0.3rem' }}>[AI]</span>}</td>
-              <td style={td}>
-                <span style={{ color: '#aaa' }}>{Math.floor(n.stockpiles.population)}</span>
-                <span style={{ color: '#444' }}> / </span>
-                <span style={{ color: '#f0a500' }}>{Math.floor(n.stockpiles.industry)}</span>
-                <span style={{ color: '#444' }}> / </span>
-                <span style={{ color: '#aaa' }}>{Math.floor(n.stockpiles.wealth)}</span>
-              </td>
-              <td style={td}>{n.armySize}</td>
-              <td style={td}>
-                <span style={{ color: n.mandateUsed >= n.mandateBudget ? '#ff6b6b' : '#ccc' }}>{n.mandateUsed}</span>
-                <span style={{ color: '#444' }}>/</span>
-                <span style={{ color: '#888' }}>{n.mandateBudget}</span>
-              </td>
-              <td style={td}>
-                {n.culture
-                  ? <><CultureAxes c={n.culture} /><span style={{ color: '#555' }}>[{n.culture.primaryFamily ?? '?'}]</span></>
-                  : <span style={{ color: '#333' }}>—</span>}
-              </td>
-              <td style={{ ...td, color: n.capital ? '#f0a500' : '#333' }}>
-                {n.capital ? <span>★ {n.capital}</span> : '—'}
-              </td>
-            </tr>
-          ))}
+          {nations.map((n) => {
+            const ownedTerrs = territories.filter((t) => t.ownerId === n.id);
+            const avgUnrest = ownedTerrs.length
+              ? ownedTerrs.reduce((s, t) => s + t.unrest, 0) / ownedTerrs.length
+              : null;
+            const maxUnrest = ownedTerrs.length
+              ? Math.max(...ownedTerrs.map((t) => t.unrest))
+              : null;
+            const revolting = ownedTerrs.filter((t) => t.isInRevolt).length;
+            // Nation-wide unrest pressure components (same on every owned territory).
+            const sample = ownedTerrs[0]?.unrestCauses;
+            const nationWidePressures = sample
+              ? [
+                  sample.overexpansionPressure > 0 && `Empire size: +${sample.overexpansionPressure.toFixed(3)}`,
+                  sample.recentConquestPressure > 0 && `Rapid expansion: +${sample.recentConquestPressure.toFixed(3)}`,
+                  sample.ownershipShock > 0 && `Conquest shock (any): +${sample.ownershipShock.toFixed(3)}`,
+                ].filter(Boolean) as string[]
+              : [];
+            return (
+              <tr key={n.id}>
+                <td style={td}>{n.name}{n.isAI && <span style={{ color: '#444', marginLeft: '0.3rem' }}>[AI]</span>}</td>
+                <td style={td}>
+                  <span style={{ color: '#aaa' }}>{Math.floor(n.stockpiles.population)}</span>
+                  <span style={{ color: '#444' }}> / </span>
+                  <span style={{ color: '#f0a500' }}>{Math.floor(n.stockpiles.industry)}</span>
+                  <span style={{ color: '#444' }}> / </span>
+                  <span style={{ color: '#aaa' }}>{Math.floor(n.stockpiles.wealth)}</span>
+                </td>
+                <td style={td}>{n.armySize}</td>
+                <td style={td}>
+                  <span style={{ color: n.mandateUsed >= n.mandateBudget ? '#ff6b6b' : '#ccc' }}>{n.mandateUsed}</span>
+                  <span style={{ color: '#444' }}>/</span>
+                  <span style={{ color: '#888' }}>{n.mandateBudget}</span>
+                </td>
+                <td style={td}>
+                  {n.culture
+                    ? <><CultureAxes c={n.culture} /><span style={{ color: '#555' }}>[{n.culture.primaryFamily ?? '?'}]</span></>
+                    : <span style={{ color: '#333' }}>—</span>}
+                </td>
+                <td style={td}>
+                  {avgUnrest !== null ? (
+                    <span>
+                      <span style={{ color: maxUnrest! > 0.6 ? '#ff6b6b' : maxUnrest! > 0.3 ? '#f0a500' : '#888' }}>
+                        avg {avgUnrest.toFixed(2)} · max {maxUnrest!.toFixed(2)}
+                      </span>
+                      {revolting > 0 && <span style={{ color: '#ff4444', marginLeft: '0.4rem' }}>{revolting} revolting</span>}
+                      {nationWidePressures.length > 0 && (
+                        <div style={{ fontSize: '0.68rem', color: '#666', marginTop: '0.1rem' }}>
+                          {nationWidePressures.map((p, i) => <div key={i}>{p}</div>)}
+                        </div>
+                      )}
+                    </span>
+                  ) : <span style={{ color: '#333' }}>no territories</span>}
+                </td>
+                <td style={{ ...td, color: n.capital ? '#f0a500' : '#333' }}>
+                  {n.capital ? <span>★ {n.capital}</span> : '—'}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </>
@@ -417,7 +455,7 @@ export default function AdminApp() {
 
       {/* Body */}
       <div style={{ padding: '0 1rem 2rem' }}>
-        <NationsTable nations={world.nations} />
+        <NationsTable nations={world.nations} territories={world.territories} />
         <TerritoriesTable territories={world.territories} nations={world.nations} adminKey={key} onRefresh={() => loadWorld(key)} />
         <EventLog events={world.recentEvents} />
       </div>
