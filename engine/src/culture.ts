@@ -49,8 +49,22 @@ export const OVEREXPANSION_PER_TERRITORY = 0.03;
 
 // ── Conquest shock (design doc §12.1) ────────────────────────────────────────
 
-/** Unrest component applied immediately when a territory changes owner. [PLACEHOLDER] */
-export const CONQUEST_SHOCK_INITIAL = 0.50;
+/**
+ * Minimum shock applied even for a perfectly compatible conquest — annexation itself is jarring. [PLACEHOLDER]
+ * Maximum shock applied for a fully incompatible conquest. [PLACEHOLDER]
+ * Actual shock = CONQUEST_SHOCK_MIN + (MAX − MIN) × (1 − compat.total).
+ */
+export const CONQUEST_SHOCK_MIN = 0.20;
+export const CONQUEST_SHOCK_MAX = 0.70;
+
+/**
+ * Computes the initial conquest shock scaled by cultural compatibility with the new owner.
+ * Low compat → shock near MAX; high compat → shock near MIN.
+ * Both bounds are [PLACEHOLDER] — tune once conquest data exists.
+ */
+export function computeConquestShock(compat: CompatibilityBreakdown): number {
+  return CONQUEST_SHOCK_MIN + (CONQUEST_SHOCK_MAX - CONQUEST_SHOCK_MIN) * (1 - compat.total);
+}
 
 /**
  * Maximum fraction of shock that can decay per tick — only achieved with full integration

@@ -78,6 +78,20 @@ Rapid-expansion pressure now uses a linear-decay window (RECENT_ACQUISITION_WIND
 
 ---
 
+## Trait flip at midpoint — potential bias
+
+**Current behavior:** When cultural drift would move a trait value across zero (e.g. from -0.01 toward positive), the flip is decided 50/50 by seeded RNG — equal chance of allowing the cross or bouncing back.
+
+**Potential improvement:** Bias the flip toward whichever direction drift was already moving. If a territory has been drifting toward positive for several ticks and finally reaches the midpoint, a 50% chance of reversal feels arbitrary — the drift signal is already giving a direction. A bias like 70/30 in favor of continuing would make flips feel like earned cultural change rather than a coin flip.
+
+**Defer:** Requires harness data to see how often flips actually fire and whether the 50/50 behavior produces visible artifacts. Address in post-Phase-4 tuning pass.
+
+---
+
 ## Linear Mandate curve at empire scale
 
 **Note:** The current `3 + developedCount + fullyFortifiedCount` formula is sublinear at large empire scale (adding one more developed territory always gives exactly +1). A sublinear curve or hard cap may be appropriate once nations can hold 10+ territories, to avoid the action space becoming overwhelming. Flag for harness tuning when territory counts grow past ~6.
+
+## Fast-forward vote (deferred feature)
+
+when all active players check "ready for next tick," the tick fires immediately instead of waiting for midnight. Preserves the persistent-world design as default but lets a synchronously-online group compress time. Build post-Phase 4, post-harness. Needs to handle: who counts as "active" for the vote, what happens to queued actions for absent-but-not-Dormant players, whether the vote requires unanimous or majority. Need to differentiate between if this is possible in prep or only main phase and what the difference is. Differences in phases at the moment are still unrealized, so defer until the full action set and phase structure are specced.

@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
-import { loadTerritoryDefs, BUILD_INDUSTRY, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, bfsDistance, CONQUEST_SHOCK_INITIAL, RECENT_ACQUISITION_WINDOW } from '@war/engine';
+import { loadTerritoryDefs, BUILD_INDUSTRY, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, computeConquestShock, bfsDistance, CONQUEST_SHOCK_MIN, RECENT_ACQUISITION_WINDOW } from '@war/engine';
 import type { TerritoryDef, TerritoryState } from '@war/engine';
 import { prisma } from './db';
 import { ensureWorldInitialized } from './world';
@@ -617,13 +617,52 @@ const start = async () => {
       if (!nation) return reply.code(400).send({ error: `Nation not found: ${ownerId}` });
     }
     const worldMeta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
-    const shockVal = ownerId != null ? CONQUEST_SHOCK_INITIAL : 0;
+
+    // Compute compat-scaled shock: worse cultural match → larger shock.
+    let shockVal = 0;
+    if (ownerId != null) {
+      const [terrRow, ownedRows, nationRow] = await Promise.all([
+        prisma.territoryState.findUnique({ where: { id } }),
+        prisma.territoryState.findMany({ where: { ownerId } }),
+        prisma.nation.findUnique({ where: { id: ownerId } }),
+      ]);
+      const def = defById.get(id);
+      if (terrRow && def) {
+        // Build territory map from the new owner's existing holdings (not including the one being assigned).
+        const ownedTerritories: Record<string, { def: TerritoryDef; state: TerritoryState }> = {};
+        for (const row of ownedRows) {
+          const d = defById.get(row.id);
+          if (!d) continue;
+          ownedTerritories[row.id] = {
+            def: row.culturalFamily ? { ...d, culturalFamily: row.culturalFamily as import('@war/engine').CulturalFamily } : d,
+            state: {
+              ownerId: row.ownerId, fortificationLevel: row.fortificationLevel,
+              hasRoad: row.hasRoad, hasPort: row.hasPort, unrest: row.unrest,
+              isInRevolt: row.isInRevolt,
+              valueTraits: { individualist: row.individualist, progressive: row.progressive, militaristic: row.militaristic, expansionist: row.expansionist },
+              constructionType: (row.constructionType ?? null) as TerritoryState['constructionType'],
+              constructionTicksLeft: row.constructionTicksLeft ?? null,
+              pendingConstructionType: (row.pendingConstructionType ?? null) as TerritoryState['pendingConstructionType'],
+              ownershipShock: row.ownershipShock, acquiredTick: row.acquiredTick ?? null,
+            },
+          };
+        }
+        const nc = computeNationCulture(ownerId, ownedTerritories, nationRow?.capitalTerritoryId ?? null);
+        const terrTraits = { individualist: terrRow.individualist, progressive: terrRow.progressive, militaristic: terrRow.militaristic, expansionist: terrRow.expansionist };
+        const family = (terrRow.culturalFamily ?? def.culturalFamily) as import('@war/engine').CulturalFamily;
+        const compat = computeCompatibility(terrTraits, family, nc);
+        shockVal = computeConquestShock(compat);
+      } else {
+        shockVal = (CONQUEST_SHOCK_MIN + 0.70) / 2; // fallback if data missing
+      }
+    }
+
     const acquiredTickVal = ownerId != null ? (worldMeta?.tick ?? 0) : null;
     await prisma.territoryState.update({
       where: { id },
       data: { ownerId: ownerId ?? null, ownershipShock: shockVal, acquiredTick: acquiredTickVal },
     });
-    return { ok: true, ownerId: ownerId ?? null };
+    return { ok: true, ownerId: ownerId ?? null, ownershipShock: shockVal };
   });
 
   app.post('/api/admin/territory/:id/set-fort', async (request, reply) => {
