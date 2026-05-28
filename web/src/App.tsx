@@ -4,7 +4,6 @@ import { LoginForm } from './components/LoginForm';
 import { PhaseBar } from './components/PhaseBar';
 import { GameMap } from './components/GameMap';
 import { InfoPanel } from './components/InfoPanel';
-import { DevToolbar } from './components/DevToolbar';
 
 type AuthState = 'loading' | 'logged-out' | 'logged-in';
 
@@ -89,8 +88,7 @@ export default function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       <PhaseBar world={world} myName={me.name} onLogout={handleLogout} />
-      <DevToolbar world={world} onRefresh={loadWorld} />
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+<div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <GameMap
           world={world}
           selectedId={selectedTerritoryId}

@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react';
-import { TerritoryView, NationView, WorldView, TerritoryDevState, CompatibilityBreakdown, UnrestCauses, api } from '../api';
+import { TerritoryView, NationView, WorldView, CompatibilityBreakdown, UnrestCauses, api } from '../api';
 
 interface Props {
   territoryId: string | null;
@@ -102,41 +101,6 @@ function CompatPanel({ compat }: { compat: CompatibilityBreakdown }) {
 }
 
 export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Props) {
-  const isDev = world.myNationId === 'nation_costa_rica';
-  const [devState, setDevState] = useState<TerritoryDevState | null>(null);
-
-  useEffect(() => {
-    if (!isDev || !territoryId) { setDevState(null); return; }
-    api.dev.territory(territoryId).then(setDevState).catch(() => setDevState(null));
-  }, [isDev, territoryId]);
-
-  const refreshDevState = () => {
-    if (!isDev || !territoryId) return;
-    api.dev.territory(territoryId).then(setDevState).catch(() => setDevState(null));
-  };
-
-  const devPromptTrait = async (
-    label: string,
-    current: number,
-    fn: (v: number) => Promise<unknown>,
-  ) => {
-    const raw = window.prompt(`Set ${label} (−1.00 to +1.00):`, current.toFixed(3));
-    if (raw === null) return;
-    const v = parseFloat(raw);
-    if (isNaN(v) || v < -1 || v > 1) { alert('Invalid value — must be −1.0 to +1.0'); return; }
-    try { await fn(v); onActionQueued(); refreshDevState(); }
-    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
-  };
-
-  const devPromptUnrest = async (current: number) => {
-    const raw = window.prompt('Set unrest (0.00 to 1.00):', current.toFixed(3));
-    if (raw === null) return;
-    const v = parseFloat(raw);
-    if (isNaN(v) || v < 0 || v > 1) { alert('Invalid value — must be 0.0 to 1.0'); return; }
-    try { await api.dev.setUnrest(territoryId!, v); onActionQueued(); refreshDevState(); }
-    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
-  };
-
   if (!territoryId) {
     return (
       <div style={panelStyle}>
@@ -284,32 +248,6 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
             <span><span style={{ color: '#555' }}>Ind </span><span style={{ color: '#f0a500' }}>{Math.floor(myStockpiles.industry)}</span></span>
             <span><span style={{ color: '#555' }}>Wlth </span><span style={{ color: '#ccc' }}>{Math.floor(myStockpiles.wealth)}</span></span>
           </div>
-        </div>
-      )}
-
-      {/* Dev: territory raw culture state (player1 only) */}
-      {isDev && devState && (
-        <div style={{ marginTop: '0.75rem', padding: '0.4rem 0.5rem', background: '#0d0d1a', borderRadius: 3 }}>
-          <div style={{ fontSize: '0.7rem', color: '#f0a500', marginBottom: '0.25rem', letterSpacing: '0.05em' }}>DEV — TERRITORY RAW</div>
-          <div
-            onClick={() => devPromptUnrest(devState.unrest)}
-            style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', cursor: 'pointer', padding: '0.1rem 0' }}
-            title="Click to set unrest (0–1)"
-          >
-            <span style={{ color: '#666' }}>Unrest</span>
-            <span style={{ color: '#7ecfff' }}>{devState.unrest.toFixed(3)}</span>
-          </div>
-          {(['individualist', 'progressive', 'militaristic', 'expansionist'] as const).map((tr) => (
-            <div
-              key={tr}
-              onClick={() => devPromptTrait(TRAIT_LABELS[tr]!, devState[tr], (v) => api.dev.setTrait(territoryId, tr, v))}
-              style={{ display: 'flex', justifyContent: 'space-between', padding: '0.1rem 0', fontSize: '0.78rem', cursor: 'pointer' }}
-              title={`Click to set ${TRAIT_LABELS[tr]} (−1 to +1)`}
-            >
-              <span style={{ color: '#666' }}>{TRAIT_LABELS[tr]}</span>
-              <span style={{ color: '#7ecfff' }}>{devState[tr] >= 0 ? '+' : ''}{devState[tr].toFixed(3)}</span>
-            </div>
-          ))}
         </div>
       )}
 
