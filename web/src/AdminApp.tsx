@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, AdminWorldFull, AdminTerritoryRow, AdminNationRow } from './api';
-import { CULTURE_AXES } from './cultureAxes';
+import { CULTURE_AXES, poleShort, poleName } from './cultureAxes';
 
 // [DEFERRED SECURITY] Admin key lives in React state only — never persisted to
 // localStorage or cookies. Disable this entire route before public deployment. §11.
@@ -23,10 +23,12 @@ function CultureAxes({ c }: { c: { individualist: number; progressive: number; m
     <span>
       {CULTURE_AXES.map((axis) => {
         const v = c[axis.key];
+        const color = v > 0.1 ? '#7ecfff' : v < -0.1 ? '#f0a500' : '#555';
+        const shortLabel = poleShort(axis, v);
         return (
-          <span key={axis.key} style={{ marginRight: '0.35rem', color: v > 0.1 ? '#7ecfff' : v < -0.1 ? '#f0a500' : '#555' }}
-            title={v > 0.05 ? axis.pos : v < -0.05 ? axis.neg : 'Neutral'}>
-            {axis.label}:{fmt(v, 1)}
+          <span key={axis.key} style={{ marginRight: '0.4rem', color }}
+            title={`${axis.label}: ${poleName(axis, v)} (${v >= 0 ? '+' : ''}${v.toFixed(2)})`}>
+            {shortLabel}:{fmt(v, 1)}
           </span>
         );
       })}
@@ -182,10 +184,11 @@ function TerritoryTableRow({ row, nations, adminKey, onRefresh }: TerritoryRowPr
       <td style={{ ...td, cursor: 'pointer' }} title="Click any axis label to nudge; click family to change">
         {CULTURE_AXES.map((axis) => {
           const v = row.culture[axis.key];
+          const color = v > 0.1 ? '#7ecfff' : v < -0.1 ? '#f0a500' : '#555';
           return (
-            <span key={axis.key} onClick={() => promptTrait(axis.key)} style={{ marginRight: '0.35rem', cursor: 'pointer', color: v > 0.1 ? '#7ecfff' : v < -0.1 ? '#f0a500' : '#555' }}
-              title={`${axis.label}: click to set. Currently: ${v > 0.05 ? axis.pos : v < -0.05 ? axis.neg : 'Neutral'}`}>
-              {axis.label}:{fmt(v, 1)}
+            <span key={axis.key} onClick={() => promptTrait(axis.key)} style={{ marginRight: '0.4rem', cursor: 'pointer', color }}
+              title={`${axis.label}: ${poleName(axis, v)}. Click to set.`}>
+              {poleShort(axis, v)}:{fmt(v, 1)}
             </span>
           );
         })}
@@ -224,15 +227,22 @@ function NationsTable({ nations, territories }: { nations: AdminNationRow[]; ter
               ? Math.max(...ownedTerrs.map((t) => t.unrest))
               : null;
             const revolting = ownedTerrs.filter((t) => t.isInRevolt).length;
-            // Nation-wide unrest pressure components (same on every owned territory).
+            const withCauses = ownedTerrs.filter((t) => t.unrestCauses !== null);
             const sample = ownedTerrs[0]?.unrestCauses;
-            const nationWidePressures = sample
-              ? [
-                  sample.overexpansionPressure > 0 && `Empire size: +${sample.overexpansionPressure.toFixed(3)}`,
-                  sample.recentConquestPressure > 0 && `Rapid expansion: +${sample.recentConquestPressure.toFixed(3)}`,
-                  sample.ownershipShock > 0 && `Conquest shock (any): +${sample.ownershipShock.toFixed(3)}`,
-                ].filter(Boolean) as string[]
-              : [];
+
+            // Aggregate named unrest factors across owned territories.
+            const avgCompat = withCauses.length
+              ? withCauses.reduce((s, t) => s + t.unrestCauses!.compatibilityPressure, 0) / withCauses.length : 0;
+            const avgDist = withCauses.length
+              ? withCauses.reduce((s, t) => s + t.unrestCauses!.distancePressure, 0) / withCauses.length : 0;
+            const avgInfra = withCauses.length
+              ? withCauses.reduce((s, t) => s + t.unrestCauses!.infrastructureBonus, 0) / withCauses.length : 0;
+            const maxShock = withCauses.length
+              ? Math.max(...withCauses.map((t) => t.unrestCauses!.ownershipShock)) : 0;
+            const shockedCount = withCauses.filter((t) => t.unrestCauses!.ownershipShock > 0.01).length;
+            // Nation-wide (same for all territories):
+            const empireSize = sample?.overexpansionPressure ?? 0;
+            const rapidExp = sample?.recentConquestPressure ?? 0;
             return (
               <tr key={n.id}>
                 <td style={td}>{n.name}{n.isAI && <span style={{ color: '#444', marginLeft: '0.3rem' }}>[AI]</span>}</td>
@@ -256,17 +266,20 @@ function NationsTable({ nations, territories }: { nations: AdminNationRow[]; ter
                 </td>
                 <td style={td}>
                   {avgUnrest !== null ? (
-                    <span>
+                    <div>
                       <span style={{ color: maxUnrest! > 0.6 ? '#ff6b6b' : maxUnrest! > 0.3 ? '#f0a500' : '#888' }}>
                         avg {avgUnrest.toFixed(2)} · max {maxUnrest!.toFixed(2)}
+                        {revolting > 0 && <span style={{ color: '#ff4444', marginLeft: '0.4rem' }}>· {revolting} in revolt</span>}
                       </span>
-                      {revolting > 0 && <span style={{ color: '#ff4444', marginLeft: '0.4rem' }}>{revolting} revolting</span>}
-                      {nationWidePressures.length > 0 && (
-                        <div style={{ fontSize: '0.68rem', color: '#666', marginTop: '0.1rem' }}>
-                          {nationWidePressures.map((p, i) => <div key={i}>{p}</div>)}
-                        </div>
-                      )}
-                    </span>
+                      <div style={{ fontSize: '0.68rem', marginTop: '0.15rem', lineHeight: '1.5' }}>
+                        {avgCompat > 0.01 && <div style={{ color: '#f0a500' }}>Cultural clash: +{avgCompat.toFixed(3)} avg</div>}
+                        {avgDist > 0.01 && <div style={{ color: '#888' }}>Distance: +{avgDist.toFixed(3)} avg</div>}
+                        {avgInfra < -0.001 && <div style={{ color: '#4caf50' }}>Infrastructure: {avgInfra.toFixed(3)} avg</div>}
+                        {shockedCount > 0 && <div style={{ color: '#ff8c42' }}>Conquest shock: {shockedCount} terr, max +{maxShock.toFixed(3)}</div>}
+                        {rapidExp > 0.001 && <div style={{ color: '#f0a500' }}>Rapid expansion: +{rapidExp.toFixed(3)}</div>}
+                        {empireSize > 0.001 && <div style={{ color: '#888' }}>Empire size: +{empireSize.toFixed(3)}</div>}
+                      </div>
+                    </div>
                   ) : <span style={{ color: '#333' }}>no territories</span>}
                 </td>
                 <td style={{ ...td, color: n.capital ? '#f0a500' : '#333' }}>

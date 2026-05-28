@@ -70,6 +70,14 @@ mechanics exist — those will push equilibrium high enough for revolt to matter
 
 ---
 
+## Conquest shock and rapid-expansion coupling (design intent)
+
+Conquest shock now decays only through active integration — infrastructure investment (road/port/fort) is the primary lever, with structural stability and cultural alignment as secondary signals. Neglected territories stay shocked for a very long time; actively integrated ones recover in ~10 ticks at full investment. This is intentional: investment is causal to integration, neglect compounds. All decay weights are [PLACEHOLDER] — tune once real conquest data exists.
+
+Rapid-expansion pressure now uses a linear-decay window (RECENT_ACQUISITION_WINDOW = 12 ticks) instead of a hard 5-tick cliff. Weight decays smoothly from 1.0 at acquisition to 0.0 at tick 12, so a nation that swallowed three territories doesn't suddenly feel organized at an arbitrary cutoff. Window length is [PLACEHOLDER].
+
+---
+
 ## Linear Mandate curve at empire scale
 
 **Note:** The current `3 + developedCount + fullyFortifiedCount` formula is sublinear at large empire scale (adding one more developed territory always gives exactly +1). A sublinear curve or hard cap may be appropriate once nations can hold 10+ territories, to avoid the action space becoming overwhelming. Flag for harness tuning when territory counts grow past ~6.

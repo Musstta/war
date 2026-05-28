@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
-import { loadTerritoryDefs, BUILD_INDUSTRY, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, bfsDistance, CONQUEST_SHOCK_INITIAL, RECENT_ACQUISITION_TICKS } from '@war/engine';
+import { loadTerritoryDefs, BUILD_INDUSTRY, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, bfsDistance, CONQUEST_SHOCK_INITIAL, RECENT_ACQUISITION_WINDOW } from '@war/engine';
 import type { TerritoryDef, TerritoryState } from '@war/engine';
 import { prisma } from './db';
 import { ensureWorldInitialized } from './world';
@@ -146,8 +146,12 @@ const start = async () => {
     for (const row of territoryRows) {
       if (!row.ownerId) continue;
       territoryCounts[row.ownerId] = (territoryCounts[row.ownerId] ?? 0) + 1;
-      if (row.acquiredTick !== null && meta.tick - row.acquiredTick <= RECENT_ACQUISITION_TICKS) {
-        recentAcquiredCounts[row.ownerId] = (recentAcquiredCounts[row.ownerId] ?? 0) + 1;
+      if (row.acquiredTick !== null) {
+        const age = meta.tick - row.acquiredTick;
+        if (age <= RECENT_ACQUISITION_WINDOW) {
+          const weight = Math.max(0, 1 - age / RECENT_ACQUISITION_WINDOW);
+          recentAcquiredCounts[row.ownerId] = (recentAcquiredCounts[row.ownerId] ?? 0) + weight;
+        }
       }
       if (row.hasRoad && row.hasPort && row.fortificationLevel >= 1) {
         developedCounts[row.ownerId] = (developedCounts[row.ownerId] ?? 0) + 1;
@@ -504,8 +508,12 @@ const start = async () => {
     for (const row of territoryRows) {
       if (!row.ownerId) continue;
       territoryCounts[row.ownerId] = (territoryCounts[row.ownerId] ?? 0) + 1;
-      if (row.acquiredTick !== null && meta.tick - row.acquiredTick <= RECENT_ACQUISITION_TICKS) {
-        adminRecentAcquired[row.ownerId] = (adminRecentAcquired[row.ownerId] ?? 0) + 1;
+      if (row.acquiredTick !== null) {
+        const age = meta.tick - row.acquiredTick;
+        if (age <= RECENT_ACQUISITION_WINDOW) {
+          const weight = Math.max(0, 1 - age / RECENT_ACQUISITION_WINDOW);
+          adminRecentAcquired[row.ownerId] = (adminRecentAcquired[row.ownerId] ?? 0) + weight;
+        }
       }
       if (row.hasRoad && row.hasPort && row.fortificationLevel >= 1)
         adminDevCounts[row.ownerId] = (adminDevCounts[row.ownerId] ?? 0) + 1;

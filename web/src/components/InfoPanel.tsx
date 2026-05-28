@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { TerritoryView, NationView, WorldView, CompatibilityBreakdown, UnrestCauses, api } from '../api';
-import { CULTURE_AXES, poleName } from '../cultureAxes';
+import { CULTURE_AXES, poleName, poleShort } from '../cultureAxes';
 
 interface Props {
   territoryId: string | null;

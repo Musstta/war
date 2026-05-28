@@ -4,13 +4,13 @@ import {
   computeNationCulture,
   computeCompatibility,
   computeUnrestEquilibrium,
+  computeShockDecayRate,
   applyDrift,
   bfsDistance,
   UNREST_DRIFT_RATE,
   REVOLT_THRESHOLD,
   REVOLT_HYSTERESIS,
-  CONQUEST_SHOCK_DECAY_RATE,
-  RECENT_ACQUISITION_TICKS,
+  RECENT_ACQUISITION_WINDOW,
 } from './culture';
 
 // ── Placeholder constants ─────────────────────────────────────────────────────
@@ -200,15 +200,21 @@ export function resolveTick(
     Object.entries(territories).map(([k, v]) => [k, v.def.adjacentIds]),
   );
 
-  // Count territories per nation (for overexpansion) and recently-acquired (for conquest pressure).
+  // Count territories per nation; compute smooth-decay rapid-expansion weights.
+  // Each recently acquired territory contributes a weight that decays linearly from
+  // 1.0 at acquisition to 0.0 at RECENT_ACQUISITION_WINDOW ticks — no hard cliff.
   const territoryCounts: Record<string, number> = {};
-  const recentAcquisitionCounts: Record<string, number> = {};
+  const recentAcquisitionWeights: Record<string, number> = {};
   for (const t of Object.values(territories)) {
     const oid = t.state.ownerId;
     if (!oid) continue;
     territoryCounts[oid] = (territoryCounts[oid] ?? 0) + 1;
-    if (t.state.acquiredTick !== null && world.tick - t.state.acquiredTick <= RECENT_ACQUISITION_TICKS) {
-      recentAcquisitionCounts[oid] = (recentAcquisitionCounts[oid] ?? 0) + 1;
+    if (t.state.acquiredTick !== null) {
+      const age = world.tick - t.state.acquiredTick;
+      if (age <= RECENT_ACQUISITION_WINDOW) {
+        const weight = Math.max(0, 1 - age / RECENT_ACQUISITION_WINDOW);
+        recentAcquisitionWeights[oid] = (recentAcquisitionWeights[oid] ?? 0) + weight;
+      }
     }
   }
 
@@ -224,25 +230,29 @@ export function resolveTick(
     const ownerId = t.state.ownerId;
     if (!ownerId) continue;
 
-    // Decay ownership shock exponentially toward 0.
-    if (t.state.ownershipShock > 0) {
-      t.state.ownershipShock = Math.max(0, t.state.ownershipShock * (1 - CONQUEST_SHOCK_DECAY_RATE));
-    }
-
     const nationCulture = nationCultures[ownerId];
     if (!nationCulture) continue;
 
     const capital = nations[ownerId]?.capitalTerritoryId ?? null;
     const hops = capital ? bfsDistance(adjacency, capital, t.def.id) : 0;
     const tcount = territoryCounts[ownerId] ?? 1;
-    const recentCount = recentAcquisitionCounts[ownerId] ?? 0;
+    const recentWeight = recentAcquisitionWeights[ownerId] ?? 0;
 
     const compat = computeCompatibility(t.state.valueTraits, t.def.culturalFamily, nationCulture);
     const causes = computeUnrestEquilibrium(
       compat, hops,
       t.state.hasRoad, t.state.hasPort, t.state.fortificationLevel,
-      tcount, t.state.ownershipShock, recentCount,
+      tcount, t.state.ownershipShock, recentWeight,
     );
+
+    // Decay ownership shock at a rate gated by integration progress.
+    // Neglected territories stay shocked; actively integrated ones heal quickly.
+    if (t.state.ownershipShock > 0) {
+      const decayRate = computeShockDecayRate(
+        t.state.hasRoad, t.state.hasPort, t.state.fortificationLevel, compat, causes,
+      );
+      t.state.ownershipShock = Math.max(0, t.state.ownershipShock * (1 - decayRate));
+    }
 
     // Drift unrest toward equilibrium.
     t.state.unrest = t.state.unrest + UNREST_DRIFT_RATE * (causes.equilibrium - t.state.unrest);

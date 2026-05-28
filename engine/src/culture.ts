@@ -52,13 +52,30 @@ export const OVEREXPANSION_PER_TERRITORY = 0.03;
 /** Unrest component applied immediately when a territory changes owner. [PLACEHOLDER] */
 export const CONQUEST_SHOCK_INITIAL = 0.50;
 
-/** Fraction of ownership shock decayed each tick (exponential decay). [PLACEHOLDER] */
-export const CONQUEST_SHOCK_DECAY_RATE = 0.15;
+/**
+ * Maximum fraction of shock that can decay per tick — only achieved with full integration
+ * (road + port + fort, high compat, low structural unrest). Neglected territories approach 0.
+ * Investment is causal to recovery; time alone does not heal. [PLACEHOLDER]
+ */
+export const CONQUEST_SHOCK_BASE_DECAY = 0.25;
 
-/** Ticks within which a territory counts as "recently acquired" for nation-wide pressure. [PLACEHOLDER] */
-export const RECENT_ACQUISITION_TICKS = 5;
+/** Weight of infrastructure investment in the integration-progress score. [PLACEHOLDER] */
+export const SHOCK_DECAY_INFRA_WEIGHT = 0.50;
 
-/** Unrest added to every territory a nation owns per recently-acquired territory. [PLACEHOLDER] */
+/** Weight of structural stability (low non-shock equilibrium) in the integration-progress score. [PLACEHOLDER] */
+export const SHOCK_DECAY_STABILITY_WEIGHT = 0.25;
+
+/** Weight of cultural compatibility in the integration-progress score. [PLACEHOLDER] */
+export const SHOCK_DECAY_COMPAT_WEIGHT = 0.25;
+
+/**
+ * Window (in ticks) over which a recently-acquired territory contributes to nation-wide
+ * rapid-expansion pressure. Weight decays linearly from 1.0 at acquisition to 0.0 at window end.
+ * Replaces the old hard 5-tick cliff. [PLACEHOLDER]
+ */
+export const RECENT_ACQUISITION_WINDOW = 12;
+
+/** Unrest added per unit of rapid-expansion weight (summed across recently acquired territories). [PLACEHOLDER] */
 export const RECENT_CONQUEST_PRESSURE_PER_TERRITORY = 0.06;
 
 // ── Infrastructure investment ─────────────────────────────────────────────────
@@ -302,6 +319,37 @@ export function computeUnrestEquilibrium(
     militaryBonus,
     equilibrium,
   };
+}
+
+/**
+ * Computes the effective ownership-shock decay rate for this tick.
+ * Scales with integration progress — infrastructure, structural stability, and cultural
+ * alignment all contribute. Neglected territory → near 0%/tick; fully integrated → up to
+ * CONQUEST_SHOCK_BASE_DECAY per tick. Time alone does not heal. [PLACEHOLDER weights]
+ */
+export function computeShockDecayRate(
+  hasRoad: boolean,
+  hasPort: boolean,
+  fortificationLevel: number,
+  compat: CompatibilityBreakdown,
+  causes: UnrestCauses,
+): number {
+  const infraRaw = (hasRoad ? ROAD_INFRA_CONTRIBUTION : 0)
+    + (hasPort ? PORT_INFRA_CONTRIBUTION : 0)
+    + (fortificationLevel * FORT_INFRA_CONTRIBUTION_PER_LEVEL);
+  const infraMax = ROAD_INFRA_CONTRIBUTION + PORT_INFRA_CONTRIBUTION + 3 * FORT_INFRA_CONTRIBUTION_PER_LEVEL;
+  const infraScore = infraRaw / infraMax;
+
+  // Structural equilibrium excluding the shock — measures underlying trouble.
+  const structuralEq = Math.max(0, causes.equilibrium - causes.ownershipShock);
+  const stabilityScore = Math.max(0, 1 - structuralEq * 3);
+
+  const integrationProgress =
+    infraScore * SHOCK_DECAY_INFRA_WEIGHT +
+    stabilityScore * SHOCK_DECAY_STABILITY_WEIGHT +
+    compat.total * SHOCK_DECAY_COMPAT_WEIGHT;
+
+  return CONQUEST_SHOCK_BASE_DECAY * integrationProgress;
 }
 
 // ── Cultural drift ────────────────────────────────────────────────────────────
