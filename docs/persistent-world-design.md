@@ -45,7 +45,15 @@ Players do not have an unlimited turn or a fixed action count. Each nation has a
 
 This replaces "one action per day" (too slow, punishes large nations) and "act until 7 PM" (rewards whoever has the most free time). Mandate makes "what do I do today" a genuine decision.
 
-**Mandate pool scales with the three resources** — Population, Industry, and Wealth — *not* with territory count. A large but poor/disorganized empire does not automatically get more Mandate than a small rich one. (Exact formula **[OPEN]** — likely a weighted sum, possibly with diminishing returns so a runaway empire doesn't get a runaway action economy.)
+**Mandate pool scales with territory development, not with stockpiles.** [DECIDED — placeholder values; structural fix from earlier accumulation bug]
+
+Formula: **3 + 1 per developed territory + 1 per fully fortified territory**, where:
+- *Developed* = road + port + fort L1+ (any fortification)
+- *Fully fortified* = road + port + fort L3 (maximum fortification)
+
+These bonuses are cumulative: a fully-fortified territory earns both the developed bonus and the fully-fortified bonus (+2 total). Inland territories cannot earn bonuses because they cannot build ports — intentional, ports represent economic integration and administrative reach.
+
+Rationale for decoupling from stockpiles: the original resource-based formula let Mandate grow unboundedly as wealth accumulated with no sink, producing pools of 50+ at tick 55. The development-based formula creates a meaningful ceiling tied to player choices (what to build) rather than the passage of time.
 
 **Trust modifies diplomacy costs.** High Trust makes diplomatic actions *cheaper* in Mandate; low Trust makes them *more expensive*. A distrusted nation finds every treaty and negotiation a heavier lift — psychologically and mechanically. (See Section 8.)
 
@@ -55,9 +63,9 @@ This replaces "one action per day" (too slow, punishes large nations) and "act u
 - *Expensive:* declare war, annex a rebel territory, break a treaty, large-scale mobilization.
 
 ### [OPEN] Mandate questions
-- Exact pool formula from the three resources.
+- **Base value of 3 and linear +1/+1 scaling are placeholders.** Once the full action set exists (diplomacy, trade, military orders), the total Mandate demand will be clear enough to tune. Likely needs a sublinear curve or hard cap at large empire scale to prevent the action space from becoming overwhelming.
 - Does unspent Mandate carry over to the next day, or is it use-it-or-lose-it? (Recommend: no carryover, or a small cap — carryover lets players bank for a megaturn, which can feel bad for the target.)
-- Do diminishing returns apply, so the strongest nation doesn't also have the most actions?
+- Do diminishing returns apply at empire scale, so a nation that has developed 20 territories doesn't also dominate the action economy?
 
 ---
 
@@ -85,7 +93,7 @@ Exactly **three**. Do not add a fourth.
 **Industry** — produces infrastructure. Used for roads, ports, ships, fortifications.
 **Wealth** — economic output. Used for army upkeep, trade, treaty collateral, development.
 
-All three also feed the Mandate pool (Section 3).
+Mandate pool is no longer derived from these resources — see Section 3 for the current formula (territory development).
 
 ---
 
@@ -553,3 +561,5 @@ Consolidated for tracking. Resolve before building the relevant system.
 - **v0.2** — Locked: multi-clause treaties (per-clause collateral pooled to one total, Mandate per-treaty not per-clause, accepting costs Mandate, breaks as one unit); treaty-degradation collateral handling (active partner refunded fast, inactive player's collateral escrowed, **no Trust hit** for absence, escrow skim in Wealth as the deterrent, active player may break a degraded treaty for free); war model fully decided (tick-resolved, per-territory, siege relief allowed, occupy-during/annex-at-peace, peace negotiation step, war-unrest driven by overextension/sloppiness/insolvency/term-rejection with culture as multiplier, raiding wars in); Prestige projected-delta legibility rule (15.5). War section moved from [OPEN] to [DECIDED — model]. Remaining open items are numeric tuning + casus belli.
 - **v0.3** — Added the Trade system (Section 14A) as a major pillar: bilateral time-bound deals over the three resources as tradeable goods; throttling solved via per-route Capacity + Friction computed symmetrically from the pair (geography gives each nation a distinct trade *shape*, not a trade *rank* — the "Mongolia problem" fix); routes are improvable via roads; trade reduces unrest and aids integration; no hard cap on deal count but culture constrains it (Isolationist unrest from over-entanglement, Merchant unrest from under-trade — completing the per-axis culture-constraint pattern). Corrected the Prestige negotiation bonus to the **underdog model**: the lower-Prestige party gets the bonus, no double-dip for the leader (15.3, 14A.5). Route interdiction deferred but architecture mandated (routes stored as real objects with explicit paths).
 - **v0.4** — Dominant trait reworked: it is a **qualification, not a placement** — requires Prestige above an absolute floor AND within a comparability band of the top; no one may hold it in a mediocre game; multiple co-Dominants allowed if comparable. Logged **starting-position balance** as a simulation question (culture is emergent from the real-world map, so some regions may be easier — fix via more scoring paths, not trait nerfs). Casus belli confirmed deferred (start with none; war unrest + Trust self-police; revisit a soft layer post-simulation). Companion document `persistent-world-tech-stack.md` created (stack, map approach, engine architecture, 8-phase build order).
+- **v0.5** — Phase 4 Infrastructure built. Roads, ports, and forts (L0–L3) implemented end-to-end: actions in engine, multi-tick construction state in DB, strict single construction slot per territory (all build types compete for one slot — sequential only), next-build pre-queue with mandate+industry pre-deducted and cancel-refund. `resolveTick` now returns explicit per-action `ActionResult` (applied/discarded + reason) so the server handles mandate refunds via result inspection rather than state diffing. All build times and costs tagged `[PLACEHOLDER]`.
+- **v0.6** — Phase 4 Culture & Unrest built. Value axes on ±1 scale with named opposing poles. Cultural families + family-closeness table (family weight 60%, axis alignment 40%). Unrest equilibrium decomposes into fully named components: base floor, cultural clash, distance from capital, infrastructure investment (road/port/fort composite bonus), empire size, conquest shock, rapid expansion, military (stub). Conquest shock: initial value compat-scaled (0.20–0.70), decays only when infrastructure is present (hard gate — compat alone cannot heal a neglected territory). Rapid-expansion pressure uses 12-tick linear decay window (no hard cliff). Capital territory gets 2× weight in nation-culture computation. Mandate decoupled from stockpiles → territory-development formula (see Section 3). Admin panel at `/admin` (admin-key gated, full god's-eye view, all territory attributes editable). Simulation harness (`npm run scenario` / `npm run sweep`) with markdown reports, per-tick CSVs, and PNG charts; three seed scenarios as regression baseline. Action-causal recovery principle empirically validated in belize-neglect vs belize-integrate contrast.

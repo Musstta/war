@@ -193,25 +193,11 @@ done
 
 ---
 
-## 11. Dev panel (player1 only) — in-browser shortcuts
+## 11. Admin functions
 
-When logged in as **player1 / Costa Rica**, two extra UI elements appear:
+All dev and admin functions now live at `/admin` behind the admin key. The DevToolbar and InfoPanel dev section were removed from the player view. See §12 for the admin panel and its curl equivalents.
 
-**DevToolbar** (top bar, always visible):
-
-| Button | Action |
-|--------|--------|
-| → Main | Force Main Phase |
-| → Prep | Force Prep Phase |
-| → Clock | Clear phase override (return to real clock) |
-| ⚡ Tick | Advance world by one tick |
-| ↺ Reset | Wipe all game data and restart from tick 0 (confirms first) |
-
-**InfoPanel dev section** (bottom of territory sidebar, when a territory is selected):
-
-Shows Unrest and 4 culture traits (Ind / Prog / Mil / Exp) as clickable rows. Clicking any row opens a prompt to set the value (0.00–1.00).
-
-### Equivalent curl commands (session-cookie auth, not admin-key)
+The `/api/dev/*` session-cookie endpoints below remain valid for scripting (session-gated to `nation_costa_rica`):
 
 ```bash
 # First log in to get a session cookie
@@ -231,14 +217,14 @@ curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/tick
 # Reset world
 curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/reset-world
 
-# Inspect territory dev state (unrest + culture traits + construction)
+# Inspect territory state (unrest + culture traits + construction)
 curl -b /tmp/war.cookies http://localhost:3001/api/dev/territory/costa_rica
 
 # Set unrest on a territory
 curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/territory/costa_rica/set-unrest \
   -H "Content-Type: application/json" -d '{"value":0.8}'
 
-# Set a culture trait
+# Set a culture trait (range: −1.00 to +1.00)
 curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/territory/costa_rica/set-trait \
   -H "Content-Type: application/json" -d '{"trait":"militaristic","value":0.9}'
 # trait: individualist | progressive | militaristic | expansionist
