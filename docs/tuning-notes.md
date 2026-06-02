@@ -208,6 +208,26 @@ All weights need validation once the full action set (war wins, treaty completio
 
 ---
 
+## Activity tier constants (Phase 6 v0.17 — all [PLACEHOLDER])
+
+All in `server/src/caretaker.ts`.
+
+**Tier thresholds** (days of inactivity before advancing):
+- `TIER_ACTIVE_TO_DORMANT_DAYS = 3` — After 3 real days without login or action, nation enters Dormant. Short enough that players notice but long enough to survive a weekend. Revisit once first playtest shows actual session gaps.
+- `TIER_DORMANT_TO_AUTOPILOT_DAYS = 7` — One week without engagement. Caretaker starts acting at this point. The 7→14 window is the "soft return" window — player can log in and immediately reclaim without any conversion.
+- `TIER_AUTOPILOT_TO_ABANDONED_DAYS = 14` — Two weeks. Past this point the caretaker cannot stabilize without player input; fragmentation risk is real. Consider shortening to 10 days if nations fragment too slowly.
+
+**Caretaker thresholds**:
+- `CARETAKER_INFRA_WEALTH_FLOOR = 20` — Only queues infrastructure upgrades when wealth ≥ 20. Prevents caretaker from spending wealth needed for upkeep. If typical starting wealth is 10–30 this may be too conservative — revise once typical game-state wealth is known.
+- `CARETAKER_EXPANSION_UNREST_CAP = 0.4` — Only expands when average unrest < 0.4. At 0.4 average unrest a nation is stressed but not in revolt. This prevents caretaker from expanding into a death spiral. Could lower to 0.3 for more conservative behavior.
+
+**Fragmentation constants**:
+- `ABANDON_UNREST_WEIGHT = 0.6`, `ABANDON_TIME_WEIGHT = 0.4` — Unrest drives fragmentation more than time. A high-unrest territory can break away in days; a low-unrest territory survives weeks of abandonment. Revisit ratio if territories break away too quickly/slowly.
+- `ABANDON_TIME_SCALE_DAYS = 30` — Time component reaches full weight after 30 days abandoned. At 14-day abandonment threshold, time component = (14/30) × 0.4 = 0.187. Even a 0 unrest territory would reach risk 0.187 at abandonment day 14 — below the 0.8 threshold. A 0.5-unrest territory reaches risk = 0.5×0.6 + 0.187 = 0.487 on day 14 — still below threshold. This means fragmentation won't happen instantly on Abandoned entry, which is correct behavior.
+- `ABANDON_FRAGMENT_THRESHOLD = 0.8` — Territory breaks away when risk ≥ 0.8. With the above weights, risk ≥ 0.8 requires either very high unrest or extended abandonment. Example: unrest=0.9 → time component needed = 0.8 − 0.54 = 0.26 → (days/30)×0.4 = 0.26 → days ≥ 19.5. So a high-unrest territory needs ~20 days of abandonment before breaking away. That feels right — fragmentation should be a slow pressure, not instant collapse.
+
+---
+
 ## Insolvency constants (Phase 5 v0.16 — all [PLACEHOLDER])
 
 All in `engine/src/war.ts` and `engine/src/culture.ts`.

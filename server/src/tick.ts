@@ -6,6 +6,7 @@ import { prisma } from './db';
 import { loadWorldState, saveWorldState } from './world';
 import { TICK_SCHEDULE } from './config';
 import { ACTION_COSTS, FORT_MANDATE_COSTS } from './phase';
+import { runCaretaker } from './caretaker';
 
 let tickInProgress = false;
 
@@ -141,6 +142,10 @@ export async function runTick(defs: TerritoryDef[]): Promise<{ tick: number }> {
       await saveWorldState(tx, newWorld);
       await tx.nation.updateMany({ data: { mandateUsed: 0 } }); // reset per-tick budget
       await tx.queuedAction.deleteMany(); // clear processed intents inside same tx
+
+      // ── Caretaker: tier transitions, caretaker AI queuing, abandoned fragmentation.
+      // Runs after the tick's actions are cleared so caretaker queues start fresh.
+      await runCaretaker(tx, newWorld.tick, defs);
 
       return { tick: newWorld.tick };
     });

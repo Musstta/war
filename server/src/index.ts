@@ -6,6 +6,7 @@ import type { TerritoryDef, TerritoryState } from '@war/engine';
 import { prisma } from './db';
 import { ensureWorldInitialized } from './world';
 import { runTick, startScheduler } from './tick';
+import { fragmentationRisk } from './caretaker';
 import { ADMIN_KEY, DATA_FILE, PORT, SESSION_SECRET } from './config';
 import { authenticate } from './auth';
 import { currentPhase, getPhaseOverride, setPhaseOverride, mandateBudget, ACTION_COSTS, ACTION_PHASE } from './phase';
@@ -39,6 +40,11 @@ app.post('/api/login', async (request, reply) => {
   if (!player) return reply.code(401).send({ error: 'Invalid credentials' });
   reply.setCookie('war_session', player.nationId, {
     signed: true, httpOnly: true, path: '/', sameSite: 'strict',
+  });
+  // Stamp lastActiveAt on login — resets inactivity clock.
+  await prisma.nation.update({
+    where: { id: player.nationId },
+    data: { lastActiveAt: new Date(), activityTier: 'active' } as any,
   });
   return { ok: true, nationId: player.nationId };
 });
@@ -288,6 +294,11 @@ const start = async () => {
     }
 
     await handler.queue(ctx, cost, finalPayload);
+    // Stamp lastActiveAt on any queued action — resets inactivity clock.
+    await prisma.nation.update({
+      where: { id: nationId },
+      data: { lastActiveAt: new Date(), activityTier: 'active' } as any,
+    });
     return { ok: true };
   });
 
@@ -459,6 +470,15 @@ const start = async () => {
           militaristic: t.militaristic, expansionist: t.expansionist,
           family: t.culturalFamily ?? def?.culturalFamily ?? 'unknown',
         },
+        // Fragmentation risk — only non-null for territories of Abandoned nations.
+        fragmentationRisk: (() => {
+          if (!t.ownerId) return null;
+          const ownerNation = nationRows.find((n) => n.id === t.ownerId);
+          if (!ownerNation || (ownerNation as any).activityTier !== 'abandoned') return null;
+          const aAt = (ownerNation as any).abandonedAt as Date | null;
+          if (!aAt) return null;
+          return fragmentationRisk(t.unrest, aAt);
+        })(),
       };
     });
     const nations = nationRows.map((n) => ({
@@ -466,6 +486,9 @@ const start = async () => {
       stockpiles: { population: n.popStock, industry: n.indStock, wealth: n.wealthStock },
       armySize: n.armySize, mandateBudget: mandateBudget(adminDevCounts[n.id] ?? 0, adminFullCounts[n.id] ?? 0), mandateUsed: n.mandateUsed,
       capital: n.capitalTerritoryId, culture: nationCultures[n.id] ?? null,
+      activityTier: (n as any).activityTier ?? 'active',
+      lastActiveAt: (n as any).lastActiveAt ?? null,
+      abandonedAt: (n as any).abandonedAt ?? null,
     }));
     return {
       tick: meta.tick, phase: currentPhase(), nations, territories,
@@ -1205,6 +1228,59 @@ const start = async () => {
       data: { tick: meta?.tick ?? 0, message: `[admin] Objective clause #${objId} (${obj.objectiveType}) force-set to failed.` },
     });
     return { ok: true, id: objId, status: 'failed' };
+  });
+
+  // ── Activity tier admin endpoints ─────────────────────────────────────────
+
+  // POST /api/admin/nation/:id/set-tier — force-set the activity tier for testing.
+  // Useful for testing tier transitions without waiting real wall-clock days.
+  app.post('/api/admin/nation/:id/set-tier', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { tier } = request.body as { tier?: string };
+    const validTiers = ['active', 'dormant', 'autopilot', 'abandoned', 'dissolved'];
+    if (!tier || !validTiers.includes(tier)) {
+      return reply.code(400).send({ error: `tier must be one of: ${validTiers.join(', ')}` });
+    }
+    const nation = await prisma.nation.findUnique({ where: { id } });
+    if (!nation) return reply.code(404).send({ error: 'Nation not found' });
+
+    const updateData: Record<string, unknown> = { activityTier: tier };
+    if (tier === 'active') updateData['lastActiveAt'] = new Date();
+    if (tier === 'abandoned' && !(nation as any).abandonedAt) updateData['abandonedAt'] = new Date();
+
+    await prisma.nation.update({ where: { id }, data: updateData as any });
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    await prisma.eventLog.create({
+      data: { tick: meta?.tick ?? 0, message: `[admin] ${nation.name} activity tier force-set to ${tier}.` },
+    });
+    return { ok: true, nationId: id, tier };
+  });
+
+  // POST /api/admin/nation/:id/convert-to-ai — convert an Abandoned nation to a full AI nation.
+  // The nation enters the full AI behavior system and is no longer recoverable by the original player.
+  app.post('/api/admin/nation/:id/convert-to-ai', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const nation = await prisma.nation.findUnique({ where: { id } });
+    if (!nation) return reply.code(404).send({ error: 'Nation not found' });
+    if ((nation as any).activityTier !== 'abandoned') {
+      return reply.code(400).send({ error: 'Only Abandoned nations can be converted to AI' });
+    }
+    await prisma.nation.update({
+      where: { id },
+      data: {
+        isAI: true,
+        activityTier: 'active',
+        abandonedAt: null,
+        lastActiveAt: null,
+      } as any,
+    });
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    await prisma.eventLog.create({
+      data: { tick: meta?.tick ?? 0, message: `The ${nation.name} empire has fallen under AI control.` },
+    });
+    return { ok: true, nationId: id };
   });
 
   // ── Startup ────────────────────────────────────────────────────────────────

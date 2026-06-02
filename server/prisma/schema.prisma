@@ -36,6 +36,16 @@ model Nation {
   // Cumulative debt from insolvency (wealthStock < 0). Cleared via recovery skim. [PLACEHOLDER]
   debtBalance           Float @default(0)
 
+  // ── Activity tier (Phase 6) ──────────────────────────────────────────────
+  // Last time the player took any action or logged in. Null = AI nation or harness (treat as always-active).
+  lastActiveAt          DateTime?
+  // 'active' | 'dormant' | 'autopilot' | 'abandoned' | 'dissolved'
+  activityTier          String  @default("active")
+  // Tick when the nation entered Abandoned. Null until Abandoned.
+  abandonedAt           DateTime?
+  // Player-configurable caretaker priority queue. JSON array of strings.
+  caretakerPriorities   Json    @default("[\"defense\",\"roads\",\"industry\",\"expansion\"]")
+
   territories    TerritoryState[]
   actions        QueuedAction[]
   treatyParties  TreatyParty[]

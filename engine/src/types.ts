@@ -156,6 +156,10 @@ export interface Nation {
    * toward debtBalance until it reaches 0. Insolvent = wealthStock < 0 || debtBalance > 0.
    */
   debtBalance: number;
+  /** 'active' | 'dormant' | 'autopilot' | 'abandoned' | 'dissolved' */
+  activityTier: string;
+  /** Player-configurable caretaker priority order. */
+  caretakerPriorities: string[];
 }
 
 export interface EventLogEntry {

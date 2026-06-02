@@ -84,6 +84,8 @@ export function buildWorldState(
       inactivityTier: 'active',
       lastBrokenPromiseTick: null,
       debtBalance: 0,
+      activityTier: 'active',
+      caretakerPriorities: ['defense', 'roads', 'industry', 'expansion'],
     };
   }
 

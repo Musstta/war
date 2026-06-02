@@ -70,6 +70,8 @@ export async function loadWorldState(
       inactivityTier: n.inactivityTier,
       lastBrokenPromiseTick: n.lastBrokenPromiseTick ?? null,
       debtBalance: (n as any).debtBalance ?? 0,
+      activityTier: (n as any).activityTier ?? 'active',
+      caretakerPriorities: ((n as any).caretakerPriorities as string[]) ?? ['defense', 'roads', 'industry', 'expansion'],
     };
   }
 
@@ -240,6 +242,8 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         inactivityTier: nation.inactivityTier,
         lastBrokenPromiseTick: nation.lastBrokenPromiseTick,
         debtBalance: nation.debtBalance,
+        activityTier: nation.activityTier,
+        caretakerPriorities: nation.caretakerPriorities as Prisma.InputJsonValue,
       },
     });
   }

@@ -62,7 +62,16 @@ function DiplomacySection({ nations, adminKey, onRefresh }: DiplomacySectionProp
                 </select>
               </td>
               <td style={td}>{n.lastBrokenPromiseTick !== null ? `T${n.lastBrokenPromiseTick}` : '—'}</td>
-              <td style={td}></td>
+              <td style={td}>
+                {n.activityTier === 'abandoned' && (
+                  <button
+                    style={{ ...dangerBtn, padding: '0.1rem 0.35rem', fontSize: '0.68rem' }}
+                    onClick={() => { if (window.confirm(`Convert ${n.name} to AI nation? This is permanent.`)) doAction(() => api.admin.convertToAi(adminKey, n.id)); }}
+                  >
+                    → AI
+                  </button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -417,6 +426,11 @@ function TerritoryTableRow({ row, nations, adminKey, onRefresh }: TerritoryRowPr
           ? <span style={{ color: row.compatibility.total < 0.4 ? '#ff6b6b' : row.compatibility.total > 0.7 ? '#4caf50' : '#f0a500' }}>{row.compatibility.total.toFixed(2)}</span>
           : <span style={{ color: '#333' }}>—</span>}
       </td>
+      <td style={td}>
+        {row.fragmentationRisk !== null
+          ? <span style={{ color: row.fragmentationRisk >= 0.8 ? '#ff4444' : row.fragmentationRisk >= 0.5 ? '#f0a500' : '#555' }}>{row.fragmentationRisk.toFixed(2)}</span>
+          : <span style={{ color: '#222' }}>—</span>}
+      </td>
     </tr>
   );
 }
@@ -525,7 +539,7 @@ function TerritoriesTable({ territories, nations, adminKey, onRefresh }: Territo
         <table style={tblStyle}>
           <thead>
             <tr>
-              {['Name', 'Owner', 'Unrest → Equilibrium', 'Revolt', 'Infrastructure', 'Construction', 'Culture  [family]', 'Compat'].map((h) => (
+              {['Name', 'Owner', 'Unrest → Equilibrium', 'Revolt', 'Infrastructure', 'Construction', 'Culture  [family]', 'Compat', 'Frag'].map((h) => (
                 <th key={h} style={th}>{h}</th>
               ))}
             </tr>

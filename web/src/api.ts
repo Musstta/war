@@ -120,6 +120,7 @@ export interface AdminTerritoryRow {
   pendingConstructionType: string | null;
   compatibility: CompatibilityBreakdown | null;
   culture: { individualist: number; progressive: number; militaristic: number; expansionist: number; family: string };
+  fragmentationRisk: number | null;
 }
 
 export interface AdminNationRow {
@@ -132,6 +133,9 @@ export interface AdminNationRow {
   mandateUsed: number;
   capital: string | null;
   culture: NationCulture | null;
+  activityTier: string;
+  lastActiveAt: string | null;
+  abandonedAt: string | null;
 }
 
 export interface AdminWorldFull {
@@ -463,6 +467,10 @@ export const api = {
       }),
     forceFailObjective: (key: string, objectiveId: number) =>
       apiFetch<{ ok: boolean; status: string }>(`/api/admin/objective/${objectiveId}/force-fail`, {
+        method: 'POST', headers: adminHeaders(key),
+      }),
+    convertToAi: (key: string, nationId: string) =>
+      apiFetch<{ ok: boolean }>(`/api/admin/nation/${nationId}/convert-to-ai`, {
         method: 'POST', headers: adminHeaders(key),
       }),
   },

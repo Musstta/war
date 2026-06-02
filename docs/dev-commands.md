@@ -393,6 +393,75 @@ curl http://localhost:3001/api/admin/world-full \
 
 ---
 
+## 14. Activity tier admin commands
+
+### Force-set a nation's activity tier (for testing)
+
+```bash
+# Force Costa Rica to Dormant (triggers treaty degradation next tick)
+curl -X POST http://localhost:3001/api/admin/nation/nation_costa_rica/set-tier \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" \
+  -d '{"tier":"dormant"}'
+# → {"ok":true,"nationId":"nation_costa_rica","tier":"dormant"}
+
+# Force to Autopilot (caretaker AI begins acting each tick)
+curl -X POST http://localhost:3001/api/admin/nation/nation_costa_rica/set-tier \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" \
+  -d '{"tier":"autopilot"}'
+
+# Force to Abandoned (fragmentation risk starts accumulating)
+curl -X POST http://localhost:3001/api/admin/nation/nation_costa_rica/set-tier \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" \
+  -d '{"tier":"abandoned"}'
+
+# Return to Active (resets inactivity clock)
+curl -X POST http://localhost:3001/api/admin/nation/nation_costa_rica/set-tier \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" \
+  -d '{"tier":"active"}'
+```
+
+Valid tiers: `active`, `dormant`, `autopilot`, `abandoned`, `dissolved`.
+
+### Convert an Abandoned nation to AI control
+
+```bash
+curl -X POST http://localhost:3001/api/admin/nation/nation_costa_rica/convert-to-ai \
+  -H "X-Admin-Key: dev-only-insecure-key"
+# → {"ok":true,"nationId":"nation_costa_rica"}
+```
+
+Sets `isAI = true`, clears `abandonedAt`. The nation enters full AI behavior and is no longer recoverable by the original player. Event Log: `"The Costa Rican empire has fallen under AI control."`
+
+### Full tier-transition test loop
+
+```bash
+# 1. Force to Abandoned
+curl -X POST http://localhost:3001/api/admin/nation/nation_costa_rica/set-tier \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" \
+  -d '{"tier":"abandoned"}'
+
+# 2. Run a few ticks — fragmentation risk climbs as unrest accumulates
+for i in $(seq 5); do
+  curl -s -X POST http://localhost:3001/api/admin/tick \
+    -H "X-Admin-Key: dev-only-insecure-key" > /dev/null
+done
+
+# 3. Check fragmentation risk per territory in world-full
+curl http://localhost:3001/api/admin/world-full \
+  -H "X-Admin-Key: dev-only-insecure-key" | jq '.territories[] | select(.fragmentationRisk != null) | {id, fragmentationRisk}'
+
+# 4. Convert to AI if desired
+curl -X POST http://localhost:3001/api/admin/nation/nation_costa_rica/convert-to-ai \
+  -H "X-Admin-Key: dev-only-insecure-key"
+```
+
+---
+
 ## Player credentials (dev)
 
 | Username | Password | Nation     |
