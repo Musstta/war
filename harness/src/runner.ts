@@ -2,7 +2,7 @@
  * Core scenario runner — pure engine, no DB, no HTTP.
  */
 import { resolve } from 'path';
-import type { WorldState, QueuedAction, TerritoryDef, CulturalFamily, Treaty, ClauseType, War, PeaceDeal, PeaceDealType, Territorycessation } from '@war/engine';
+import type { WorldState, QueuedAction, TerritoryDef, CulturalFamily, Treaty, ClauseType, War, PeaceDeal, PeaceDealType, Territorycessation, DoctrineBlend } from '@war/engine';
 import {
   loadTerritoryDefs,
   buildWorldState,
@@ -13,6 +13,9 @@ import {
   TRUST_BREAK_PENALTY,
   ESCROW_SKIM_RATE,
   DEGRADATION_REFUND_TICKS,
+  PROPOSAL_EXPIRY_TICKS,
+  scoreAction,
+  BALANCED_DOCTRINE,
 } from '@war/engine';
 import type { Scenario, RunResult } from './types';
 import { captureSnapshot } from './snapshot';
@@ -27,7 +30,7 @@ export function run(scenario: Scenario): RunResult {
   const nationInits = scenario.world.nations.map((n) => ({
     id: n.id,
     name: n.name,
-    isAI: false,
+    isAI: n.isAI ?? false,
     startingTerritoryIds: n.territories,
     armySize: n.armySize ?? 50,
   }));
@@ -364,6 +367,21 @@ export function run(scenario: Scenario): RunResult {
         if (!nationId) { console.warn('[harness] accept_peace requires explicit nationId in payload'); continue; }
         engineActions.push({ nationId, type: 'accept_peace', payload: p });
 
+      } else if (action.type === 'set_ai_doctrine') {
+        // Assign a doctrineBlend to a nation (for testing specific doctrine behaviors).
+        // payload: { nationId, doctrine: { expansionist, merchant, industrialist, militarist, isolationist } }
+        const nationId = p['nationId'] as string;
+        const doctrine = p['doctrine'] as DoctrineBlend;
+        const nation = world.nations[nationId];
+        if (!nation) { console.warn(`[harness] set_ai_doctrine: nation ${nationId} not found`); continue; }
+        world = {
+          ...world,
+          nations: {
+            ...world.nations,
+            [nationId]: { ...nation, isAI: true, doctrineBlend: doctrine },
+          },
+        };
+
       } else {
         // Pass-through to engine: derive nationId from territory owner.
         const tid = p['territoryId'] as string | undefined;
@@ -380,11 +398,196 @@ export function run(scenario: Scenario): RunResult {
       }
     }
 
+    // autoAcceptTreaties: convert any pending proposals to active treaties.
+    if (scenario.world.autoAcceptTreaties) {
+      for (const proposal of world.proposals) {
+        if (proposal.status !== 'pending') continue;
+        const totalCollateral = proposal.clauses.reduce((s, c) => s + c.collateral, 0);
+        const collateralByParty: Record<string, number> = {
+          [proposal.proposerId]: proposal.proposerCollateral,
+          [proposal.targetId]:   proposal.targetCollateral,
+        };
+        const treaty: Treaty = {
+          id: world.treaties.length + 1000 + world.tick,
+          proposalId: proposal.id,
+          partyIds: [proposal.proposerId, proposal.targetId],
+          clauses: proposal.clauses,
+          status: 'active',
+          termTicks: proposal.termTicks,
+          tickStarted: world.tick,
+          tickEnds: world.tick + proposal.termTicks,
+          totalCollateral,
+          breakerNationId: null,
+          collateralByParty,
+          refundRemainingByParty: { [proposal.proposerId]: 0, [proposal.targetId]: 0 },
+          refundStartTickByParty: { [proposal.proposerId]: null, [proposal.targetId]: null },
+          escrowAmountByParty: { [proposal.proposerId]: 0, [proposal.targetId]: 0 },
+          escrowStartTickByParty: { [proposal.proposerId]: null, [proposal.targetId]: null },
+        };
+        // Deduct collateral from proposer and target.
+        const newNations = { ...world.nations };
+        for (const [nid, amt] of Object.entries(collateralByParty)) {
+          const n = newNations[nid];
+          if (n) newNations[nid] = { ...n, stockpiles: { ...n.stockpiles, wealth: n.stockpiles.wealth - amt } };
+        }
+        // Mark proposal accepted.
+        const newProposals = world.proposals.map((pr) =>
+          pr.id === proposal.id ? { ...pr, status: 'accepted' as const } : pr,
+        );
+        world = {
+          ...world,
+          nations: newNations,
+          proposals: newProposals,
+          treaties: [...world.treaties, treaty],
+        };
+      }
+    }
+
     const result = resolveTick(world, engineActions);
     world = result.world;
+
+    // Harness AI pass: for AI nations with a doctrineBlend, apply the highest-scored
+    // action directly to world state. This mirrors the server-side runAiNations logic
+    // without DB access — only supports expand_claim and propose_treaty in the harness.
+    world = applyHarnessAiActions(world, defs, defById);
 
     snapshots.push(captureSnapshot(world, world.tick, defs));
   }
 
   return { scenario, snapshots };
+}
+
+// ── Harness AI pass ────────────────────────────────────────────────────────────
+// Applies the top-scored AI action for each AI nation with a doctrineBlend.
+// Supports: expand_claim (directly assigns territory) and propose_treaty (adds to proposals).
+// Does NOT run build actions (those require production/mandate state managed by engine).
+// This is a harness-only approximation for scenario testing — not used in the live server.
+
+function applyHarnessAiActions(
+  world: WorldState,
+  defs: TerritoryDef[],
+  defById: Map<string, TerritoryDef>,
+): WorldState {
+  let w = world;
+
+  for (const [nationId, nation] of Object.entries(w.nations)) {
+    if (!nation.isAI) continue;
+    const doctrine = nation.doctrineBlend ?? BALANCED_DOCTRINE;
+
+    const ownedIds = new Set(
+      Object.entries(w.territories)
+        .filter(([, t]) => t.state.ownerId === nationId)
+        .map(([id]) => id),
+    );
+    const highestOwnedUnrest = Math.max(0, ...[...ownedIds].map((id) => w.territories[id]?.state.unrest ?? 0));
+
+    // Score candidates.
+    type Cand = { score: number; apply: () => WorldState };
+    const candidates: Cand[] = [];
+
+    // expand_claim: find adjacent unclaimed territory.
+    let unclaimedAdj: string | null = null;
+    for (const tid of ownedIds) {
+      const def = defById.get(tid);
+      if (!def) continue;
+      for (const adjId of def.adjacentIds) {
+        if (ownedIds.has(adjId)) continue;
+        if (w.territories[adjId]?.state.ownerId === null) { unclaimedAdj = adjId; break; }
+      }
+      if (unclaimedAdj) break;
+    }
+    if (unclaimedAdj) {
+      const adjId = unclaimedAdj;
+      candidates.push({
+        score: scoreAction({ type: 'expand_claim' }, doctrine),
+        apply: () => {
+          const t = w.territories[adjId];
+          if (!t) return w;
+          return {
+            ...w,
+            territories: {
+              ...w.territories,
+              [adjId]: { ...t, state: { ...t.state, ownerId: nationId, acquiredTick: w.tick } },
+            },
+            eventLog: [...w.eventLog, { tick: w.tick, message: `[AI] ${nation.name} claimed ${adjId}.` }],
+          };
+        },
+      });
+    }
+
+    // propose_treaty: find a neighbor not yet in a treaty (simplified Trust check: always Trust >= 50).
+    let neighborId: string | null = null;
+    for (const tid of ownedIds) {
+      const def = defById.get(tid);
+      if (!def) continue;
+      for (const adjId of def.adjacentIds) {
+        const adjOwnerId = w.territories[adjId]?.state.ownerId;
+        if (!adjOwnerId || adjOwnerId === nationId) continue;
+        const alreadyTreaty = w.treaties.some(
+          (tr) => tr.partyIds.includes(nationId) && tr.partyIds.includes(adjOwnerId) &&
+                  (tr.status === 'active' || tr.status === 'degraded'),
+        );
+        if (!alreadyTreaty) { neighborId = adjOwnerId; break; }
+      }
+      if (neighborId) break;
+    }
+    if (neighborId) {
+      const tgtId = neighborId;
+      const alreadyProposed = w.proposals.some(
+        (pr) => pr.status === 'pending' &&
+          ((pr.proposerId === nationId && pr.targetId === tgtId) ||
+           (pr.proposerId === tgtId && pr.targetId === nationId)),
+      );
+      if (!alreadyProposed) {
+        const proposeScore = scoreAction({ type: 'propose_trade' }, doctrine);
+        const treatyScore  = scoreAction({ type: 'propose_treaty' }, doctrine);
+        const bestScore = Math.max(proposeScore, treatyScore);
+        const isTradeProposal = proposeScore >= treatyScore;
+
+        candidates.push({
+          score: bestScore,
+          apply: () => {
+            const proposalId = w.proposals.length + 2000 + w.tick;
+            const clauseId = 3000 + w.tick;
+            const sourceTerr = [...ownedIds][0] ?? '';
+            const clauses: Treaty['clauses'] = isTradeProposal
+              ? [
+                  { id: clauseId, clauseIndex: 0, type: 'non_aggression', collateral: 0, payload: {}, clauseStatus: 'active', missedPayments: 0, objective: null },
+                  { id: clauseId + 1, clauseIndex: 1, type: 'trade', collateral: 0, payload: { resource: 'wealth', amount: 3, fromNationId: nationId, toNationId: tgtId, sourceTerritoryId: sourceTerr }, clauseStatus: 'active', missedPayments: 0, objective: null },
+                ]
+              : [
+                  { id: clauseId, clauseIndex: 0, type: 'non_aggression', collateral: 0, payload: {}, clauseStatus: 'active', missedPayments: 0, objective: null },
+                ];
+            const proposal = {
+              id: proposalId,
+              proposerId: nationId,
+              targetId: tgtId,
+              status: 'pending' as const,
+              termTicks: 10,
+              clauses,
+              proposerCollateral: 0,
+              targetCollateral: 0,
+              tickProposed: w.tick,
+              expiresAtTick: w.tick + 5,
+              parentProposalId: null,
+            };
+            return {
+              ...w,
+              proposals: [...w.proposals, proposal],
+              eventLog: [...w.eventLog, {
+                tick: w.tick,
+                message: `[AI] ${nation.name} proposed ${isTradeProposal ? 'a trade treaty' : 'non-aggression'} with ${tgtId}.`,
+              }],
+            };
+          },
+        });
+      }
+    }
+
+    if (candidates.length === 0) continue;
+    candidates.sort((a, b) => b.score - a.score);
+    w = candidates[0]!.apply();
+  }
+
+  return w;
 }

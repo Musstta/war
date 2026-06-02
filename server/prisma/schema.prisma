@@ -45,6 +45,9 @@ model Nation {
   abandonedAt           DateTime?
   // Player-configurable caretaker priority queue. JSON array of strings.
   caretakerPriorities   Json    @default("[\"defense\",\"roads\",\"industry\",\"expansion\"]")
+  // AI doctrine blend: { expansionist, merchant, industrialist, militarist, isolationist } summing to 1.
+  // Null for human nations and caretaker-mode nations. Fixed at AI creation time.
+  doctrineBlend         Json?
 
   territories    TerritoryState[]
   actions        QueuedAction[]

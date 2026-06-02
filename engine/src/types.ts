@@ -160,6 +160,20 @@ export interface Nation {
   activityTier: string;
   /** Player-configurable caretaker priority order. */
   caretakerPriorities: string[];
+  /**
+   * AI doctrine blend — null for human nations and caretaker-mode nations.
+   * Values 0–1, sum = 1. Assigned at AI creation; does not drift with culture.
+   */
+  doctrineBlend: DoctrineBlend | null;
+}
+
+/** AI doctrine blend. Values 0–1, sum = 1. [PLACEHOLDER weights] */
+export interface DoctrineBlend {
+  expansionist: number;
+  merchant:     number;
+  industrialist: number;
+  militarist:   number;
+  isolationist: number;
 }
 
 export interface EventLogEntry {

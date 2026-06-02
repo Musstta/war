@@ -72,6 +72,7 @@ export async function loadWorldState(
       debtBalance: (n as any).debtBalance ?? 0,
       activityTier: (n as any).activityTier ?? 'active',
       caretakerPriorities: ((n as any).caretakerPriorities as string[]) ?? ['defense', 'roads', 'industry', 'expansion'],
+      doctrineBlend: ((n as any).doctrineBlend as import('@war/engine').DoctrineBlend | null) ?? null,
     };
   }
 
@@ -244,6 +245,7 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         debtBalance: nation.debtBalance,
         activityTier: nation.activityTier,
         caretakerPriorities: nation.caretakerPriorities as Prisma.InputJsonValue,
+        doctrineBlend: nation.doctrineBlend != null ? nation.doctrineBlend as unknown as Prisma.InputJsonValue : Prisma.JsonNull,
       },
     });
   }

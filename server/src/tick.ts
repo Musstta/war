@@ -7,6 +7,7 @@ import { loadWorldState, saveWorldState } from './world';
 import { TICK_SCHEDULE } from './config';
 import { ACTION_COSTS, FORT_MANDATE_COSTS } from './phase';
 import { runCaretaker } from './caretaker';
+import { runAiNations } from './ai';
 
 let tickInProgress = false;
 
@@ -146,6 +147,10 @@ export async function runTick(defs: TerritoryDef[]): Promise<{ tick: number }> {
       // ── Caretaker: tier transitions, caretaker AI queuing, abandoned fragmentation.
       // Runs after the tick's actions are cleared so caretaker queues start fresh.
       await runCaretaker(tx, newWorld.tick, defs);
+
+      // ── AI nations: doctrine-driven action selection.
+      // Runs after caretaker so both get a fresh mandate budget each tick.
+      await runAiNations(tx, newWorld.tick, defs);
 
       return { tick: newWorld.tick };
     });

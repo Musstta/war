@@ -11,6 +11,7 @@
  */
 import { Prisma } from '@prisma/client';
 import type { TerritoryDef } from '@war/engine';
+import { deriveDoctrineBlend } from '@war/engine';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -495,8 +496,16 @@ async function runFragmentation(
       },
     });
 
-    // Spawn a small independent AI nation with a randomized ID.
+    // Spawn a small independent AI nation. Derive doctrine from territory cultural traits.
     const newNationId = `nation_independent_${terr.id}_${currentTick}`;
+    const traits = {
+      individualist: terr.individualist,
+      progressive: terr.progressive,
+      militaristic: terr.militaristic,
+      expansionist: terr.expansionist,
+    };
+    const doctrine = deriveDoctrineBlend(traits);
+
     await tx.nation.create({
       data: {
         id: newNationId,
@@ -506,6 +515,7 @@ async function runFragmentation(
         capitalTerritoryId: terr.id,
         inactivityTier: 'active',
         activityTier: 'active',
+        doctrineBlend: doctrine as unknown as Prisma.InputJsonValue,
       },
     });
     await tx.territoryState.update({ where: { id: terr.id }, data: { ownerId: newNationId } });

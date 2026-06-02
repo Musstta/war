@@ -86,6 +86,7 @@ export function buildWorldState(
       debtBalance: 0,
       activityTier: 'active',
       caretakerPriorities: ['defense', 'roads', 'industry', 'expansion'],
+      doctrineBlend: null,
     };
   }
 

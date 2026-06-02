@@ -1,0 +1,30 @@
+{
+  "name": "ai-expansionist",
+  "description": "An AI nation with a strongly expansionist doctrine starts with mexico_yucatan. Three unclaimed territories are adjacent: belize and el_salvador indirectly. Expected: the AI's expand_claim action scores highly (0.3 + 0.6×expansionist), so the AI claims adjacent unclaimed territory (belize) within a few ticks. Over 10 ticks the AI should expand to both belize and mexico_yucatan's other neighbors if unclaimed. The expansionist AI also has elevated militarist weight from the doctrine derivation formula.",
+  "ticks": 10,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_ai_expansionist", "name": "Expansionist AI", "territories": ["mexico_yucatan"], "armySize": 30, "isAI": true },
+      { "id": "nation_costa_rica",      "name": "Costa Rica",      "territories": ["costa_rica"],    "armySize": 50 },
+      { "id": "nation_guatemala",       "name": "Guatemala",       "territories": ["guatemala"],     "armySize": 50 },
+      { "id": "nation_honduras",        "name": "Honduras",        "territories": ["honduras"],      "armySize": 50 },
+      { "id": "nation_nicaragua",       "name": "Nicaragua",       "territories": ["nicaragua"],     "armySize": 50 },
+      { "id": "nation_panama",          "name": "Panamá",          "territories": ["panama"],        "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "set_ai_doctrine",
+      "payload": {
+        "nationId": "nation_ai_expansionist",
+        "doctrine": { "expansionist": 0.55, "merchant": 0.05, "industrialist": 0.10, "militarist": 0.20, "isolationist": 0.10 }
+      }
+    }
+  ],
+  "metrics": [
+    "unrest_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick"
+  ]
+}

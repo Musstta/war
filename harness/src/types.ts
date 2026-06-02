@@ -20,6 +20,7 @@ export type ActionType =
   | 'break_treaty'       // harness: voluntarily break a treaty (collateral transfer + Trust hit)
   | 'set_nation_tier'    // harness: set inactivityTier, trigger degradation/upgrade logic
   | 'set_fort_level'     // harness: directly set fortificationLevel (0–3)
+  | 'set_ai_doctrine'   // harness: assign doctrineBlend to an AI nation
   | 'declare_war'        // harness: inject a War into world.wars (equivalent to server declareWar)
   | 'propose_peace'      // harness: set pendingPeaceDeal + peace_negotiation status on a war
   | 'attack_territory'   // engine pass-through with explicit nationId
@@ -50,6 +51,8 @@ export interface ScenarioNation {
   wealthStock?: number;
   industryStock?: number;
   populationStock?: number;
+  /** If true, treated as an AI nation (doctrineBlend must be set via set_ai_doctrine action). */
+  isAI?: boolean;
 }
 
 export interface ScenarioWorld {
@@ -63,6 +66,12 @@ export interface ScenarioWorld {
     culturalFamily?: string;
     unrest?: number;
   }>;
+  /**
+   * When true, all incoming treaty proposals to any nation in the scenario
+   * are auto-accepted at the start of the next tick (before engine resolution).
+   * Used for AI merchant/diplomat scenario testing.
+   */
+  autoAcceptTreaties?: boolean;
 }
 
 export interface Scenario {

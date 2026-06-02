@@ -6,4 +6,5 @@ export * from './culture';
 export * from './diplomacy';
 export * from './trade';
 export * from './war';
+export * from './doctrine';
 

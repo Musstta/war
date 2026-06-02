@@ -208,6 +208,38 @@ All weights need validation once the full action set (war wins, treaty completio
 
 ---
 
+## AI doctrine constants (Phase 6 v0.18 — all [PLACEHOLDER])
+
+All in `engine/src/doctrine.ts` and `server/src/ai.ts`.
+
+**Doctrine derivation weights** (from cultural traits → doctrine component):
+- `TRAIT_HIGH_THRESHOLD = 0.3` — trait value above this is "high". Governs when a trait drives doctrine weight. Lowering to 0.2 makes doctrine more sensitive to modest cultural leanings; raising to 0.5 only responds to extreme cultures.
+- `DOCTRINE_MIN_WEIGHT = 0.05` — minimum weight per doctrine component before normalization. Prevents any doctrine from going to zero — every AI can do anything, just less likely. The 0.05 floor means even a pure militarist AI has a 5% merchant tendency.
+- High `expansionist` culture → +0.5 expansionist, +0.2 militarist (conquerors tend to need armies). [PLACEHOLDER — ratio]
+- High `individualist` → +0.5 merchant, +0.4 industrialist (entrepreneurs build things). [PLACEHOLDER]
+- High `progressive` → +0.2 merchant, +0.3 industrialist. [PLACEHOLDER]
+- High `militaristic` → +0.6 militarist, +0.2 expansionist. [PLACEHOLDER]
+- Low `expansionist` (< −0.3, isolationist pole) → +0.6 isolationist. [PLACEHOLDER]
+- Low `militaristic` (< −0.3, peaceful pole) → +0.3 isolationist. [PLACEHOLDER]
+
+**Action scoring weights** (base + doctrine_component × weight):
+- `build_road`:  `0.3 + industrialist×0.4 + (highUnrest ? 0.3 : 0)` [PLACEHOLDER] — roads score higher when territories are unruly (integration value is obvious)
+- `build_port`:  `0.2 + merchant×0.5 + industrialist×0.2` [PLACEHOLDER]
+- `build_fort`:  `0.2 + militarist×0.4 + isolationist×0.3` [PLACEHOLDER] — isolationists build forts defensively
+- `expand_claim`: `0.3 + expansionist×0.6` [PLACEHOLDER] — pure expansionists score 0.3+0.6×0.55 = 0.63 → high priority
+- `propose_treaty (non_aggr)`: `0.2 + isolationist×0.3 + merchant×0.2` [PLACEHOLDER] — non-aggression secures borders
+- `propose_trade`: `0.1 + merchant×0.6` [PLACEHOLDER] — pure merchant scores 0.1+0.6×0.60 = 0.46 → beats non-aggression
+
+**`AI_EFFICIENCY_PENALTY = 0.7`**
+Multiplier on effective army/production for AI nations. Not yet applied to production (deferred — production is territory-based and equal for all). Currently documented for army size computation in future combat AI. [PLACEHOLDER]
+
+**Offensive war threshold: `OFFENSIVE_WAR_THRESHOLD = 0.6`** [PLACEHOLDER — STUB GATED]
+Score formula: `militarist×0.5 + expansionist×0.3`. A pure militarist (0.6) + pure expansionist (0.3) doctrine scores 0.6×0.5 + 0.3×0.3 = 0.39 — still below threshold. Only a nation with both high militarist AND high expansionist (e.g. mil=0.6, exp=0.4 → 0.6×0.5+0.4×0.3=0.42) approaches the threshold. This is intentional — offensive war should be rare among AI. Do not remove the stub gate until harness scenarios confirm war initiation doesn't destabilize the game.
+
+**Doctrine is fixed at creation** — does not drift with culture changes. This is intentional: doctrine is the AI's "personality" built from initial cultural state. If cultural drift changes the territory, the AI's behavior doesn't flip mid-game. Revisit if post-playtest data suggests AIs feel "wrong" relative to their evolved culture.
+
+---
+
 ## Activity tier constants (Phase 6 v0.17 — all [PLACEHOLDER])
 
 All in `server/src/caretaker.ts`.

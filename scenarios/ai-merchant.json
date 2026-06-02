@@ -1,0 +1,39 @@
+{
+  "name": "ai-merchant",
+  "description": "An AI nation with a strongly merchant doctrine starts with panama (adjacent to costa_rica). autoAcceptTreaties is true so human Costa Rica auto-accepts any incoming proposals. Expected: the merchant AI scores propose_trade highly (0.1 + 0.6×merchant), proposes a trade treaty with adjacent Costa Rica within a few ticks. With autoAcceptTreaties, the treaty is accepted automatically. Both nations then show trade flows in treaty-metrics.csv.",
+  "ticks": 12,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_ai_merchant",  "name": "Merchant AI",  "territories": ["panama"],     "armySize": 20, "isAI": true, "wealthStock": 30 },
+      { "id": "nation_costa_rica",   "name": "Costa Rica",   "territories": ["costa_rica"], "armySize": 50, "wealthStock": 20 },
+      { "id": "nation_guatemala",    "name": "Guatemala",    "territories": ["guatemala"],  "armySize": 50 },
+      { "id": "nation_honduras",     "name": "Honduras",     "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_nicaragua",    "name": "Nicaragua",    "territories": ["nicaragua"],  "armySize": 50 },
+      { "id": "nation_ai_expansionist", "name": "Expansionist AI", "territories": ["mexico_yucatan"], "armySize": 30, "isAI": true }
+    ],
+    "autoAcceptTreaties": true
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "set_ai_doctrine",
+      "payload": {
+        "nationId": "nation_ai_merchant",
+        "doctrine": { "expansionist": 0.05, "merchant": 0.60, "industrialist": 0.20, "militarist": 0.05, "isolationist": 0.10 }
+      }
+    },
+    {
+      "tick": 1,
+      "type": "set_ai_doctrine",
+      "payload": {
+        "nationId": "nation_ai_expansionist",
+        "doctrine": { "expansionist": 0.55, "merchant": 0.05, "industrialist": 0.10, "militarist": 0.20, "isolationist": 0.10 }
+      }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}
