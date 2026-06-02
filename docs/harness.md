@@ -88,9 +88,14 @@ Scenario files are JSON in `scenarios/`. All fields:
 |---|---|---|
 | `assign_territory` | Harness (before tick) | `{ territoryId, ownerId: string\|null }` |
 | `set_unrest` | Harness (before tick) | `{ territoryId, value: 0.0–1.0 }` |
+| `set_fort_level` | Harness (before tick) | `{ territoryId, level: 0–3 }` |
 | `create_treaty` | Harness (before tick) | `{ id, partyIds: [nA, nB], clauses: [{type, collateral?, payload?}], termTicks, collateralByParty: {nA: x, nB: y} }` |
 | `break_treaty` | Harness (before tick) | `{ treatyId, breakerNationId }` |
 | `set_nation_tier` | Harness (before tick) | `{ nationId, tier: 'active'\|'dormant'\|'autopilot'\|'abandoned' }` |
+| `declare_war` | Harness (before tick) | `{ warId, attackerId, defenderId, hasCasusBelli?, type? }` |
+| `propose_peace` | Harness (before tick) | `{ warId, proposingNationId, terms: { warType, territoryCessions, tributeWealth, tributeTicks } }` |
+| `attack_territory` | Engine (via resolveTick) | `{ nationId, targetTerritoryId }` — **nationId required** |
+| `accept_peace` | Engine (via resolveTick) | `{ nationId, warId }` — **nationId required** |
 | `build_road` | Engine (via resolveTick) | `{ territoryId }` |
 | `build_port` | Engine (via resolveTick) | `{ territoryId }` |
 | `build_fort` | Engine (via resolveTick) | `{ territoryId }` — targetLevel auto-derived |
@@ -100,6 +105,12 @@ Scenario files are JSON in `scenarios/`. All fields:
 `create_treaty` directly places an active treaty into world state, deducting collateral from both parties' Wealth at the time the action fires. Use `wealthStock` on the nation definition to give nations enough starting Wealth to cover collateral.
 
 `break_treaty` marks the treaty broken, transfers the breaker's collateral to the wronged party (plus returns the wronged party's own collateral), and applies the Trust penalty (`TRUST_BREAK_PENALTY`). Trust recovery is suppressed for `TRUST_RECOVERY_COOLDOWN` ticks after the break.
+
+`declare_war` injects a `War` object directly into `world.wars` (harness equivalent of the server `declareWarHandler`). Applies the −10 Trust no-CB penalty immediately if `hasCasusBelli: false`. War status starts `active`. Use this before queuing `attack_territory` actions — the engine validates `war.status` on the war resolution pass.
+
+`propose_peace` is a harness-side mutation that sets `war.pendingPeaceDeal` and transitions `war.status` to `peace_negotiation` before the tick fires. Pair it with `accept_peace` at the same tick to execute the deal in that tick's peace resolution block.
+
+`attack_territory` and `accept_peace` are engine pass-throughs. Unlike `build_road`, they require an explicit `nationId` in the payload because the engine cannot derive the acting nation from the target territory.
 
 `set_nation_tier` to `'dormant'` triggers treaty degradation: inactive party's collateral moves to escrow, active partner's collateral begins a 3-tick refund. Setting back to `'active'` upgrades degraded treaties and applies the escrow skim (`ESCROW_SKIM_RATE = 5%`). No Trust change in either direction.
 
@@ -177,6 +188,14 @@ flow_status, missed_payments, clause_status
 
 `flow_status` is inferred from consecutive `missed_payments` values: `paid` (payment transferred), `missed` (insufficient stockpile, counter incremented), `breached` (clause status = breached), `degraded` (source territory lost), `pending` (T0 pre-treaty).
 
+### `war-state.csv` *(only when wars exist)*
+
+One row per active/peace_negotiation war per tick. Columns: `tick, war_id, attacker_id, defender_id, type, has_casus_belli, status, start_tick, occupied_count`. `occupied_count` is the number of territories currently in `occupiedTerritories` for that war.
+
+### `army-sizes.csv` *(only when wars exist)*
+
+One row per nation per tick. Columns: `tick, nation_id, army_size`. Emitted alongside `war-state.csv` when any war exists in the scenario.
+
 ### `objective-metrics.csv` *(only when objective clauses exist)*
 
 One row per objective clause per tick. Columns: `tick, treaty_id, clause_index, objective_type, responsible_party, status, deadline_ticks`. Used by the objective-status panel in `treaty-status-over-time.png`.
@@ -190,6 +209,7 @@ One row per objective clause per tick. Columns: `tick, treaty_id, clause_index, 
 | `nation-culture-drift.png` | Four subplots (one per axis) showing each nation's culture value over time. |
 | `treaty-status-over-time.png` | Three or four-panel chart: treaty status timeline (colour-coded bars), [objective clause status timeline when present,] Trust over time per nation, Wealth over time per nation. Only generated when `treaty-metrics.csv` is non-empty. |
 | `trade-flow-over-time.png` | Two-panel chart: trade clause flow status per tick (paid/missed/breached/degraded as colour-coded bars), Wealth over time per nation. Only generated when `trade-flows.csv` is non-empty. |
+| `war-state-over-time.png` | Three-panel chart: army sizes per belligerent, occupied territory count per war, average unrest per belligerent. Only generated when `war-state.csv` is non-empty. |
 
 Only "interesting" territories get equilibrium charts — those whose unrest moved more than 2% over the run.
 
@@ -262,3 +282,13 @@ To test a specific mechanism in isolation, use `territoryOverrides` to set a ter
 | `objective-port.json` | CR + Guatemala 10-tick treaty with build_port objective on `costa_rica`, deadline 8 ticks, responsible CR; CR never builds | Objective fails at T9 (deadline tick 8 passes), CR Trust −20, collateral forfeited to Guatemala? |
 | `objective-port-met.json` | Same treaty; CR queues build_port at T3 | Port completes at T5 (3-tick construction), objective met at T5, Trust bonus fires, treaty auto-completes early? |
 | `objective-port-failed.json` | Same as objective-port.json but with 5-tick deadline; CR never builds | Objective fails at T6, CR Trust −20, collateral transferred? |(shorter deadline variant for fast regression)|
+
+### War system (Phase 5 validation)
+
+| Scenario | Description | Key question |
+|---|---|---|
+| `war-conquest.json` | CR declares war on Nicaragua (CB) at T1; attacks each tick; L0 fort; peace deal at T8 with nicaragua ceded | Siege completes in ≤2 ticks (L0 = 1 tick needed); territory captured with ownershipShock=0.50; peace deal executes — ownership transfers, Trust +5 both parties, war ends? |
+| `war-fortified.json` | Same war but nicaragua has fortificationLevel=2 (requires 3 consecutive wins) | siegeProgress increments 1/3 → 2/3 → 3/3 across consecutive winning ticks; territory not captured prematurely; army losses accumulate on both sides? |
+| `war-no-cb.json` | CR declares war on Nicaragua **without** CB; costa_rica territory has militaristic=−0.6, expansionist=−0.5 | CR Trust −10 at declaration; Peaceful+Isolationist territories show elevated equilibrium (+0.05) for 5 ticks (NO_CB_UNREST_SPIKE window)? |
+| `war-exhaustion.json` | CR declares war on Nicaragua; Nicaragua owes 8 Wealth/tick tribute to Honduras; Nicaragua wealth pinned at 0 | Wealth floor behaviour documented: tribute + upkeep clamp at 0, insolvency ramp (`< 0` check) structurally unreachable [known gap in tuning-notes]. Validates: war under financial stress, army degrading. |
+| `war-defense-pact.json` | CR + Honduras sign defense_pact at T1; Guatemala declares war on CR at T2 | War inserted into world.wars at T2; event log "Guatemala declared war on Costa Rica." emitted. Note: Honduras auto-defense is a server-side effect (fires in `runTick` post-engine) — not observable in the pure-engine harness. Validates: engine-side war state, event log, treaty survives alongside war. |

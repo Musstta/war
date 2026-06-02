@@ -1,0 +1,35 @@
+{
+  "name": "war-no-cb",
+  "description": "Costa Rica declares war on Nicaragua without casus belli at T1. Expected: Trust hit −10 on Costa Rica at declaration, Peaceful (militaristic < −0.3) and Isolationist (expansionist < −0.3) territories of Costa Rica show elevated equilibrium for 5 ticks (NO_CB_UNREST_SPIKE = +0.05 to equilibrium), war proceeds normally otherwise.",
+  "ticks": 12,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 60, "wealthStock": 10 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 60, "wealthStock": 10 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ],
+    "territoryOverrides": {
+      "costa_rica": {
+        "militaristic": -0.6,
+        "expansionist": -0.5
+      }
+    }
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "declare_war",
+      "payload": { "warId": 1, "attackerId": "nation_costa_rica", "defenderId": "nation_nicaragua", "hasCasusBelli": false }
+    },
+    { "tick": 2, "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 3, "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } }
+  ],
+  "metrics": [
+    "unrest_per_territory_per_tick",
+    "equilibrium_components_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick"
+  ]
+}

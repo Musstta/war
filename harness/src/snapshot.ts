@@ -74,8 +74,21 @@ export function captureSnapshot(world: WorldState, tick: number, defs: Territory
 
   const nations: TickSnapshot['nations'] = {};
   for (const [nid, n] of Object.entries(world.nations)) {
-    nations[nid] = { stockpiles: n.stockpiles, culture: cultures[nid] ?? null };
+    nations[nid] = { stockpiles: n.stockpiles, armySize: n.armySize, culture: cultures[nid] ?? null };
   }
+
+  const wars: TickSnapshot['wars'] = world.wars
+    .filter((w) => w.status !== 'ended')
+    .map((w) => ({
+      id: w.id,
+      attackerId: w.attackerId,
+      defenderId: w.defenderId,
+      type: w.type,
+      hasCasusBelli: w.hasCasusBelli,
+      status: w.status,
+      startTick: w.startTick,
+      occupiedCount: w.occupiedTerritories.length,
+    }));
 
   // Diplomacy snapshot: treaty state + per-nation Trust/tier/wealth.
   const diplomacy: TickSnapshot['diplomacy'] = {
@@ -127,5 +140,5 @@ export function captureSnapshot(world: WorldState, tick: number, defs: Territory
   // Events from this specific tick.
   const events = world.eventLog.filter((e) => e.tick === tick);
 
-  return { tick, territories, nations, diplomacy, events };
+  return { tick, territories, nations, wars, diplomacy, events };
 }

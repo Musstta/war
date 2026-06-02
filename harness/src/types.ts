@@ -19,6 +19,11 @@ export type ActionType =
   | 'create_treaty'      // harness: directly place an active treaty into world state
   | 'break_treaty'       // harness: voluntarily break a treaty (collateral transfer + Trust hit)
   | 'set_nation_tier'    // harness: set inactivityTier, trigger degradation/upgrade logic
+  | 'set_fort_level'     // harness: directly set fortificationLevel (0–3)
+  | 'declare_war'        // harness: inject a War into world.wars (equivalent to server declareWar)
+  | 'propose_peace'      // harness: set pendingPeaceDeal + peace_negotiation status on a war
+  | 'attack_territory'   // engine pass-through with explicit nationId
+  | 'accept_peace'       // engine pass-through with explicit nationId
   | 'build_road'
   | 'build_port'
   | 'build_fort';
@@ -87,7 +92,19 @@ export interface TerritorySnapshot {
 
 export interface NationSnapshot {
   stockpiles: Stockpiles;
+  armySize: number;
   culture: NationCulture | null;
+}
+
+export interface WarSnapshot {
+  id: number;
+  attackerId: string;
+  defenderId: string;
+  type: string;
+  hasCasusBelli: boolean;
+  status: string;
+  startTick: number;
+  occupiedCount: number;   // number of territories currently occupied by either side
 }
 
 export interface NationDiplomacySnapshot {
@@ -135,6 +152,7 @@ export interface TickSnapshot {
   tick: number;
   territories: Record<string, TerritorySnapshot>;
   nations: Record<string, NationSnapshot>;
+  wars: WarSnapshot[];
   diplomacy: {
     nationState: Record<string, NationDiplomacySnapshot>;
     treaties: TreatySnapshot[];

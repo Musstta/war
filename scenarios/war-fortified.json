@@ -1,0 +1,43 @@
+{
+  "name": "war-fortified",
+  "description": "Costa Rica declares war on Nicaragua at T1. Nicaragua's territory has fortificationLevel 2 (requires 3 consecutive siege ticks to capture). Costa Rica attacks each tick. Expected: siegeProgress increments each winning tick (1/3, 2/3, 3/3), territory not captured until progress reaches threshold, army losses accumulate on both sides across ticks.",
+  "ticks": 15,
+  "rngSeed": 99,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 100, "wealthStock": 20 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 60,  "wealthStock": 20 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "set_fort_level",
+      "payload": { "territoryId": "nicaragua", "level": 2 }
+    },
+    {
+      "tick": 1,
+      "type": "declare_war",
+      "payload": { "warId": 1, "attackerId": "nation_costa_rica", "defenderId": "nation_nicaragua", "hasCasusBelli": true }
+    },
+    { "tick": 1,  "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 2,  "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 3,  "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 4,  "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 5,  "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 6,  "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 7,  "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 8,  "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 9,  "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 10, "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 11, "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 12, "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

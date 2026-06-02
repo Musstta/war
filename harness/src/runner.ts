@@ -2,7 +2,7 @@
  * Core scenario runner — pure engine, no DB, no HTTP.
  */
 import { resolve } from 'path';
-import type { WorldState, QueuedAction, TerritoryDef, CulturalFamily, Treaty, ClauseType } from '@war/engine';
+import type { WorldState, QueuedAction, TerritoryDef, CulturalFamily, Treaty, ClauseType, War, PeaceDeal, PeaceDealType, Territorycessation } from '@war/engine';
 import {
   loadTerritoryDefs,
   buildWorldState,
@@ -283,6 +283,86 @@ export function run(scenario: Scenario): RunResult {
             territories: { ...world.territories, [tid]: { ...t, state: { ...t.state, unrest: value } } },
           };
         }
+
+      } else if (action.type === 'set_fort_level') {
+        // Directly set fortificationLevel on a territory.
+        const tid = p['territoryId'] as string;
+        const level = p['level'] as number;
+        const t = world.territories[tid];
+        if (t) {
+          world = {
+            ...world,
+            territories: { ...world.territories, [tid]: { ...t, state: { ...t.state, fortificationLevel: level } } },
+          };
+        }
+
+      } else if (action.type === 'declare_war') {
+        // Inject a War directly into world.wars (harness equivalent of server declareWar).
+        // payload: { warId, attackerId, defenderId, hasCasusBelli?, type? }
+        const war: War = {
+          id: p['warId'] as number,
+          attackerId: p['attackerId'] as string,
+          defenderId: p['defenderId'] as string,
+          type: (p['type'] as 'conquest' | 'raid') ?? 'conquest',
+          hasCasusBelli: (p['hasCasusBelli'] as boolean) !== false,
+          status: 'active',
+          startTick: world.tick,
+          declaredTick: world.tick,
+          endTick: null,
+          occupiedTerritories: [],
+          pendingPeaceDeal: null,
+          exhaustionByNation: {},
+        };
+
+        // Apply no-CB Trust penalty if hasCasusBelli is false.
+        const newNationsForWar = { ...world.nations };
+        if (!war.hasCasusBelli) {
+          const attacker = newNationsForWar[war.attackerId];
+          if (attacker) {
+            newNationsForWar[war.attackerId] = { ...attacker, trust: Math.max(0, attacker.trust - 10) };
+          }
+        }
+
+        world = { ...world, nations: newNationsForWar, wars: [...world.wars, war] };
+
+        // Emit event log entry.
+        const attackerName = world.nations[war.attackerId]?.name ?? war.attackerId;
+        const defenderName = world.nations[war.defenderId]?.name ?? war.defenderId;
+        const cbNote = war.hasCasusBelli ? '' : ' without justification';
+        world = { ...world, eventLog: [...world.eventLog, { tick: world.tick + 1, message: `${attackerName} declared war on ${defenderName}${cbNote}.` }] };
+
+      } else if (action.type === 'propose_peace') {
+        // Set pendingPeaceDeal on a war and transition to peace_negotiation.
+        // payload: { warId, proposingNationId, terms: { warType, territoryCessions, tributeWealth, tributeTicks } }
+        const warId = p['warId'] as number;
+        const proposingNationId = p['proposingNationId'] as string;
+        const terms = p['terms'] as { warType: PeaceDealType; territoryCessions: Territorycessation[]; tributeWealth: number; tributeTicks: number };
+        const deal: PeaceDeal = {
+          proposingNationId,
+          proposedAtTick: world.tick,
+          warType: terms.warType,
+          territoryCessions: terms.territoryCessions ?? [],
+          tributeWealth: terms.tributeWealth ?? 0,
+          tributeTicks: terms.tributeTicks ?? 0,
+        };
+        const warIdx = world.wars.findIndex((w) => w.id === warId);
+        if (warIdx !== -1) {
+          const updatedWars = [...world.wars];
+          updatedWars[warIdx] = { ...world.wars[warIdx]!, status: 'peace_negotiation', pendingPeaceDeal: deal };
+          world = { ...world, wars: updatedWars };
+        }
+
+      } else if (action.type === 'attack_territory') {
+        // Engine pass-through with explicit nationId (attacker may not own the target territory).
+        const nationId = p['nationId'] as string | undefined;
+        if (!nationId) { console.warn('[harness] attack_territory requires explicit nationId in payload'); continue; }
+        engineActions.push({ nationId, type: 'attack_territory', payload: p });
+
+      } else if (action.type === 'accept_peace') {
+        // Engine pass-through with explicit nationId.
+        const nationId = p['nationId'] as string | undefined;
+        if (!nationId) { console.warn('[harness] accept_peace requires explicit nationId in payload'); continue; }
+        engineActions.push({ nationId, type: 'accept_peace', payload: p });
 
       } else {
         // Pass-through to engine: derive nationId from territory owner.

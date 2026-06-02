@@ -208,6 +208,12 @@ All weights need validation once the full action set (war wins, treaty completio
 
 ---
 
+## War insolvency ramp — known gap
+
+`WAR_INSOLVENCY_UNREST_PER_TICK` fires when `nation.stockpiles.wealth < 0`. However, both tribute payments (`Math.min(amount, from.stockpiles.wealth)`) and upkeep (`Math.max(0, wealth - upkeep)`) clamp wealth at 0 — so the condition `wealth < 0` is structurally unreachable under the current engine. The `war-exhaustion` harness scenario documents this: a nation with tribute obligations + army upkeep drains to 0 but never crosses into negative. Resolution options: (a) allow wealth to go genuinely negative before end-of-tick clamp, (b) replace the `< 0` check with `< some_floor`, or (c) track "debt" separately. Deferred to post-Phase 5 tuning pass.
+
+---
+
 ## Peace negotiation constants (Phase 5 Peace — all [PLACEHOLDER])
 
 All values in `engine/src/war.ts` under the "Peace negotiation constants" block.

@@ -1,0 +1,82 @@
+{
+  "name": "war-conquest",
+  "description": "Costa Rica declares war on Nicaragua (with CB) at T1. Costa Rica attacks nicaragua territory each tick. Nicaragua has no fort (L0 — 1 siege tick to capture). At T8, Costa Rica proposes peace with nicaragua ceded; Nicaragua accepts. Expected: siege completes within first few ticks, nicaragua captured, peace deal executes with conquest shock on ceded territory, war ends cleanly.",
+  "ticks": 10,
+  "rngSeed": 99,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 80, "wealthStock": 20 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 40, "wealthStock": 20 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "declare_war",
+      "payload": { "warId": 1, "attackerId": "nation_costa_rica", "defenderId": "nation_nicaragua", "hasCasusBelli": true }
+    },
+    {
+      "tick": 1,
+      "type": "attack_territory",
+      "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" }
+    },
+    {
+      "tick": 2,
+      "type": "attack_territory",
+      "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" }
+    },
+    {
+      "tick": 3,
+      "type": "attack_territory",
+      "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" }
+    },
+    {
+      "tick": 4,
+      "type": "attack_territory",
+      "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" }
+    },
+    {
+      "tick": 5,
+      "type": "attack_territory",
+      "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" }
+    },
+    {
+      "tick": 6,
+      "type": "attack_territory",
+      "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" }
+    },
+    {
+      "tick": 7,
+      "type": "attack_territory",
+      "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" }
+    },
+    {
+      "tick": 8,
+      "type": "propose_peace",
+      "payload": {
+        "warId": 1,
+        "proposingNationId": "nation_costa_rica",
+        "terms": {
+          "warType": "negotiated",
+          "territoryCessions": [
+            { "territoryId": "nicaragua", "fromNationId": "nation_nicaragua", "toNationId": "nation_costa_rica" }
+          ],
+          "tributeWealth": 0,
+          "tributeTicks": 0
+        }
+      }
+    },
+    {
+      "tick": 8,
+      "type": "accept_peace",
+      "payload": { "nationId": "nation_nicaragua", "warId": 1 }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

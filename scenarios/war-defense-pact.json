@@ -1,0 +1,39 @@
+{
+  "name": "war-defense-pact",
+  "description": "Costa Rica and Honduras have an active defense_pact treaty placed at T1. Guatemala declares war on Costa Rica at T2. Expected: at T2 tick resolution, the engine's declare_war action is processed, which adds an event log entry noting Guatemala declared war on Costa Rica. The defense pact auto-defense fires in the server runTick (not in the pure engine harness — this scenario validates the engine-side war declaration and event log only; the auto-defense is a server-side effect tested via the live stack). Harness validates: war declared event emitted, Costa Rica's war count = 1, Trust/treaty state unaffected.",
+  "ticks": 8,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50, "wealthStock": 10 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50, "wealthStock": 10 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50, "wealthStock": 10 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_costa_rica", "nation_honduras"],
+        "clauses": [
+          { "type": "defense_pact", "collateral": 0 }
+        ],
+        "termTicks": 20,
+        "collateralByParty": { "nation_costa_rica": 0, "nation_honduras": 0 }
+      }
+    },
+    {
+      "tick": 2,
+      "type": "declare_war",
+      "payload": { "warId": 1, "attackerId": "nation_guatemala", "defenderId": "nation_costa_rica", "hasCasusBelli": true }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

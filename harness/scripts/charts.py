@@ -402,6 +402,100 @@ def chart_trade_flow_over_time(flow_rows, dipl_rows, output_dir):
     plt.close()
     print(f"  ✓ {path}")
 
+# ── Chart 6: War state over time ─────────────────────────────────────────────
+
+def chart_war_state_over_time(war_rows, army_rows, terr_rows, dipl_rows, output_dir):
+    if not war_rows:
+        return
+
+    # Group war rows by war_id.
+    by_war = defaultdict(list)
+    for row in war_rows:
+        by_war[row['war_id']].append(row)
+
+    # Group army rows by nation_id.
+    by_nation_army = defaultdict(list)
+    for row in army_rows:
+        by_nation_army[row['nation_id']].append(row)
+
+    # Occupied count per war per tick.
+    # Avg unrest per belligerent per tick (from territory-metrics).
+    by_nation_terr = defaultdict(list)
+    for row in terr_rows:
+        if row['owner_id'] and row['unrest']:
+            by_nation_terr[row['owner_id']].append(row)
+
+    # Collect all belligerents.
+    belligerents = set()
+    for rows in by_war.values():
+        for row in rows:
+            belligerents.add(row['attacker_id'])
+            belligerents.add(row['defender_id'])
+
+    fig, axes = plt.subplots(3, 1, figsize=(10, 9))
+    fig.suptitle('War State Over Time', y=1.01)
+    nation_colors = cm.tab10(np.linspace(0, 1, max(len(belligerents), 1)))
+    color_map = {nid: color for nid, color in zip(sorted(belligerents), nation_colors)}
+
+    # ── Army sizes ────────────────────────────────────────────────────────────
+    ax0 = axes[0]
+    for nid in sorted(belligerents):
+        rows_sorted = sorted([r for r in by_nation_army.get(nid, [])], key=lambda r: int(r['tick']))
+        if not rows_sorted:
+            continue
+        ticks = [int(r['tick']) for r in rows_sorted]
+        sizes = [int(r['army_size']) for r in rows_sorted]
+        label = nid.replace('nation_', '')
+        ax0.plot(ticks, sizes, label=label, color=color_map.get(nid, '#888'), linewidth=2)
+    ax0.set_ylabel('Army size')
+    ax0.set_title('Army Sizes Over Time', fontsize=9)
+    ax0.legend(fontsize=8, loc='upper right')
+    ax0.grid(True, alpha=0.3)
+
+    # ── Occupied territory count ──────────────────────────────────────────────
+    ax1 = axes[1]
+    war_colors = cm.tab10(np.linspace(0.3, 0.9, max(len(by_war), 1)))
+    for (wid, rows), color in zip(sorted(by_war.items()), war_colors):
+        rows_sorted = sorted(rows, key=lambda r: int(r['tick']))
+        ticks = [int(r['tick']) for r in rows_sorted]
+        occ   = [int(r['occupied_count']) for r in rows_sorted]
+        attacker = rows_sorted[0]['attacker_id'].replace('nation_', '') if rows_sorted else wid
+        defender = rows_sorted[0]['defender_id'].replace('nation_', '') if rows_sorted else ''
+        ax1.plot(ticks, occ, label=f'War #{wid} ({attacker}→{defender})', color=color, linewidth=2, marker='o', markersize=4)
+    ax1.set_ylabel('Occupied territories')
+    ax1.set_title('Occupied Territory Count', fontsize=9)
+    ax1.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    ax1.legend(fontsize=8, loc='upper right')
+    ax1.grid(True, alpha=0.3)
+
+    # ── Average unrest per belligerent ────────────────────────────────────────
+    ax2 = axes[2]
+    for nid in sorted(belligerents):
+        rows = by_nation_terr.get(nid, [])
+        if not rows:
+            continue
+        by_tick = defaultdict(list)
+        for r in rows:
+            by_tick[int(r['tick'])].append(float(r['unrest']))
+        tick_list = sorted(by_tick.keys())
+        avg_unrest = [sum(by_tick[t]) / len(by_tick[t]) for t in tick_list]
+        label = nid.replace('nation_', '')
+        ax2.plot(tick_list, avg_unrest, label=label, color=color_map.get(nid, '#888'), linewidth=2)
+    ax2.axhline(0.80, color='#ff4444', linestyle='--', linewidth=1, alpha=0.7, label='Revolt (0.80)')
+    ax2.set_xlabel('Tick')
+    ax2.set_ylabel('Avg unrest')
+    ax2.set_title('Average Unrest — Belligerents', fontsize=9)
+    ax2.set_ylim(0, 1.0)
+    ax2.legend(fontsize=8, loc='upper right')
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    path = os.path.join(output_dir, 'charts', 'war-state-over-time.png')
+    plt.savefig(path, dpi=100, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ {path}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def load_objective_rows(treaty_rows, output_dir):
@@ -435,6 +529,8 @@ def main():
     treaty_rows = load_csv(os.path.join(output_dir, 'treaty-metrics.csv'))
     dipl_rows   = load_csv(os.path.join(output_dir, 'nation-diplomacy.csv'))
     flow_rows   = load_csv(os.path.join(output_dir, 'trade-flows.csv'))
+    war_rows    = load_csv(os.path.join(output_dir, 'war-state.csv'))
+    army_rows   = load_csv(os.path.join(output_dir, 'army-sizes.csv'))
     obj_rows    = load_objective_rows(treaty_rows, output_dir)
 
     # Determine "interesting" territories: owned + unrest moved more than 2%.
@@ -456,6 +552,8 @@ def main():
         chart_treaty_status_over_time(treaty_rows, dipl_rows, output_dir, obj_rows or None)
     if flow_rows:
         chart_trade_flow_over_time(flow_rows, dipl_rows, output_dir)
+    if war_rows:
+        chart_war_state_over_time(war_rows, army_rows, terr_rows, dipl_rows, output_dir)
 
     print(f"\nCharts written to {charts_dir}/")
 
