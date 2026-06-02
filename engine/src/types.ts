@@ -290,6 +290,45 @@ export interface TradeRoute {
   isSeaRoute: boolean;
 }
 
+// ── War ───────────────────────────────────────────────────────────────────────
+
+export type WarType = 'conquest' | 'raid'; // raid behavior identical to conquest in v1 [STUB]
+export type WarStatus = 'active' | 'peace_negotiation' | 'ended';
+
+/**
+ * One territory currently occupied (besieged or taken) in a war.
+ * siegeProgress counts ticks the attacker has maintained presence.
+ * Full capture requires siegeProgress >= fortificationLevel + 1.
+ */
+export interface OccupiedTerritory {
+  territoryId: string;
+  occupyingNationId: string;
+  siegeProgress: number;
+  siegeStartTick: number;
+}
+
+export interface War {
+  id: number;
+  attackerId: string;
+  defenderId: string;
+  /** 'conquest' | 'raid' — raid stored, behavior identical to conquest for now. [STUB] */
+  type: WarType;
+  /** true = declared with a justification; false = unjustified (soft-CB penalties apply). */
+  hasCasusBelli: boolean;
+  status: WarStatus;
+  startTick: number;
+  endTick: number | null;
+  /** Territories currently occupied by either belligerent. */
+  occupiedTerritories: OccupiedTerritory[];
+  /** null until peace_negotiation; JSON blob for Prompt 2. */
+  pendingPeaceDeal: Record<string, unknown> | null;
+  /**
+   * Tick the war was declared — used to track the no-CB unrest spike duration.
+   * Duplicate of startTick but kept separate for clarity.
+   */
+  declaredTick: number;
+}
+
 export interface WorldState {
   tick: number;
   rngSeed: number;
@@ -300,6 +339,7 @@ export interface WorldState {
   proposals: Proposal[];
   instantTrades: InstantTrade[];
   tradeRoutes: TradeRoute[];
+  wars: War[];
 }
 
 /** A player action queued during the Main Phase and resolved at tick time. */

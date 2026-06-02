@@ -96,5 +96,6 @@ export function buildWorldState(
     proposals: [],
     instantTrades: [],
     tradeRoutes: [],
+    wars: [],
   };
 }

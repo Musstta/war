@@ -1,0 +1,74 @@
+import { Prisma } from '@prisma/client';
+import type { ActionContext, ActionHandler, ValidateResult } from './types';
+import { ACTION_COSTS } from '../phase';
+
+// [PLACEHOLDER] Mandate cost to queue an attack.
+const COST = ACTION_COSTS['attack_territory']!;
+
+interface AttackTerritoryPayload {
+  targetTerritoryId?: string;
+}
+
+export const attackTerritoryHandler: ActionHandler = {
+  async validate(ctx: ActionContext): Promise<ValidateResult> {
+    const p = ctx.payload as AttackTerritoryPayload;
+    if (!p?.targetTerritoryId) return { ok: 'error', status: 400, reason: 'Missing targetTerritoryId' };
+
+    const targetTerritory = await ctx.prisma.territoryState.findUnique({
+      where: { id: p.targetTerritoryId },
+    });
+    if (!targetTerritory) return { ok: 'error', status: 404, reason: 'Territory not found' };
+
+    const targetOwnerId = targetTerritory.ownerId;
+    if (!targetOwnerId) return { ok: 'error', status: 400, reason: 'Target territory is unclaimed' };
+    if (targetOwnerId === ctx.nationId) return { ok: 'error', status: 400, reason: 'Cannot attack your own territory' };
+
+    // An active war must exist between the queuing nation and the territory's owner.
+    const activeWar = await ctx.prisma.war.findFirst({
+      where: {
+        status: { in: ['active', 'peace_negotiation'] },
+        OR: [
+          { attackerId: ctx.nationId, defenderId: targetOwnerId },
+          { attackerId: targetOwnerId, defenderId: ctx.nationId },
+        ],
+      },
+    });
+    if (!activeWar) return { ok: 'error', status: 400, reason: 'No active war with the territory owner' };
+
+    // Target must be adjacent to at least one territory owned by the attacker (land adjacency only).
+    // [DEFERRED: amphibious] — sea crossing not supported in v1.
+    const targetDef = ctx.defById.get(p.targetTerritoryId);
+    if (!targetDef) return { ok: 'error', status: 404, reason: 'Territory definition not found' };
+
+    const ownedTerritories = await ctx.prisma.territoryState.findMany({
+      where: { ownerId: ctx.nationId },
+      select: { id: true },
+    });
+    const ownedIds = new Set(ownedTerritories.map((t) => t.id));
+    const isAdjacent = targetDef.adjacentIds.some((adjId) => ownedIds.has(adjId));
+    if (!isAdjacent) {
+      return { ok: 'error', status: 400, reason: 'Target territory is not adjacent to any of your territories (land adjacency required; [DEFERRED: amphibious])' };
+    }
+
+    return { ok: 'ready', cost: COST, finalPayload: { targetTerritoryId: p.targetTerritoryId } };
+  },
+
+  async queue(ctx: ActionContext, cost: number, finalPayload: object): Promise<void> {
+    const p = finalPayload as { targetTerritoryId: string };
+    await ctx.prisma.$transaction(async (tx) => {
+      await tx.queuedAction.create({
+        data: {
+          nationId: ctx.nationId,
+          phase: ctx.currentPhase,
+          type: 'attack_territory',
+          payload: p as Prisma.InputJsonValue,
+          tickQueued: ctx.currentTick,
+        },
+      });
+      await tx.nation.update({
+        where: { id: ctx.nationId },
+        data: { mandateUsed: { increment: cost } },
+      });
+    });
+  },
+};

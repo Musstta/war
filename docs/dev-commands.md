@@ -306,6 +306,67 @@ curl -X POST http://localhost:3001/api/admin/territory/costa_rica/toggle-revolt 
 
 ---
 
+## 13. War admin commands
+
+### Declare a war (for testing)
+
+```bash
+curl -X POST http://localhost:3001/api/admin/declare-war \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" \
+  -d '{"attackerId":"nation_costa_rica","defenderId":"nation_guatemala","casusBelli":true}'
+# → {"ok":true,"warId":1}
+```
+
+`casusBelli: false` applies the no-CB Trust penalty (−10 Trust) and queues the no-CB unrest spike (+0.05 equilibrium for 5 ticks) on the attacker's Peaceful/Isolationist territories via the next tick.
+
+### Force-end a war (no peace deal)
+
+```bash
+curl -X POST http://localhost:3001/api/admin/end-war \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" \
+  -d '{"warId":1}'
+# → {"ok":true}
+```
+
+Immediately sets `status: ended`, clears occupied territories, logs the event. Use this to clean up test wars or test unrest recovery after a war ends.
+
+### Full test loop — declare war, queue attack, resolve tick
+
+```bash
+# 1. Force Main Phase
+curl -X POST "http://localhost:3001/api/admin/set-phase?phase=main" \
+  -H "X-Admin-Key: dev-only-insecure-key"
+
+# 2. Declare war (admin shortcut — no mandate cost)
+curl -X POST http://localhost:3001/api/admin/declare-war \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" \
+  -d '{"attackerId":"nation_costa_rica","defenderId":"nation_guatemala","casusBelli":true}'
+
+# 3. Log in as Costa Rica and queue an attack
+#    (guatemala is adjacent to costa_rica — land adjacency satisfied)
+curl -c /tmp/war.cookies -X POST http://localhost:3001/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"player1","password":"war1"}'
+
+curl -b /tmp/war.cookies -X POST http://localhost:3001/api/action \
+  -H "Content-Type: application/json" \
+  -d '{"type":"attack_territory","payload":{"targetTerritoryId":"guatemala"}}'
+# → {"ok":true}
+
+# 4. Resolve tick — battle fires, event log shows outcome
+curl -X POST http://localhost:3001/api/admin/tick \
+  -H "X-Admin-Key: dev-only-insecure-key"
+
+# 5. Check event log
+curl http://localhost:3001/api/admin/world-full \
+  -H "X-Admin-Key: dev-only-insecure-key" | jq '.recentEvents[:5]'
+```
+
+---
+
 ## Player credentials (dev)
 
 | Username | Password | Nation     |

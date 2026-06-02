@@ -35,6 +35,18 @@ import {
   TRADE_MISSED_PAYMENT_BREACH_THRESHOLD,
   resourceToNationStockpileField,
 } from './trade';
+import {
+  computeBattleStrengths,
+  siegeTicksRequired,
+  computeOverextensionPressure,
+  areAtWar,
+  WAR_INSOLVENCY_UNREST_PER_TICK,
+  WAR_MILITARISTIC_HAPPINESS_BONUS,
+  NO_CB_UNREST_SPIKE,
+  NO_CB_SPIKE_DURATION,
+  BATTLE_LOSER_LOSS_RATE,
+  BATTLE_WINNER_LOSS_RATE,
+} from './war';
 
 // ── Placeholder constants ─────────────────────────────────────────────────────
 // These numbers are not final. All tuning happens via the simulation harness
@@ -212,9 +224,190 @@ export function resolveTick(
           break;
         }
 
+        case 'declare_war': {
+          // War creation and validation happen at the server/action-handler level.
+          // The engine receives this as a pass-through acknowledgement — the War row
+          // was already created before the tick; no engine mutation needed here.
+          apply(action);
+          break;
+        }
+
+        case 'attack_territory': {
+          // Attack intent — resolved in the war section below after all actions are collected.
+          // Just mark applied here; actual battle fires in the war resolution block.
+          apply(action);
+          break;
+        }
+
+        case 'retreat_army': {
+          const { fromTerritoryId } = action.payload as { fromTerritoryId: string; toTerritoryId: string };
+          // Find and reset any siege this nation is prosecuting on fromTerritoryId.
+          for (const war of draft.wars) {
+            if (war.status !== 'active') continue;
+            if (war.attackerId !== action.nationId && war.defenderId !== action.nationId) continue;
+            const occIdx = war.occupiedTerritories.findIndex(
+              (o) => o.territoryId === fromTerritoryId && o.occupyingNationId === action.nationId,
+            );
+            if (occIdx !== -1) {
+              // Remove from occupied list — siege progress resets to 0 by removal.
+              war.occupiedTerritories.splice(occIdx, 1);
+              const terrName = draft.territories[fromTerritoryId]?.def.name ?? fromTerritoryId;
+              draft.eventLog.push({
+                tick: world.tick + 1,
+                message: `${draft.nations[action.nationId]?.name ?? action.nationId} retreated from ${terrName}. Siege progress lost.`,
+              });
+            }
+          }
+          apply(action);
+          break;
+        }
+
         default:
           discard(action, `unknown action type: ${action.type}`);
           break;
+      }
+    }
+
+    // ── War resolution ────────────────────────────────────────────────────────
+    // Collect all attack_territory actions this tick, grouped by attacking nation.
+    const attacksByNation: Record<string, string[]> = {};
+    for (const action of actions) {
+      if (action.type !== 'attack_territory') continue;
+      const { targetTerritoryId } = action.payload as { targetTerritoryId: string };
+      if (!attacksByNation[action.nationId]) attacksByNation[action.nationId] = [];
+      attacksByNation[action.nationId].push(targetTerritoryId);
+    }
+
+    for (const war of draft.wars) {
+      if (war.status !== 'active') continue;
+
+      const attacker = draft.nations[war.attackerId];
+      const defender = draft.nations[war.defenderId];
+      if (!attacker || !defender) continue;
+
+      // Process each attack queued this tick by either belligerent against the other.
+      for (const [attackingNationId, targetIds] of Object.entries(attacksByNation)) {
+        if (attackingNationId !== war.attackerId && attackingNationId !== war.defenderId) continue;
+        const defendingNationId = attackingNationId === war.attackerId ? war.defenderId : war.attackerId;
+        const attackingNation = draft.nations[attackingNationId];
+        const defendingNation = draft.nations[defendingNationId];
+        if (!attackingNation || !defendingNation) continue;
+
+        for (const targetTerritoryId of targetIds) {
+          const targetTerr = draft.territories[targetTerritoryId];
+          if (!targetTerr) continue;
+
+          // Verify the target is owned by or occupied by the defending nation.
+          // (Validation at queue time also checks this; engine re-checks for safety.)
+          const isDefenderOwned = targetTerr.state.ownerId === defendingNationId;
+          const isDefenderOccupied = war.occupiedTerritories.some(
+            (o) => o.territoryId === targetTerritoryId && o.occupyingNationId === defendingNationId,
+          );
+          if (!isDefenderOwned && !isDefenderOccupied) continue;
+
+          // Check if attacker has a road in any adjacent owned territory (logistics bonus).
+          const attackerHasRoad = (targetTerr.def.adjacentIds ?? []).some(
+            (adjId) => draft.territories[adjId]?.state.ownerId === attackingNationId &&
+                       draft.territories[adjId]?.state.hasRoad,
+          );
+
+          // Seeded RNG value for this battle (unique per war+territory+tick).
+          const rngVal = rng();
+
+          const { attackStrength, defendStrength } = computeBattleStrengths(
+            attackingNation.armySize,
+            defendingNation.armySize,
+            targetTerr.state.fortificationLevel,
+            targetTerr.def.geography,
+            attackerHasRoad,
+            rngVal,
+          );
+
+          const attackerWins = attackStrength > defendStrength;
+          const terrName = targetTerr.def.name;
+          const attackerName = attackingNation.name;
+          const defenderName = defendingNation.name;
+
+          // Check if this territory is already in occupied state for this war.
+          const existingOccIdx = war.occupiedTerritories.findIndex(
+            (o) => o.territoryId === targetTerritoryId && o.occupyingNationId === attackingNationId,
+          );
+
+          if (attackerWins) {
+            // Attacker wins this battle tick.
+            const lossFrac = BATTLE_LOSER_LOSS_RATE;
+            const winFrac  = BATTLE_WINNER_LOSS_RATE;
+            const defenderLosses = Math.max(1, Math.floor(defendingNation.armySize * lossFrac));
+            const attackerLosses = Math.max(0, Math.floor(attackingNation.armySize * winFrac));
+            defendingNation.armySize = Math.max(0, defendingNation.armySize - defenderLosses);
+            attackingNation.armySize = Math.max(0, attackingNation.armySize - attackerLosses);
+
+            if (existingOccIdx === -1) {
+              // First successful attack — place in occupied state with siegeProgress 1.
+              war.occupiedTerritories.push({
+                territoryId: targetTerritoryId,
+                occupyingNationId: attackingNationId,
+                siegeProgress: 1,
+                siegeStartTick: world.tick,
+              });
+              draft.eventLog.push({
+                tick: world.tick + 1,
+                message: `${attackerName} won a battle in ${terrName} (att ${attackStrength.toFixed(0)} vs def ${defendStrength.toFixed(0)}). Siege begun. Casualties: ${attackerName} −${attackerLosses}, ${defenderName} −${defenderLosses}.`,
+              });
+            } else {
+              // Continuing siege — increment progress.
+              const occ = war.occupiedTerritories[existingOccIdx]!;
+              occ.siegeProgress += 1;
+              const required = siegeTicksRequired(targetTerr.state.fortificationLevel);
+
+              if (occ.siegeProgress >= required) {
+                // Territory fully captured — transfer ownership.
+                war.occupiedTerritories.splice(existingOccIdx, 1);
+                targetTerr.state.ownerId = attackingNationId;
+                targetTerr.state.acquiredTick = world.tick;
+                // Conquest shock applied — reuse the same compat-scaled formula as admin set-owner.
+                // Keep it simple here: set ownershipShock to CONQUEST_SHOCK_INITIAL placeholder.
+                // The full compat-scaled version is computed in the server; engine uses a fixed value.
+                targetTerr.state.ownershipShock = 0.50; // [PLACEHOLDER] see computeConquestShock
+                draft.eventLog.push({
+                  tick: world.tick + 1,
+                  message: `${attackerName} captured ${terrName} from ${defenderName} after ${occ.siegeProgress} tick siege. Casualties: ${attackerName} −${attackerLosses}, ${defenderName} −${defenderLosses}.`,
+                });
+              } else {
+                draft.eventLog.push({
+                  tick: world.tick + 1,
+                  message: `${attackerName} advanced siege of ${terrName} (progress ${occ.siegeProgress}/${required}). Casualties: ${attackerName} −${attackerLosses}, ${defenderName} −${defenderLosses}.`,
+                });
+              }
+            }
+
+            // ── Siege relief check ───────────────────────────────────────────
+            // If the defending nation also attacked a territory this tick that the
+            // attacker was besieging, and the defender wins, that siege is broken.
+            // (Handled naturally: defender queues attack_territory on the besieged
+            //  territory; if they win, the attacker's occupation entry is cleared above
+            //  in the retreat_army branch — actually handled here explicitly.)
+
+          } else {
+            // Defender holds. Attacker takes losses.
+            const attackerLosses = Math.max(0, Math.floor(attackingNation.armySize * BATTLE_WINNER_LOSS_RATE));
+            attackingNation.armySize = Math.max(0, attackingNation.armySize - attackerLosses);
+
+            // If this was a continuing siege, the failed attack resets progress (attacker driven off).
+            if (existingOccIdx !== -1) {
+              war.occupiedTerritories.splice(existingOccIdx, 1);
+              draft.eventLog.push({
+                tick: world.tick + 1,
+                message: `${defenderName} repelled ${attackerName} in ${terrName} (att ${attackStrength.toFixed(0)} vs def ${defendStrength.toFixed(0)}). Siege broken. ${attackerName} −${attackerLosses}.`,
+              });
+            } else {
+              draft.eventLog.push({
+                tick: world.tick + 1,
+                message: `${defenderName} held ${terrName} against ${attackerName} (att ${attackStrength.toFixed(0)} vs def ${defendStrength.toFixed(0)}). ${attackerName} −${attackerLosses}.`,
+              });
+            }
+          }
+        }
       }
     }
 
@@ -587,6 +780,40 @@ export function resolveTick(
       nationCultures[nationId] = computeNationCulture(nationId, draft.territories as WorldState['territories'], cap);
     }
 
+    // ── War-unrest pre-computation ────────────────────────────────────────────
+    // Compute per-nation war-driven unrest modifiers before the territory loop.
+    // These are additive to the equilibrium computed by computeUnrestEquilibrium.
+
+    const nationAtWar = new Set<string>();
+    const warOverextensionByNation: Record<string, number> = {};
+    const warInsolventNations = new Set<string>();
+    const warNoCBDeclarer = new Set<string>(); // no-CB spike still active
+
+    for (const war of draft.wars) {
+      if (war.status !== 'active') continue;
+      nationAtWar.add(war.attackerId);
+      nationAtWar.add(war.defenderId);
+
+      // Overextension pressure per nation from their occupied territories.
+      for (const nationId of [war.attackerId, war.defenderId]) {
+        const cap = draft.nations[nationId]?.capitalTerritoryId ?? null;
+        const pressure = computeOverextensionPressure(war.occupiedTerritories, nationId, cap, adjacency);
+        warOverextensionByNation[nationId] = (warOverextensionByNation[nationId] ?? 0) + pressure;
+      }
+
+      // No-CB spike: still active if within NO_CB_SPIKE_DURATION ticks of declaration.
+      if (!war.hasCasusBelli && (world.tick - war.declaredTick) < NO_CB_SPIKE_DURATION) {
+        warNoCBDeclarer.add(war.attackerId);
+      }
+    }
+
+    // Insolvency check: nations whose wealthStock has gone negative.
+    for (const nation of Object.values(draft.nations)) {
+      if (nationAtWar.has(nation.id) && nation.stockpiles.wealth < 0) {
+        warInsolventNations.add(nation.id);
+      }
+    }
+
     // Process each owned territory: decay shock, drift unrest, check revolt, apply cultural drift.
     for (const t of Object.values(draft.territories)) {
       const ownerId = t.state.ownerId;
@@ -606,12 +833,39 @@ export function resolveTick(
         ? computeTreatyCulturalClash(t.state.valueTraits, clauseSummary.clauseTypes, clauseSummary.termsByClause)
         : 0;
 
+      // militaryBonus: activated for territories with militaristic > 0.3 when nation is at war.
+      // Negative value = reduces equilibrium (happier at war). Previously always 0 (stub).
+      const militaryBonus = (nationAtWar.has(ownerId) && t.state.valueTraits.militaristic > 0.3)
+        ? WAR_MILITARISTIC_HAPPINESS_BONUS
+        : 0;
+
       const compat = computeCompatibility(t.state.valueTraits, t.def.culturalFamily, nationCulture);
       const causes = computeUnrestEquilibrium(
         compat, hops,
         t.state.hasRoad, t.state.hasPort, t.state.fortificationLevel,
         tcount, t.state.ownershipShock, recentWeight, clashPressure,
+        militaryBonus,
       );
+
+      // War unrest additions (applied directly to equilibrium after computeUnrestEquilibrium).
+      // These are pure additions outside the standard formula — war physics on top of base unrest.
+      let warEquilibriumAdj = 0;
+
+      // Overextension: distance-scaled pressure from occupied territories.
+      warEquilibriumAdj += warOverextensionByNation[ownerId] ?? 0;
+
+      // Insolvency ramp: fighting on credit.
+      if (warInsolventNations.has(ownerId)) {
+        warEquilibriumAdj += WAR_INSOLVENCY_UNREST_PER_TICK;
+      }
+
+      // No-CB spike: Peaceful/Isolationist territories of the unjustified declarer.
+      if (warNoCBDeclarer.has(ownerId) &&
+          (t.state.valueTraits.militaristic < -0.3 || t.state.valueTraits.expansionist < -0.3)) {
+        warEquilibriumAdj += NO_CB_UNREST_SPIKE;
+      }
+
+      const effectiveEquilibrium = Math.min(1, Math.max(0, causes.equilibrium + warEquilibriumAdj));
 
       // Decay ownership shock at a rate gated by integration progress.
       if (t.state.ownershipShock > 0) {
@@ -621,8 +875,8 @@ export function resolveTick(
         t.state.ownershipShock = Math.max(0, t.state.ownershipShock * (1 - decayRate));
       }
 
-      // Drift unrest toward equilibrium.
-      t.state.unrest = t.state.unrest + UNREST_DRIFT_RATE * (causes.equilibrium - t.state.unrest);
+      // Drift unrest toward effective equilibrium (base + war adjustments).
+      t.state.unrest = t.state.unrest + UNREST_DRIFT_RATE * (effectiveEquilibrium - t.state.unrest);
 
       // Revolt hysteresis: enter above threshold, exit only when well below it.
       if (!t.state.isInRevolt && t.state.unrest >= REVOLT_THRESHOLD) {

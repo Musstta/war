@@ -939,6 +939,85 @@ const start = async () => {
     return { ok: true };
   });
 
+  // POST /api/admin/declare-war — force a war between two nations for testing.
+  // curl -X POST http://localhost:3001/api/admin/declare-war \
+  //   -H "X-Admin-Key: dev-only-insecure-key" \
+  //   -H "Content-Type: application/json" \
+  //   -d '{"attackerId":"nation_costa_rica","defenderId":"nation_guatemala","casusBelli":true}'
+  app.post('/api/admin/declare-war', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { attackerId, defenderId, casusBelli } = request.body as {
+      attackerId?: string; defenderId?: string; casusBelli?: boolean;
+    };
+    if (!attackerId || !defenderId) return reply.code(400).send({ error: 'attackerId and defenderId required' });
+    if (attackerId === defenderId) return reply.code(400).send({ error: 'Cannot war with yourself' });
+
+    const [attacker, defender] = await Promise.all([
+      prisma.nation.findUnique({ where: { id: attackerId } }),
+      prisma.nation.findUnique({ where: { id: defenderId } }),
+    ]);
+    if (!attacker) return reply.code(404).send({ error: `Nation not found: ${attackerId}` });
+    if (!defender) return reply.code(404).send({ error: `Nation not found: ${defenderId}` });
+
+    const existing = await prisma.war.findFirst({
+      where: {
+        status: { in: ['active', 'peace_negotiation'] },
+        OR: [
+          { attackerId, defenderId },
+          { attackerId: defenderId, defenderId: attackerId },
+        ],
+      },
+    });
+    if (existing) return reply.code(400).send({ error: 'Active war already exists between these nations' });
+
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    const tick = meta?.tick ?? 0;
+    const hasCB = casusBelli !== false;
+
+    const war = await prisma.war.create({
+      data: {
+        attackerId,
+        defenderId,
+        type: 'conquest',
+        hasCasusBelli: hasCB,
+        status: 'active',
+        startTick: tick,
+        declaredTick: tick,
+        occupiedTerritories: [],
+        pendingPeaceDeal: null,
+      },
+    });
+    await prisma.eventLog.create({
+      data: {
+        tick,
+        message: `[admin] ${attacker.name} declared war on ${defender.name}${hasCB ? '' : ' without justification'}.`,
+      },
+    });
+    return { ok: true, warId: war.id };
+  });
+
+  // POST /api/admin/end-war — force-end a war, no peace deal.
+  // curl -X POST http://localhost:3001/api/admin/end-war \
+  //   -H "X-Admin-Key: dev-only-insecure-key" \
+  //   -H "Content-Type: application/json" \
+  //   -d '{"warId":1}'
+  app.post('/api/admin/end-war', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { warId } = request.body as { warId?: number };
+    if (typeof warId !== 'number') return reply.code(400).send({ error: 'warId required' });
+    const war = await prisma.war.findUnique({ where: { id: warId } });
+    if (!war) return reply.code(404).send({ error: 'War not found' });
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    await prisma.war.update({
+      where: { id: warId },
+      data: { status: 'ended', endTick: meta?.tick ?? 0, occupiedTerritories: [] },
+    });
+    await prisma.eventLog.create({
+      data: { tick: meta?.tick ?? 0, message: `[admin] War #${warId} force-ended.` },
+    });
+    return { ok: true };
+  });
+
   // POST /api/admin/objective/:id/force-meet — force an objective clause to 'met' status
   // Used for testing without building the real infrastructure.
   // curl -X POST http://localhost:3001/api/admin/objective/1/force-meet -H "X-Admin-Key: dev-only-insecure-key"

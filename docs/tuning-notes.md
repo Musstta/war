@@ -158,6 +158,33 @@ Observations from running the three seed scenarios (belize-neglect, belize-integ
 
 ---
 
+## War sub-phase constants (Phase 5 War — all [PLACEHOLDER])
+
+**Battle formula weights:**
+- `GEO_DEFENSE_BONUS = 0.20` (+20% effective defense for mountainous/forest geography). Applies per terrain type; coastal and plain/inland are neutral. Same rate also used per fort level — `fortBonus = fortLevel × GEO_DEFENSE_BONUS`. These two being equal is a placeholder coincidence; they should diverge once real battle data exists.
+- `ROAD_ATTACK_BONUS = 0.10` (+10% effective attack if attacker has a road in any adjacent owned territory). Roads as logistics feel plausible at this magnitude; may need to be 2× to be felt at small army sizes.
+- `BATTLE_RANDOM_SPREAD = 0.15` (±15% of attack strength). Wide enough to produce occasional upsets; narrow enough that larger armies reliably win. Validate against first war playtest.
+- `BATTLE_LOSER_LOSS_RATE = 0.10` (−10% of loser's army on each lost battle). At default armySize=50 this is 5 soldiers/battle. Currently using `Math.max(1, floor(armySize × rate))` so a win always costs the loser at least 1. May need to be higher to make wars feel costly.
+- `BATTLE_WINNER_LOSS_RATE = 0.05` (−5% of winner's army per battle). Wars of attrition require this to bite; at armySize=50 and 0.05 rate the winner loses 2–3 soldiers per battle. Raise if wars feel consequence-free.
+
+**Siege duration:**
+- `SIEGE_TICKS_BASE = 1`. Full capture = `siegeProgress >= fortLevel + 1`. Unfortified territory captured in 1 tick; L1 fort needs 2 ticks; L2 needs 3; L3 needs 4. These are game-days — with daily ticks, a maximum-fortification siege lasts 4 real days. May need to be longer to make fortification investment feel meaningful.
+
+**War unrest rates:**
+- `WAR_OVEREXTENSION_PRESSURE_PER_DIST = 0.02` per occupied territory per distance unit from capital. Applied to the occupying nation — each territory you hold far from home costs you. At distance 5 and 3 occupied territories that's +0.30 equilibrium total, which is significant. Verify against revolt threshold.
+- `WAR_INSOLVENCY_UNREST_PER_TICK = 0.03` added to all territories per tick a nation stays insolvent (wealthStock < 0) while at war. Compounding — after 10 ticks insolvent the total ramp is +0.30. This is the core "fighting on credit collapses empires" mechanic. Tune relative to typical Wealth production.
+- `WAR_MILITARISTIC_HAPPINESS_BONUS = −0.02` (reduces equilibrium for militaristic > 0.3 territories while nation is at war). This activates the `militaryBonus` stub. At −0.02 it's barely visible; likely needs 2–3× to produce a meaningful difference.
+
+**No-CB penalty magnitudes:**
+- `NO_CB_UNREST_SPIKE = 0.05` equilibrium pressure added to Peaceful (militaristic < −0.3) and Isolationist (expansionist < −0.3) territories of the declaring nation.
+- `NO_CB_SPIKE_DURATION = 5` ticks. With daily ticks this means the spike lasts 5 real days after declaration. Matches the soft-CB design (§9.1). Raise if no-CB wars feel consequence-free.
+- No-CB Trust penalty is `−10` (applied immediately in `declareWar` server handler). Combined with normal war Trust effects this should be felt. Validate once real war data exists.
+
+**Army size and upkeep:**
+- `armySize` default is 50 for all 5 nations. `UPKEEP_PER_SOLDIER = 0.05 Wealth/tick` (already live since Phase 4). At armySize=50 and baseWealth=5/tick per territory, upkeep is 2.5/tick — exactly half of a single territory's production. Raising army sizes (recruitment not yet implemented) will stress the economy. Revisit army size distribution when recruit/disband actions are added.
+
+---
+
 ## Road network vs. local segment
 
 **Current implementation:** `hasRoad` is a per-territory boolean — roads help locally for unrest and integration with no network connectivity requirement. The `build_road_connection` objective clause uses BFS reachability across the road graph, treating roads as a network for that specific mechanic.

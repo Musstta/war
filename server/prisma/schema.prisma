@@ -39,6 +39,8 @@ model Nation {
   treatyParties  TreatyParty[]
   proposalsSent  Proposal[] @relation("ProposalProposer")
   proposalsReceived Proposal[] @relation("ProposalTarget")
+  warsAsAttacker War[]      @relation("WarAttacker")
+  warsAsDefender War[]      @relation("WarDefender")
 }
 
 // One row per territory. Territory static data (name, base production, geography,
@@ -215,6 +217,29 @@ model ObjectiveClause {
   deadlineTicks     Int          // ticks from treaty signing
   status            String       @default("pending") // 'pending' | 'met' | 'failed' | 'waived'
   responsibleParty  String       @default("partyA")  // 'partyA' | 'partyB' | 'both'
+}
+
+// ── War ───────────────────────────────────────────────────────────────────────
+
+// An active or recently ended war between two nations.
+// status: 'active' | 'peace_negotiation' | 'ended'
+// type: 'conquest' | 'raid' — raid behavior identical to conquest in v1 [STUB]
+// occupiedTerritories: JSON array of { territoryId, occupyingNationId, siegeProgress, siegeStartTick }
+// pendingPeaceDeal: null until peace_negotiation; JSON blob (Prompt 2)
+model War {
+  id                    Int      @id @default(autoincrement())
+  attackerId            String
+  attacker              Nation   @relation("WarAttacker", fields: [attackerId], references: [id])
+  defenderId            String
+  defender              Nation   @relation("WarDefender", fields: [defenderId], references: [id])
+  type                  String   @default("conquest")  // 'conquest' | 'raid'
+  hasCasusBelli         Boolean  @default(true)
+  status                String   @default("active")    // 'active' | 'peace_negotiation' | 'ended'
+  startTick             Int
+  declaredTick          Int      // same as startTick; kept separate for no-CB duration tracking
+  endTick               Int?
+  occupiedTerritories   Json     @default("[]")         // OccupiedTerritory[]
+  pendingPeaceDeal      Json?                            // null until Prompt 2
 }
 
 // ── Trade ─────────────────────────────────────────────────────────────────────

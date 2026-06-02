@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
-import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState, CulturalFamily, Treaty, Proposal, TreatyClause, ClauseType, InstantTrade, TradeRoute, InstantTradeStatus, TradeResource, ObjectiveClause, ObjectiveType, ObjectiveStatus, ResponsibleParty } from '@war/engine';
+
+import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState, CulturalFamily, Treaty, Proposal, TreatyClause, ClauseType, InstantTrade, TradeRoute, InstantTradeStatus, TradeResource, ObjectiveClause, ObjectiveType, ObjectiveStatus, ResponsibleParty, War, WarType, WarStatus, OccupiedTerritory } from '@war/engine';
 import { prisma } from './db';
 
 type TxClient = Prisma.TransactionClient;
@@ -195,9 +196,27 @@ export async function loadWorldState(
     isSeaRoute: r.isSeaRoute,
   }));
 
+  // Load active wars (and recently-ended wars that may still have occupied territories).
+  const warRows = await tx.war.findMany({
+    where: { status: { in: ['active', 'peace_negotiation'] } },
+  });
+  const wars: War[] = warRows.map((w) => ({
+    id: w.id,
+    attackerId: w.attackerId,
+    defenderId: w.defenderId,
+    type: w.type as WarType,
+    hasCasusBelli: w.hasCasusBelli,
+    status: w.status as WarStatus,
+    startTick: w.startTick,
+    declaredTick: w.declaredTick,
+    endTick: w.endTick ?? null,
+    occupiedTerritories: (w.occupiedTerritories as OccupiedTerritory[]) ?? [],
+    pendingPeaceDeal: (w.pendingPeaceDeal as Record<string, unknown> | null) ?? null,
+  }));
+
   // Event log is write-only from the engine's perspective; we don't need to load
   // history — resolveTick emits only the new entries for the current tick.
-  return { tick: meta.tick, rngSeed: meta.rngSeed, territories, nations, eventLog: [], treaties, proposals, instantTrades, tradeRoutes };
+  return { tick: meta.tick, rngSeed: meta.rngSeed, territories, nations, eventLog: [], treaties, proposals, instantTrades, tradeRoutes, wars };
 }
 
 // ── Saving ────────────────────────────────────────────────────────────────────
@@ -302,6 +321,19 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         localPopStock: state.localPopStock,
         localIndStock: state.localIndStock,
         localWltStock: state.localWltStock,
+      },
+    });
+  }
+
+  // Persist war state changes (occupied territories, status, army sizes already persisted via Nation).
+  for (const war of world.wars) {
+    await tx.war.update({
+      where: { id: war.id },
+      data: {
+        status: war.status,
+        endTick: war.endTick,
+        occupiedTerritories: war.occupiedTerritories as Prisma.InputJsonValue,
+        pendingPeaceDeal: war.pendingPeaceDeal as Prisma.InputJsonValue ?? Prisma.JsonNull,
       },
     });
   }

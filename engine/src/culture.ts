@@ -296,6 +296,7 @@ export function computeUnrestEquilibrium(
   ownershipShock: number,
   recentAcquisitionCount: number,
   treatyCulturalClash = 0,
+  militaryBonus = 0,   // negative = happier; activated by War sub-phase for Militaristic territories
 ): UnrestCauses {
   const base = BASE_UNREST_FLOOR;
 
@@ -315,8 +316,6 @@ export function computeUnrestEquilibrium(
 
   // Nation-wide pressure from rapid expansion — affects every territory the nation owns.
   const recentConquestPressure = recentAcquisitionCount * RECENT_CONQUEST_PRESSURE_PER_TERRITORY;
-
-  const militaryBonus = 0; // [STUB] no troop mechanics yet
 
   const equilibrium = Math.max(0, Math.min(1,
     base + compatibilityPressure + distancePressure + infrastructureBonus +
