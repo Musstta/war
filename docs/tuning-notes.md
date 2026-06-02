@@ -212,8 +212,18 @@ All weights need validation once the full action set (war wins, treaty completio
 
 All in `engine/src/war.ts` and `engine/src/culture.ts`.
 
-**`DEBT_RECOVERY_SKIM_RATE = 0.20`** (war.ts)
-Fraction of incoming wealth each tick applied toward debt repayment during recovery (wealthStock ≥ 0 but debtBalance > 0). Target: a nation that went −30 Wealth deep should recover in ~5–8 ticks at normal production. At 5 Wealth/tick income: skim = 1/tick → 30 ticks to clear −30 debt. That's too slow — production rates need to be considered alongside the debt depth. If typical debt is −10 to −20 (2–3 ticks at 8/tick tribute), 0.20 × 5 = 1/tick takes 10–20 ticks. Consider raising to 0.30–0.50 once real play data shows typical insolvency depth and income rates.
+**`DEBT_RECOVERY_SKIM_RATE = 0.20`** (war.ts) — **FLAGGED: too slow before first playtest**
+Fraction of incoming wealth each tick applied toward debt repayment during recovery (wealthStock ≥ 0 but debtBalance > 0).
+
+**Observed in war-exhaustion walkthrough:** After 7 ticks of insolvency at −7.5 Wealth/tick net drain, debtBalance reaches 87.5. At 5 Wealth/tick gross production, skim = floor(5 × 0.20) = 1/tick. Recovery takes ~87 ticks — nearly 3 months at one tick/day. That is game-breaking, not punishing.
+
+**Target:** 10–20 ticks to clear a moderately deep hole. With 5 Wealth/tick income and a target of 15-tick recovery from −30 debt: need skim = 2/tick → rate = 2/5 = **0.40**. From −80 debt: 80/2 = 40 ticks — still long but survivable.
+
+**Two fix paths (decide before Phase 5 goes live):**
+1. Raise rate to 0.40–0.50. Simple. Predictable when income is stable. Problem: if net incoming is near zero (another tribute obligation during recovery), skim is also near zero and recovery stalls.
+2. Compute skim on **gross production** (territory output, before tribute/upkeep) rather than net incoming wealth. More predictable because gross production is the player's actual economic capacity, not their cash-flow after obligations. Gross for a 1-territory nation is ~5 Wealth/tick regardless of what they owe. Implementation: sum `t.def.baseWealth` for non-revolting owned territories instead of using `incomingWealthByNation` (which is the post-trade-draw local stock flush).
+
+**Recommendation before playtest:** Switch to gross-production skim at 0.30. At 5 Wealth/tick gross and 0.30 rate: skim = 1.5/tick → 20 ticks to clear −30 debt, 53 ticks for −80. Acceptable. Isolates recovery speed from tribute entanglements. Do not change the constant in source until the harness has a recovery scenario to validate against.
 
 **`INSOLVENCY_GENERAL_UNREST_PER_TICK = 0.02`** (culture.ts)
 Applied to all territories when wealthStock < 0, regardless of war status. Separates "broke" (general) from "broke while at war" (adds WAR_INSOLVENCY_UNREST_PER_TICK = 0.03 on top). Total insolvency + war pressure = 0.05/tick. At UNREST_DRIFT_RATE = 0.10, effective equilibrium rise = 0.05 → drift adds 0.005/tick. From base equilibrium ~0.02, revolt threshold is 0.80 — at 0.05 added, the territory would need ~156 ticks to reach 0.80 by drift alone (from 0). This is intentionally slow — insolvency is a pressure signal, not an instant revolt trigger. War overextension compounds.
@@ -225,9 +235,7 @@ The +1 Mandate surcharge on actions costing 2+ while insolvent (wealthStock < 0 
 
 ## War insolvency ramp — resolved (v0.16)
 
-Previously documented as unreachable because tribute and upkeep were clamped at 0. Fixed in v0.16 by removing all `Math.max(0, ...)` floors on wealth deductions. Wealth now goes genuinely negative; the `wealthStock < 0` insolvency check fires correctly. `debtBalance` tracks cumulative debt. Recovery skim reduces debtBalance over subsequent ticks.
-
-`WAR_INSOLVENCY_UNREST_PER_TICK` fires when `nation.stockpiles.wealth < 0`. However, both tribute payments (`Math.min(amount, from.stockpiles.wealth)`) and upkeep (`Math.max(0, wealth - upkeep)`) clamp wealth at 0 — so the condition `wealth < 0` is structurally unreachable under the current engine. The `war-exhaustion` harness scenario documents this: a nation with tribute obligations + army upkeep drains to 0 but never crosses into negative. Resolution options: (a) allow wealth to go genuinely negative before end-of-tick clamp, (b) replace the `< 0` check with `< some_floor`, or (c) track "debt" separately. Deferred to post-Phase 5 tuning pass.
+Previously documented as unreachable because tribute and upkeep were clamped at 0. Fixed in v0.16 by removing all `Math.max(0, ...)` floors on wealth deductions. Wealth now goes genuinely negative; the `wealthStock < 0` insolvency check fires correctly. `debtBalance` tracks cumulative debt. Recovery skim reduces debtBalance over subsequent ticks. See `DEBT_RECOVERY_SKIM_RATE` entry above — skim rate is flagged as too slow and needs to be fixed before first playtest.
 
 ---
 
