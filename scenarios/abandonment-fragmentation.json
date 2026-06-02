@@ -1,0 +1,29 @@
+{
+  "name": "abandonment-fragmentation",
+  "description": "Costa Rica owns two territories: costa_rica (unrest 0.8) and nicaragua (unrest 0.3). Set to Abandoned at T1. Expected: costa_rica fragments early (high unrest × 0.6 + time × 0.4 crosses 0.8 threshold within first 5 ticks), nicaragua holds longer (low unrest keeps risk below threshold), but the time factor accumulates and eventually pushes it past 0.8 too. Both fragmentation events appear in event log. Fragmentation-risk-over-time.png shows diverging risk curves. Each fragment spawns an independent AI nation.",
+  "ticks": 25,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica", "nicaragua"], "armySize": 30, "wealthStock": 5 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ],
+    "territoryOverrides": {
+      "costa_rica": { "unrest": 0.80 },
+      "nicaragua":  { "unrest": 0.30 }
+    }
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "set_nation_tier",
+      "payload": { "nationId": "nation_costa_rica", "tier": "abandoned" }
+    }
+  ],
+  "metrics": [
+    "unrest_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick"
+  ]
+}

@@ -11,8 +11,14 @@ import {
   RECENT_ACQUISITION_WINDOW,
 } from '@war/engine';
 import type { TickSnapshot } from './types';
+import { harnessFragmentationRisk } from './runner';
 
-export function captureSnapshot(world: WorldState, tick: number, defs: TerritoryDef[]): TickSnapshot {
+export function captureSnapshot(
+  world: WorldState,
+  tick: number,
+  defs: TerritoryDef[],
+  abandonedAtTickByNation?: Map<string, number>,
+): TickSnapshot {
   const adjacency: Record<string, readonly string[]> = Object.fromEntries(
     defs.map((d) => [d.id, d.adjacentIds]),
   );
@@ -96,6 +102,7 @@ export function captureSnapshot(world: WorldState, tick: number, defs: Territory
       Object.entries(world.nations).map(([nid, n]) => [nid, {
         trust: n.trust,
         inactivityTier: n.inactivityTier,
+        activityTier: n.activityTier ?? n.inactivityTier,
         wealthStock: n.stockpiles.wealth,
         debtBalance: n.debtBalance,
       }]),
@@ -141,5 +148,22 @@ export function captureSnapshot(world: WorldState, tick: number, defs: Territory
   // Events from this specific tick.
   const events = world.eventLog.filter((e) => e.tick === tick);
 
-  return { tick, territories, nations, wars, diplomacy, events };
+  // Fragmentation data — only for territories owned by Abandoned nations.
+  const fragmentationData: TickSnapshot['fragmentationData'] = [];
+  for (const [nid, n] of Object.entries(world.nations)) {
+    if (n.activityTier !== 'abandoned') continue;
+    const abandonedAtTick = abandonedAtTickByNation?.get(nid) ?? tick;
+    const ticksAbandoned = tick - abandonedAtTick;
+    for (const [tid, t] of Object.entries(world.territories)) {
+      if (t.state.ownerId !== nid) continue;
+      fragmentationData.push({
+        territoryId: tid,
+        ownerId: t.state.ownerId,
+        unrest: t.state.unrest,
+        fragmentationRisk: harnessFragmentationRisk(t.state.unrest, ticksAbandoned),
+      });
+    }
+  }
+
+  return { tick, territories, nations, wars, diplomacy, events, fragmentationData };
 }

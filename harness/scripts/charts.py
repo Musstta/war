@@ -496,6 +496,93 @@ def chart_war_state_over_time(war_rows, army_rows, terr_rows, dipl_rows, output_
     print(f"  ✓ {path}")
 
 
+# ── Chart 7: Activity tier over time ─────────────────────────────────────────
+
+TIER_ORDER = {'active': 0, 'dormant': 1, 'autopilot': 2, 'abandoned': 3, 'dissolved': 4}
+TIER_COLORS = {
+    'active':    '#5bbcff',
+    'dormant':   '#ffaa33',
+    'autopilot': '#f0a500',
+    'abandoned': '#ff4444',
+    'dissolved': '#555555',
+}
+
+def chart_activity_tier_over_time(dipl_rows, output_dir):
+    # Only plot nations that ever left 'active'.
+    by_nation = defaultdict(list)
+    for row in dipl_rows:
+        tier = row.get('activity_tier') or row.get('inactivity_tier', 'active')
+        by_nation[row['nation_id']].append((int(row['tick']), tier))
+
+    interesting = {nid: rows for nid, rows in by_nation.items()
+                   if any(t != 'active' for _, t in rows)}
+    if not interesting:
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    nation_colors = cm.tab10(np.linspace(0, 1, max(len(interesting), 1)))
+
+    for (nid, rows), color in zip(sorted(interesting.items()), nation_colors):
+        rows_sorted = sorted(rows, key=lambda r: r[0])
+        ticks = [r[0] for r in rows_sorted]
+        ys = [TIER_ORDER.get(r[1], 0) for r in rows_sorted]
+        label = nid.replace('nation_', '')
+        ax.step(ticks, ys, where='post', label=label, color=color, linewidth=2)
+
+    ax.set_yticks(list(TIER_ORDER.values()))
+    ax.set_yticklabels(list(TIER_ORDER.keys()), fontsize=8)
+    ax.set_xlabel('Tick')
+    ax.set_title('Activity Tier Transitions Over Time', fontsize=9)
+    ax.legend(fontsize=8, loc='upper right')
+    ax.grid(True, alpha=0.3, axis='x')
+
+    plt.tight_layout()
+    path = os.path.join(output_dir, 'charts', 'activity-tier-over-time.png')
+    plt.savefig(path, dpi=100, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ {path}")
+
+
+# ── Chart 8: Fragmentation risk over time ─────────────────────────────────────
+
+ABANDON_FRAGMENT_THRESHOLD = 0.6  # matches HARNESS_ABANDON_FRAGMENT_THRESHOLD in runner.ts
+
+def chart_fragmentation_risk_over_time(frag_rows, output_dir):
+    if not frag_rows:
+        return
+
+    by_terr = defaultdict(list)
+    for row in frag_rows:
+        by_terr[row['territory_id']].append((int(row['tick']), float(row['fragmentation_risk'])))
+
+    if not by_terr:
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    terr_colors = cm.tab10(np.linspace(0, 1, max(len(by_terr), 1)))
+
+    for (tid, points), color in zip(sorted(by_terr.items()), terr_colors):
+        pts = sorted(points)
+        ticks = [p[0] for p in pts]
+        risks = [p[1] for p in pts]
+        ax.plot(ticks, risks, label=tid, color=color, linewidth=2, marker='o', markersize=3)
+
+    ax.axhline(ABANDON_FRAGMENT_THRESHOLD, color='#ff4444', linestyle='--', linewidth=1.5,
+               alpha=0.8, label=f'Fragment threshold ({ABANDON_FRAGMENT_THRESHOLD})')
+    ax.set_xlabel('Tick')
+    ax.set_ylabel('Fragmentation risk')
+    ax.set_title('Fragmentation Risk Over Time — Abandoned Territories', fontsize=9)
+    ax.set_ylim(0, 1.05)
+    ax.legend(fontsize=8, loc='upper left')
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    path = os.path.join(output_dir, 'charts', 'fragmentation-risk-over-time.png')
+    plt.savefig(path, dpi=100, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ {path}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def load_objective_rows(treaty_rows, output_dir):
@@ -531,6 +618,7 @@ def main():
     flow_rows   = load_csv(os.path.join(output_dir, 'trade-flows.csv'))
     war_rows    = load_csv(os.path.join(output_dir, 'war-state.csv'))
     army_rows   = load_csv(os.path.join(output_dir, 'army-sizes.csv'))
+    frag_rows   = load_csv(os.path.join(output_dir, 'fragmentation-risk.csv'))
     obj_rows    = load_objective_rows(treaty_rows, output_dir)
 
     # Determine "interesting" territories: owned + unrest moved more than 2%.
@@ -554,6 +642,10 @@ def main():
         chart_trade_flow_over_time(flow_rows, dipl_rows, output_dir)
     if war_rows:
         chart_war_state_over_time(war_rows, army_rows, terr_rows, dipl_rows, output_dir)
+    if dipl_rows:
+        chart_activity_tier_over_time(dipl_rows, output_dir)
+    if frag_rows:
+        chart_fragmentation_risk_over_time(frag_rows, output_dir)
 
     print(f"\nCharts written to {charts_dir}/")
 

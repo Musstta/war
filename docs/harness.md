@@ -200,6 +200,10 @@ One row per nation per tick. Columns: `tick, nation_id, army_size`. Emitted alon
 
 One row per objective clause per tick. Columns: `tick, treaty_id, clause_index, objective_type, responsible_party, status, deadline_ticks`. Used by the objective-status panel in `treaty-status-over-time.png`.
 
+### `fragmentation-risk.csv` *(only when abandoned nations exist)*
+
+One row per territory per tick for territories owned by Abandoned nations. Columns: `tick, territory_id, owner_id, unrest, fragmentation_risk`. `fragmentation_risk` uses the harness tick-based formula: `unrest × 0.6 + (ticksAbandoned / 10) × 0.4`. Threshold is 0.6 in the harness (vs. 0.8 in the live server which uses real-time days). Used by `fragmentation-risk-over-time.png`.
+
 ### `charts/` directory
 
 | File | What it shows |
@@ -210,6 +214,8 @@ One row per objective clause per tick. Columns: `tick, treaty_id, clause_index, 
 | `treaty-status-over-time.png` | Three or four-panel chart: treaty status timeline (colour-coded bars), [objective clause status timeline when present,] Trust over time per nation, Wealth over time per nation. Only generated when `treaty-metrics.csv` is non-empty. |
 | `trade-flow-over-time.png` | Two-panel chart: trade clause flow status per tick (paid/missed/breached/degraded as colour-coded bars), Wealth over time per nation. Only generated when `trade-flows.csv` is non-empty. |
 | `war-state-over-time.png` | Three-panel chart: army sizes per belligerent, occupied territory count per war, average unrest per belligerent. Only generated when `war-state.csv` is non-empty. |
+| `activity-tier-over-time.png` | Step chart showing activity tier transitions per human nation over time. Only generated when any nation left the 'active' tier. |
+| `fragmentation-risk-over-time.png` | Line chart showing fragmentation risk per abandoned territory, with dashed threshold line. Only generated when `fragmentation-risk.csv` is non-empty. |
 
 Only "interesting" territories get equilibrium charts — those whose unrest moved more than 2% over the run.
 
@@ -292,3 +298,18 @@ To test a specific mechanism in isolation, use `territoryOverrides` to set a ter
 | `war-no-cb.json` | CR declares war on Nicaragua **without** CB; costa_rica territory has militaristic=−0.6, expansionist=−0.5 | CR Trust −10 at declaration; Peaceful+Isolationist territories show elevated equilibrium (+0.05) for 5 ticks (NO_CB_UNREST_SPIKE window)? |
 | `war-exhaustion.json` | CR declares war on Nicaragua; Nicaragua owes 8 Wealth/tick tribute to Honduras (5/tick production, 2.5/tick upkeep) | Nicaragua enters insolvency at T1 (wealth < 0); `WAR_INSOLVENCY_UNREST_PER_TICK` (+0.03) and `INSOLVENCY_GENERAL_UNREST_PER_TICK` (+0.02) both fire each tick; `insolvencyPressure` visible as named component; equilibrium climbs over 15 ticks. `debt_balance` column in `nation-diplomacy.csv` tracks cumulative debt. |
 | `war-defense-pact.json` | CR + Honduras sign defense_pact at T1; Guatemala declares war on CR at T2 | War inserted into world.wars at T2; event log "Guatemala declared war on Costa Rica." emitted. Note: Honduras auto-defense is a server-side effect (fires in `runTick` post-engine) — not observable in the pure-engine harness. Validates: engine-side war state, event log, treaty survives alongside war. |
+
+### Caretaker AI + abandonment (Phase 6 validation)
+
+| Scenario | Description | Key question |
+|---|---|---|
+| `caretaker-roads.json` | CR set to Autopilot at T1; `costa_rica` has unrest 0.65 and no road | Caretaker queues build_road on high-unrest territory at T1 (`[Caretaker]` in event log), road applied, unrest trends down toward lower equilibrium? |
+| `abandonment-fragmentation.json` | CR owns two territories (unrest 0.80 and 0.30), set to Abandoned at T1; run 25 ticks | High-unrest territory fragments ~T11 (risk = 0.723×0.6 + 1×0.4/10 = 0.473 → approaches 0.6 as time grows), low-unrest at ~T13; both emit "broke away" events; independent AI nations spawn; empire dissolves? |
+| `fragment-becomes-ai.json` | CR owns `costa_rica` (unrest 0.82, expansionist traits), set to Abandoned at T1 | Fragment fires at ~T11; spawned AI nation derives doctrine from territory traits; `[AI]` events follow immediately (proposing non-aggression with neighbors)? |
+
+### AI nation behavior (Phase 6 validation)
+
+| Scenario | Description | Key question |
+|---|---|---|
+| `ai-expansionist.json` | AI nation owns `mexico_yucatan`, doctrine `{ expansionist: 0.55, ... }`, two unclaimed neighbors (`belize`); 15 ticks | AI claims `belize` at T1 (expand_claim scores 0.63); subsequent ticks show non-aggression proposals to human neighbors? Army upkeep deducted each tick? |
+| `ai-merchant.json` | AI nation owns `panama` (adjacent to Costa Rica), doctrine `{ merchant: 0.60, ... }`; `autoAcceptTreaties: true`; 15 ticks | AI proposes trade treaty with Costa Rica at T1 (`propose_trade` scores 0.46); auto-accepted at T2; trade flows (3 Wealth/tick) visible in `trade-flows.csv` T2–T11? Treaty expires naturally at T11? |

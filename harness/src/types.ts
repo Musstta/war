@@ -119,8 +119,16 @@ export interface WarSnapshot {
 export interface NationDiplomacySnapshot {
   trust: number;
   inactivityTier: string;
+  activityTier: string;
   wealthStock: number;
   debtBalance: number;
+}
+
+export interface TerritoryFragmentationSnapshot {
+  territoryId: string;
+  ownerId: string | null;
+  unrest: number;
+  fragmentationRisk: number;   // 0 when not abandoned; tick-based formula otherwise
 }
 
 export interface ObjectiveSnapshot {
@@ -168,6 +176,8 @@ export interface TickSnapshot {
     treaties: TreatySnapshot[];
   };
   events: Array<{ tick: number; message: string }>;
+  /** Per-territory fragmentation data — only populated for abandoned nation territories. */
+  fragmentationData: TerritoryFragmentationSnapshot[];
 }
 
 export interface RunResult {

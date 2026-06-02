@@ -208,6 +208,14 @@ All weights need validation once the full action set (war wins, treaty completio
 
 ---
 
+## Phase 5 + 6 harness baseline note (v0.19)
+
+All Phase 5 constants (tier thresholds: 3/7/14 days; fragmentation weights: 0.6/0.4; time scale: 30 days; fragment threshold: 0.8; AI scoring weights; AI efficiency penalty 0.7) are first-pass placeholders. The caretaker, abandonment, and AI scenarios added in v0.19 are the first data on these systems — treat initial harness results as **directional only**.
+
+The harness fragmentation constants intentionally differ from the server: `HARNESS_ABANDON_TIME_SCALE_TICKS = 10` (vs. server's 30 days) and `HARNESS_ABANDON_FRAGMENT_THRESHOLD = 0.6` (vs. server's 0.8). This makes fragmentation observable in 10–25 tick scenarios without changing the server behavior. Reconcile these values before playtest once the server's real-time fragmentation is observed in practice.
+
+---
+
 ## AI doctrine constants (Phase 6 v0.18 — all [PLACEHOLDER])
 
 All in `engine/src/doctrine.ts` and `server/src/ai.ts`.

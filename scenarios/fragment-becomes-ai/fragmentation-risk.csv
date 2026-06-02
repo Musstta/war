@@ -1,0 +1,11 @@
+tick,territory_id,owner_id,unrest,fragmentation_risk
+1,costa_rica,nation_costa_rica,0.740000,0.484000
+2,costa_rica,nation_costa_rica,0.668000,0.480800
+3,costa_rica,nation_costa_rica,0.603200,0.481920
+4,costa_rica,nation_costa_rica,0.544880,0.486928
+5,costa_rica,nation_costa_rica,0.492392,0.495435
+6,costa_rica,nation_costa_rica,0.445153,0.507092
+7,costa_rica,nation_costa_rica,0.402638,0.521583
+8,costa_rica,nation_costa_rica,0.364374,0.538624
+9,costa_rica,nation_costa_rica,0.329936,0.557962
+10,costa_rica,nation_costa_rica,0.298943,0.579366

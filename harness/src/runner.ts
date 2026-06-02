@@ -16,6 +16,7 @@ import {
   PROPOSAL_EXPIRY_TICKS,
   scoreAction,
   BALANCED_DOCTRINE,
+  deriveDoctrineBlend,
 } from '@war/engine';
 import type { Scenario, RunResult } from './types';
 import { captureSnapshot } from './snapshot';
@@ -85,6 +86,9 @@ export function run(scenario: Scenario): RunResult {
 
   const snapshots: RunResult['snapshots'] = [];
   snapshots.push(captureSnapshot(world, 0, defs));
+
+  // Side map for abandonment: tick when each nation entered Abandoned state.
+  const abandonedAtTickByNation = new Map<string, number>();
 
   // Group actions by tick for fast lookup.
   const actionsByTick = new Map<number, typeof scenario.actions extends undefined ? never[] : NonNullable<typeof scenario.actions>>();
@@ -197,7 +201,7 @@ export function run(scenario: Scenario): RunResult {
         world = { ...world, eventLog: [...world.eventLog, { tick: world.tick + 1, message: `[harness] ${breakerNationId} broke treaty #${treatyId}. Trust −${TRUST_BREAK_PENALTY}. Collateral transferred.` }] };
 
       } else if (action.type === 'set_nation_tier') {
-        // Set inactivityTier; apply degradation (Dormant) or upgrade (active) logic.
+        // Set inactivityTier + activityTier; apply degradation (Dormant) or upgrade (active) logic.
         const p = action.payload;
         const nationId = p['nationId'] as string;
         const tier = p['tier'] as string;
@@ -205,7 +209,9 @@ export function run(scenario: Scenario): RunResult {
         const newNations = { ...world.nations };
         const nation = newNations[nationId];
         if (!nation) { console.warn(`[harness] set_nation_tier: nation ${nationId} not found`); continue; }
-        newNations[nationId] = { ...nation, inactivityTier: tier };
+        newNations[nationId] = { ...nation, inactivityTier: tier, activityTier: tier };
+        // Track abandonedAt tick for fragmentation computation.
+        if (tier === 'abandoned') abandonedAtTickByNation.set(nationId, world.tick);
 
         const newTreaties = [...world.treaties];
 
@@ -446,15 +452,178 @@ export function run(scenario: Scenario): RunResult {
     const result = resolveTick(world, engineActions);
     world = result.world;
 
-    // Harness AI pass: for AI nations with a doctrineBlend, apply the highest-scored
-    // action directly to world state. This mirrors the server-side runAiNations logic
-    // without DB access — only supports expand_claim and propose_treaty in the harness.
+    // Harness caretaker pass: for Dormant/Autopilot human nations, apply one caretaker action.
+    world = applyHarnessCaretaker(world, defById);
+
+    // Harness fragmentation pass: for Abandoned nations, check tick-based fragmentation risk.
+    world = applyHarnessFragmentation(world, defById, abandonedAtTickByNation);
+
+    // Harness AI pass: for AI nations with a doctrineBlend, apply the highest-scored action.
     world = applyHarnessAiActions(world, defs, defById);
 
-    snapshots.push(captureSnapshot(world, world.tick, defs));
+    snapshots.push(captureSnapshot(world, world.tick, defs, abandonedAtTickByNation));
   }
 
   return { scenario, snapshots };
+}
+
+// ── Harness caretaker pass ────────────────────────────────────────────────────
+// For Dormant/Autopilot nations: queue the top-priority caretaker action.
+// "Caretaker" tagged in event log. Mirrors server caretaker priorities.
+
+function applyHarnessCaretaker(
+  world: WorldState,
+  defById: Map<string, TerritoryDef>,
+): WorldState {
+  let w = world;
+
+  for (const [nationId, nation] of Object.entries(w.nations)) {
+    if (nation.isAI) continue; // AI nations use doctrine, not caretaker
+    const tier = nation.activityTier;
+    if (tier !== 'dormant' && tier !== 'autopilot') continue;
+
+    const ownedTerrs = Object.entries(w.territories).filter(([, t]) => t.state.ownerId === nationId);
+    if (ownedTerrs.length === 0) continue;
+
+    // Priority 1: Roads — highest-unrest unroaded territory.
+    const unroaded = ownedTerrs
+      .filter(([, t]) => !t.state.hasRoad && t.state.constructionType === null)
+      .sort(([, a], [, b]) => b.state.unrest - a.state.unrest);
+
+    if (unroaded.length > 0) {
+      const [tid, t] = unroaded[0]!;
+      // Apply road immediately (engine would queue it; harness applies directly for simplicity).
+      w = {
+        ...w,
+        territories: { ...w.territories, [tid]: { ...t, state: { ...t.state, hasRoad: true } } },
+        eventLog: [...w.eventLog, { tick: w.tick, message: `[Caretaker] ${nation.name} built a road in ${tid}.` }],
+      };
+      continue; // one action per nation per tick
+    }
+
+    // Priority 2 (Autopilot only): Expansion into unclaimed adjacent territory.
+    if (tier === 'autopilot') {
+      const avgUnrest = ownedTerrs.length > 0
+        ? ownedTerrs.reduce((s, [, t]) => s + t.state.unrest, 0) / ownedTerrs.length
+        : 1;
+      if (avgUnrest < 0.4) {
+        const ownedIds = new Set(ownedTerrs.map(([id]) => id));
+        for (const [ownedId] of ownedTerrs) {
+          const def = defById.get(ownedId);
+          if (!def) continue;
+          for (const adjId of def.adjacentIds) {
+            if (ownedIds.has(adjId)) continue;
+            const adjTerr = w.territories[adjId];
+            if (adjTerr && adjTerr.state.ownerId === null) {
+              w = {
+                ...w,
+                territories: { ...w.territories, [adjId]: { ...adjTerr, state: { ...adjTerr.state, ownerId: nationId, acquiredTick: w.tick } } },
+                eventLog: [...w.eventLog, { tick: w.tick, message: `[Caretaker] ${nation.name} claimed ${adjId}.` }],
+              };
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return w;
+}
+
+// ── Harness fragmentation pass ────────────────────────────────────────────────
+// Tick-based fragmentation risk. The server uses real-time days; the harness
+// uses ticks since abandoned (1 tick ≈ 1 day for scenario purposes).
+// Constants mirror caretaker.ts but scaled to ticks.
+
+const HARNESS_ABANDON_UNREST_WEIGHT    = 0.6; // same as server
+const HARNESS_ABANDON_TIME_WEIGHT      = 0.4; // same as server
+// Harness uses ticks not days. 10-tick scale makes fragmentation reachable within scenario runs.
+// Server uses 30 days which is intentionally slow for real-play; harness accelerates for testing.
+const HARNESS_ABANDON_TIME_SCALE_TICKS = 10;  // [HARNESS ONLY — server uses 30 days]
+const HARNESS_ABANDON_FRAGMENT_THRESHOLD = 0.6; // [HARNESS ONLY — server uses 0.8]
+
+export function harnessFragmentationRisk(unrest: number, ticksAbandoned: number): number {
+  return unrest * HARNESS_ABANDON_UNREST_WEIGHT
+    + (ticksAbandoned / HARNESS_ABANDON_TIME_SCALE_TICKS) * HARNESS_ABANDON_TIME_WEIGHT;
+}
+
+function applyHarnessFragmentation(
+  world: WorldState,
+  defById: Map<string, TerritoryDef>,
+  abandonedAtTickByNation: Map<string, number>,
+): WorldState {
+  let w = world;
+  const dissolved: string[] = [];
+
+  for (const [nationId, nation] of Object.entries(w.nations)) {
+    if (nation.activityTier !== 'abandoned') continue;
+    const abandonedAtTick = abandonedAtTickByNation.get(nationId) ?? w.tick;
+    const ticksAbandoned = w.tick - abandonedAtTick;
+
+    const ownedTerrs = Object.entries(w.territories).filter(([, t]) => t.state.ownerId === nationId);
+    if (ownedTerrs.length === 0) { dissolved.push(nationId); continue; }
+
+    for (const [tid, t] of ownedTerrs) {
+      const risk = harnessFragmentationRisk(t.state.unrest, ticksAbandoned);
+      if (risk < HARNESS_ABANDON_FRAGMENT_THRESHOLD) continue;
+
+      // Territory breaks away — set unclaimed.
+      w = {
+        ...w,
+        territories: {
+          ...w.territories,
+          [tid]: { ...t, state: { ...t.state, ownerId: null, ownershipShock: 0, acquiredTick: null } },
+        },
+        eventLog: [...w.eventLog, {
+          tick: w.tick,
+          message: `${tid} broke away from the abandoned ${nation.name} empire.`,
+        }],
+      };
+
+      // Spawn a new AI nation for the fragment.
+      const newNationId = `nation_independent_${tid}_${w.tick}`;
+      const traits = t.state.valueTraits;
+      const doctrine = deriveDoctrineBlend(traits);
+      const newNation = {
+        id: newNationId,
+        name: `Independent ${tid}`,
+        isAI: true,
+        stockpiles: { population: 0, industry: 0, wealth: 0 },
+        armySize: 10,
+        trust: 50,
+        prestige: 0,
+        capitalTerritoryId: tid,
+        inactivityTier: 'active',
+        lastBrokenPromiseTick: null,
+        debtBalance: 0,
+        activityTier: 'active',
+        caretakerPriorities: ['defense', 'roads', 'industry', 'expansion'],
+        doctrineBlend: doctrine,
+      };
+      w = {
+        ...w,
+        nations: { ...w.nations, [newNationId]: newNation },
+        territories: { ...w.territories, [tid]: { ...w.territories[tid]!, state: { ...w.territories[tid]!.state, ownerId: newNationId } } },
+      };
+    }
+
+    // Check dissolution after fragmentation.
+    const remaining = Object.values(w.territories).filter((t) => t.state.ownerId === nationId).length;
+    if (remaining === 0) dissolved.push(nationId);
+  }
+
+  for (const nationId of dissolved) {
+    const n = w.nations[nationId];
+    if (!n) continue;
+    w = {
+      ...w,
+      nations: { ...w.nations, [nationId]: { ...n, activityTier: 'dissolved' } },
+      eventLog: [...w.eventLog, { tick: w.tick, message: `The ${n.name} empire has dissolved.` }],
+    };
+  }
+
+  return w;
 }
 
 // ── Harness AI pass ────────────────────────────────────────────────────────────

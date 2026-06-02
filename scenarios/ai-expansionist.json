@@ -1,7 +1,7 @@
 {
   "name": "ai-expansionist",
   "description": "An AI nation with a strongly expansionist doctrine starts with mexico_yucatan. Three unclaimed territories are adjacent: belize and el_salvador indirectly. Expected: the AI's expand_claim action scores highly (0.3 + 0.6×expansionist), so the AI claims adjacent unclaimed territory (belize) within a few ticks. Over 10 ticks the AI should expand to both belize and mexico_yucatan's other neighbors if unclaimed. The expansionist AI also has elevated militarist weight from the doctrine derivation formula.",
-  "ticks": 10,
+  "ticks": 15,
   "rngSeed": 42,
   "world": {
     "nations": [

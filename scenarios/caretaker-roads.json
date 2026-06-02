@@ -1,0 +1,30 @@
+{
+  "name": "caretaker-roads",
+  "description": "Costa Rica set to Autopilot at T1. The costa_rica territory has unrest 0.65 and no road. Industry stockpile is sufficient. Expected: caretaker queues build_road on the high-unrest territory within the first 2 ticks (road applied immediately in harness caretaker pass), unrest trends down toward the lower equilibrium that road investment enables. Caretaker actions tagged [Caretaker] in event log. Activity tier visible in nation-diplomacy.csv and activity-tier-over-time.png chart.",
+  "ticks": 10,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50, "wealthStock": 20, "industryStock": 30 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ],
+    "territoryOverrides": {
+      "costa_rica": { "unrest": 0.65 }
+    }
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "set_nation_tier",
+      "payload": { "nationId": "nation_costa_rica", "tier": "autopilot" }
+    }
+  ],
+  "metrics": [
+    "unrest_per_territory_per_tick",
+    "equilibrium_components_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick"
+  ]
+}

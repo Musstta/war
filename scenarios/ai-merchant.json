@@ -1,7 +1,7 @@
 {
   "name": "ai-merchant",
   "description": "An AI nation with a strongly merchant doctrine starts with panama (adjacent to costa_rica). autoAcceptTreaties is true so human Costa Rica auto-accepts any incoming proposals. Expected: the merchant AI scores propose_trade highly (0.1 + 0.6×merchant), proposes a trade treaty with adjacent Costa Rica within a few ticks. With autoAcceptTreaties, the treaty is accepted automatically. Both nations then show trade flows in treaty-metrics.csv.",
-  "ticks": 12,
+  "ticks": 15,
   "rngSeed": 42,
   "world": {
     "nations": [
