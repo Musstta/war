@@ -203,11 +203,11 @@ const start = async () => {
       territories[t.id] = entry;
     }
 
-    // All nations show name + culture; own nation also shows stockpiles.
+    // All nations show name + culture + prestige (public leaderboard); own nation also shows stockpiles.
     const nations: Record<string, object> = {};
     const myNationRow = nationRows.find((n) => n.id === nationId);
     for (const n of nationRows) {
-      const entry: Record<string, unknown> = { id: n.id, name: n.name, culture: nationCultures[n.id] };
+      const entry: Record<string, unknown> = { id: n.id, name: n.name, culture: nationCultures[n.id], prestige: n.prestige };
       if (n.id === nationId) {
         entry.stockpiles = { population: n.popStock, industry: n.indStock, wealth: n.wealthStock };
         entry.armySize = n.armySize;

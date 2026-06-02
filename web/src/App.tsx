@@ -5,6 +5,7 @@ import { PhaseBar } from './components/PhaseBar';
 import { GameMap } from './components/GameMap';
 import { InfoPanel } from './components/InfoPanel';
 import { DiplomacyPanel } from './components/DiplomacyPanel';
+import { PrestigeLeaderboard } from './components/PrestigeLeaderboard';
 
 type AuthState = 'loading' | 'logged-out' | 'logged-in';
 
@@ -90,6 +91,7 @@ export default function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       <PhaseBar world={world} myName={me.name} onLogout={handleLogout} />
+      <PrestigeLeaderboard nations={world.nations} myNationId={world.myNationId} />
       {/* Diplomacy toggle button */}
       <div style={{ position: 'fixed', bottom: '1rem', right: '1rem', zIndex: 100 }}>
         <button

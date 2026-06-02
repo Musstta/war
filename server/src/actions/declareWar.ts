@@ -122,31 +122,9 @@ export const declareWarHandler: ActionHandler = {
         });
       }
 
-      // Breach any maintain_peace objective clauses between these two nations.
-      // Load affected treaties and update the objective clause status in DB.
-      const sharedTreaties = await tx.treaty.findMany({
-        where: {
-          status: { in: ['active', 'degraded'] },
-          AND: [
-            { parties: { some: { nationId: ctx.nationId } } },
-            { parties: { some: { nationId: p.targetNationId! } } },
-          ],
-        },
-        include: { clauses: { include: { objectiveClause: true } } },
-      });
-
-      for (const treaty of sharedTreaties) {
-        for (const clause of treaty.clauses) {
-          const oc = (clause as any).objectiveClause;
-          if (!oc) continue;
-          if (oc.objectiveType !== 'maintain_peace') continue;
-          if (oc.status !== 'pending') continue;
-          await tx.objectiveClause.update({
-            where: { id: oc.id },
-            data: { status: 'failed' },
-          });
-        }
-      }
+      // maintain_peace objective breach fires in resolveTick (engine-side) so it has
+      // access to the full world state and can update clause.objective.status there.
+      // saveWorldState then persists the status change via the normal clause loop.
 
       // Queue the declare_war action row (engine acknowledges it as pass-through).
       await tx.queuedAction.create({

@@ -193,6 +193,21 @@ This inconsistency is intentional for now — the design doc §13 question ("net
 
 ---
 
+## Prestige formula (Phase 5 Prompt 3 — all [PLACEHOLDER])
+
+Prestige is a first-pass stub. Computed at end of each tick in `server/src/world.ts` (`saveWorldState`):
+
+```
+prestige = (territoryCount × 10)
+         + (standingTreatyCount × 5)
+         + (averageUnrest < 0.3 ? 20 : 0)
+         + (completedWarsWon × 15)
+```
+
+All weights need validation once the full action set (war wins, treaty completions, infrastructure) exists across a real playthrough. Current issues: `completedWarsWon` counts the attacker of any ended war regardless of whether they gained territory — a surrendered attacker still gets credited. Fix when war outcome tracking (won/lost flag or cession delta) is richer. The stability bonus (flat +20 for avgUnrest < 0.3) is a cliff function — may want a smooth decay. Dominant qualification (absolute floor + comparability band) deferred to Phase 6.
+
+---
+
 ## Peace negotiation constants (Phase 5 Peace — all [PLACEHOLDER])
 
 All values in `engine/src/war.ts` under the "Peace negotiation constants" block.

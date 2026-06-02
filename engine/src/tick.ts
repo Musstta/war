@@ -29,6 +29,7 @@ import {
   objectiveMeetBonus,
   responsibleNationIds,
   hasRoadConnectionToTerritory,
+  breachMaintainPeaceObjectives,
 } from './diplomacy';
 import type { ObjectiveClause } from './types';
 import {
@@ -231,8 +232,12 @@ export function resolveTick(
 
         case 'declare_war': {
           // War creation and validation happen at the server/action-handler level.
-          // The engine receives this as a pass-through acknowledgement — the War row
-          // was already created before the tick; no engine mutation needed here.
+          // The engine breaches maintain_peace objectives here (tick resolution path)
+          // so saveWorldState picks up the status change via the normal clause loop.
+          const dwp = action.payload as { targetNationId: string };
+          if (dwp?.targetNationId) {
+            breachMaintainPeaceObjectives(action.nationId, dwp.targetNationId, draft.treaties as typeof world.treaties);
+          }
           apply(action);
           break;
         }
@@ -779,9 +784,38 @@ export function resolveTick(
           // below awards the bonus. No per-tick evaluation needed here.
           met = false; // not yet; handled by treaty expiry
 
+        } else if (obj.objectiveType === 'joint_invasion') {
+          // Both responsible parties must have queued attack_territory against targetTerritoryId
+          // in this same tick. If both did: met. If deadline passes without both doing so
+          // in the same tick: failed.
+          if (obj.targetTerritoryId) {
+            const allResponsibleAttacked = responsibleIds.every((respId) => {
+              const targets = attacksByNation[respId] ?? [];
+              return targets.includes(obj.targetTerritoryId!);
+            });
+            if (allResponsibleAttacked && responsibleIds.length >= 2) {
+              met = true;
+            }
+          }
+
+        } else if (obj.objectiveType === 'attack_player') {
+          // Responsible party must be the attacker in an active war against targetNationId.
+          // Check any active/peace_negotiation war that started on or before current tick.
+          if (obj.targetNationId) {
+            for (const respId of responsibleIds) {
+              const hasWar = draft.wars.some(
+                (w) =>
+                  (w.status === 'active' || w.status === 'peace_negotiation') &&
+                  w.attackerId === respId &&
+                  w.defenderId === obj.targetNationId &&
+                  w.startTick <= world.tick,
+              );
+              if (hasWar) { met = true; break; }
+            }
+          }
+
         } else {
-          // [STUB] joint_invasion and attack_player — data present, inert.
-          // No tick evaluation. Stays pending until deadline.
+          // Unknown objective type — leave pending, do not count as met.
           allObjectivesMet = false;
           continue;
         }

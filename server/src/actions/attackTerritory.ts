@@ -35,7 +35,7 @@ export const attackTerritoryHandler: ActionHandler = {
     });
     if (!activeWar) return { ok: 'error', status: 400, reason: 'No active war with the territory owner' };
 
-    // Target must be adjacent to at least one territory owned by the attacker (land adjacency only).
+    // Target must be reachable by the attacker (land adjacency only).
     // [DEFERRED: amphibious] — sea crossing not supported in v1.
     const targetDef = ctx.defById.get(p.targetTerritoryId);
     if (!targetDef) return { ok: 'error', status: 404, reason: 'Territory definition not found' };
@@ -45,9 +45,42 @@ export const attackTerritoryHandler: ActionHandler = {
       select: { id: true },
     });
     const ownedIds = new Set(ownedTerritories.map((t) => t.id));
-    const isAdjacent = targetDef.adjacentIds.some((adjId) => ownedIds.has(adjId));
-    if (!isAdjacent) {
-      return { ok: 'error', status: 400, reason: 'Target territory is not adjacent to any of your territories (land adjacency required; [DEFERRED: amphibious])' };
+    const isDirectlyAdjacent = targetDef.adjacentIds.some((adjId) => ownedIds.has(adjId));
+
+    if (!isDirectlyAdjacent) {
+      // Check for reachability via military_access clause with an intermediate nation.
+      // The intermediate nation must own at least one territory adjacent to the target,
+      // and the attacker must have an active military_access clause with that nation.
+      // [DEFERRED: full movement model Phase 5] — this is a minimal enforcement hook.
+      const militaryAccessTreaties = await ctx.prisma.treaty.findMany({
+        where: {
+          status: { in: ['active'] },
+          parties: { some: { nationId: ctx.nationId } },
+        },
+        include: { parties: true, clauses: true },
+      });
+      const militaryAccessPartners = new Set<string>();
+      for (const treaty of militaryAccessTreaties) {
+        const hasAccess = treaty.clauses.some((c) => c.type === 'military_access' && c.clauseStatus === 'active');
+        if (!hasAccess) continue;
+        for (const party of treaty.parties) {
+          if (party.nationId !== ctx.nationId) militaryAccessPartners.add(party.nationId);
+        }
+      }
+
+      // Check if any adjacent territory of the target is owned by a military_access partner.
+      let reachableViaAccess = false;
+      if (militaryAccessPartners.size > 0) {
+        const adjOwners = await ctx.prisma.territoryState.findMany({
+          where: { id: { in: targetDef.adjacentIds } },
+          select: { id: true, ownerId: true },
+        });
+        reachableViaAccess = adjOwners.some((t) => t.ownerId && militaryAccessPartners.has(t.ownerId));
+      }
+
+      if (!reachableViaAccess) {
+        return { ok: 'error', status: 400, reason: 'Target territory is not reachable — not adjacent to your territory and no military access through an intermediate nation ([DEFERRED: full movement model Phase 5])' };
+      }
     }
 
     return { ok: 'ready', cost: COST, finalPayload: { targetTerritoryId: p.targetTerritoryId } };

@@ -66,6 +66,7 @@ export interface NationView {
   id: string;
   name: string;
   culture?: NationCulture;
+  prestige: number;
   // present only for own nation
   stockpiles?: { population: number; industry: number; wealth: number };
   armySize?: number;

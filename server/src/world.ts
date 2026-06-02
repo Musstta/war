@@ -435,6 +435,67 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
   if (world.eventLog.length > 0) {
     await tx.eventLog.createMany({ data: world.eventLog });
   }
+
+  // ── Prestige computation ──────────────────────────────────────────────────────
+  // Computed from fresh DB state after all other saves have committed.
+  // All weights [PLACEHOLDER] — tune once full action set exists.
+  const [allTerritories, allTreaties, allWars] = await Promise.all([
+    tx.territoryState.findMany({ select: { ownerId: true, unrest: true } }),
+    tx.treaty.findMany({ where: { status: { in: ['active', 'degraded'] } }, include: { parties: true } }),
+    tx.war.findMany({ where: { status: 'ended' }, select: { attackerId: true, defenderId: true, occupiedTerritories: true } }),
+  ]);
+
+  // Territory count + average unrest per nation.
+  const territoryCounts: Record<string, number> = {};
+  const unrestSumByNation: Record<string, number> = {};
+  for (const t of allTerritories) {
+    if (!t.ownerId) continue;
+    territoryCounts[t.ownerId] = (territoryCounts[t.ownerId] ?? 0) + 1;
+    unrestSumByNation[t.ownerId] = (unrestSumByNation[t.ownerId] ?? 0) + t.unrest;
+  }
+
+  // Active treaty count per nation.
+  const treatyCountByNation: Record<string, number> = {};
+  for (const treaty of allTreaties) {
+    for (const party of treaty.parties) {
+      treatyCountByNation[party.nationId] = (treatyCountByNation[party.nationId] ?? 0) + 1;
+    }
+  }
+  // Avoid double-counting (each treaty has 2 parties → counted twice, divide by 2 via distinct treaty).
+  // Actually each nation-party is stored separately so the count is correct as-is.
+  // But treaties with 2 parties each contribute 1 to each nation's count, which is correct.
+
+  // Wars won: ended wars where the nation was the attacker and gained territory
+  // (has non-empty occupiedTerritories that were transferred via cession).
+  // Simpler proxy: attacker of an ended war where they captured at least one territory
+  // (occupiedTerritories empty at end means capture resolved — use separate query).
+  // Best proxy available without richer data: count ended wars by attackerId.
+  const warsWonByNation: Record<string, number> = {};
+  for (const war of allWars) {
+    // A war win is when the attacker achieved something — check ended wars.
+    // [PLACEHOLDER] full "won" detection deferred; for now: attacker of any ended war.
+    warsWonByNation[war.attackerId] = (warsWonByNation[war.attackerId] ?? 0) + 1;
+  }
+
+  // Compute and save prestige for each nation.
+  for (const nation of Object.values(world.nations)) {
+    const tCount = territoryCounts[nation.id] ?? 0;
+    const tTreaties = treatyCountByNation[nation.id] ?? 0;
+    const avgUnrest = tCount > 0 ? (unrestSumByNation[nation.id] ?? 0) / tCount : 0;
+    const warsWon = warsWonByNation[nation.id] ?? 0;
+
+    const prestige = Math.round(
+      tCount * 10 +                   // [PLACEHOLDER] territory weight
+      tTreaties * 5 +                  // [PLACEHOLDER] diplomacy weight
+      (avgUnrest < 0.3 ? 20 : 0) +    // [PLACEHOLDER] stability bonus
+      warsWon * 15,                    // [PLACEHOLDER] war-win weight
+    );
+
+    await tx.nation.update({
+      where: { id: nation.id },
+      data: { prestige },
+    });
+  }
 }
 
 // ── First-run initialization ──────────────────────────────────────────────────
