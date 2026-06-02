@@ -320,6 +320,32 @@ curl -X POST http://localhost:3001/api/admin/declare-war \
 
 `casusBelli: false` applies the no-CB Trust penalty (−10 Trust) and queues the no-CB unrest spike (+0.05 equilibrium for 5 ticks) on the attacker's Peaceful/Isolationist territories via the next tick.
 
+### Force-accept a peace deal (testing)
+
+```bash
+curl -X POST http://localhost:3001/api/admin/force-peace \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "warId": 1,
+    "terms": {
+      "warType": "negotiated",
+      "territoryCessions": [
+        { "territoryId": "guatemala", "fromNationId": "nation_guatemala", "toNationId": "nation_costa_rica" }
+      ],
+      "tributeWealth": 0,
+      "tributeTicks": 0
+    }
+  }'
+# → {"ok":true}
+```
+
+- Immediately ends the war, transfers all ceded territories with conquest shock (`ownershipShock=0.50`), returns unceded occupied territories to original owners.
+- If `tributeWealth > 0` and `tributeTicks > 0`: creates a tribute treaty using the same treaty machinery.
+- Both parties receive the `+5` Trust bonus for peaceful war end.
+- Raid wars: `territoryCessions` must be `[]`.
+- White peace: set `territoryCessions: []` and `tributeWealth: 0`.
+
 ### Force-end a war (no peace deal)
 
 ```bash

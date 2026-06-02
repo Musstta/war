@@ -56,6 +56,9 @@ export const ACTION_COSTS: Record<string, number> = {
   declare_war:          3, // [PLACEHOLDER] expensive action per design doc §9.1
   attack_territory:     2, // [PLACEHOLDER] per attack intent per tick
   retreat_army:         0, // free — retreat costs no Mandate
+  propose_peace:        2, // [PLACEHOLDER]
+  accept_peace:         0, // free
+  decline_peace:        0, // free
 };
 
 // Which phase each action type is restricted to.
@@ -74,6 +77,9 @@ export const ACTION_PHASE: Record<string, Phase> = {
   declare_war:          'main',
   attack_territory:     'main',
   retreat_army:         'main',
+  propose_peace:        'main',
+  accept_peace:         'main',
+  decline_peace:        'main',
 };
 
 /** Mandate cost to build each fort level. [PLACEHOLDER] */

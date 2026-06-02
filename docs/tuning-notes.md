@@ -193,6 +193,27 @@ This inconsistency is intentional for now — the design doc §13 question ("net
 
 ---
 
+## Peace negotiation constants (Phase 5 Peace — all [PLACEHOLDER])
+
+All values in `engine/src/war.ts` under the "Peace negotiation constants" block.
+
+**`PEACE_PROPOSAL_LAPSE_TICKS = 3`**
+Ticks a proposal stays open before it silently expires with no exhaustion penalty. 3 ticks = 3 real days at one tick/day pacing. Too long and wars drag on indefinitely via stalling; too short and players can't coordinate a response before the window closes. 3 is a starting guess — revisit when we have data on typical response latency in live play.
+
+**`PEACE_DECLINE_EXHAUSTION_BUMP = 0.04`**
+Equilibrium bump applied to ALL territories of the party that said no. +0.04 is small enough to not instantly spiral into revolt (typical equilibrium baseline ~0.10–0.20) but large enough to feel punishing on already-stressed territories. Scale with war duration once the full war system is calibrated.
+
+**`PEACE_DECLINE_EXHAUSTION_TICKS = 3`**
+Duration of the exhaustion bump. 3 ticks mirrors the lapse window — feels symmetric. Both values should be tuned together.
+
+**`PEACE_TRUST_BONUS = 5`**
+Both parties gain +5 Trust for signing a peace deal. Small relative to the break penalty (−20) — intentionally asymmetric: the system incentivizes peace but doesn't force it. Compare to the objective-meet bonus when tuning.
+
+**Tribute-via-treaty mechanic:**
+When a peace deal includes tribute (`tributeWealth > 0, tributeTicks > 0`), the engine emits a `[TRIBUTE_TREATY]` event log entry that the server save hook parses to create a real Treaty row. This uses the same tribute-clause machinery as voluntary tribute treaties — the attacker pays the defender per tick. No collateral, no renewal: treaty expires at `tickStarted + tributeTicks`. The tribute amount is fixed at signing (not inflation-adjusted). Whether the loser can afford it depends on their wealth stock — if they go insolvent, the insolvency unrest ramp fires. Full enforcement identical to any other tribute clause: missed payments → Trust penalty → breach.
+
+---
+
 ## Fast-forward vote (deferred feature)
 
 when all active players check "ready for next tick," the tick fires immediately instead of waiting for midnight. Preserves the persistent-world design as default but lets a synchronously-online group compress time. Build post-Phase 4, post-harness. Needs to handle: who counts as "active" for the vote, what happens to queued actions for absent-but-not-Dormant players, whether the vote requires unanimous or majority. Need to differentiate between if this is possible in prep or only main phase and what the difference is. Differences in phases at the moment are still unrealized, so defer until the full action set and phase structure are specced.

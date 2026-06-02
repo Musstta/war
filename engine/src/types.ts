@@ -294,6 +294,26 @@ export interface TradeRoute {
 
 export type WarType = 'conquest' | 'raid'; // raid behavior identical to conquest in v1 [STUB]
 export type WarStatus = 'active' | 'peace_negotiation' | 'ended';
+export type PeaceDealType = 'white_peace' | 'negotiated' | 'surrender';
+
+export interface Territorycessation {
+  territoryId: string;
+  fromNationId: string;
+  toNationId: string;
+}
+
+/**
+ * A pending peace deal attached to a War in peace_negotiation status.
+ * proposedAtTick + PEACE_PROPOSAL_LAPSE_TICKS = tick when it silently expires.
+ */
+export interface PeaceDeal {
+  proposingNationId: string;
+  proposedAtTick: number;
+  warType: PeaceDealType;
+  territoryCessions: Territorycessation[];
+  tributeWealth: number;
+  tributeTicks: number;
+}
 
 /**
  * One territory currently occupied (besieged or taken) in a war.
@@ -320,13 +340,20 @@ export interface War {
   endTick: number | null;
   /** Territories currently occupied by either belligerent. */
   occupiedTerritories: OccupiedTerritory[];
-  /** null until peace_negotiation; JSON blob for Prompt 2. */
-  pendingPeaceDeal: Record<string, unknown> | null;
+  /** null when status is 'active'; populated when status is 'peace_negotiation'. */
+  pendingPeaceDeal: PeaceDeal | null;
   /**
    * Tick the war was declared — used to track the no-CB unrest spike duration.
    * Duplicate of startTick but kept separate for clarity.
    */
   declaredTick: number;
+  /**
+   * Per-nation exhaustion state from a declined peace proposal.
+   * { nationId: exhaustionEndsAtTick }
+   * Each tick where world.tick < exhaustionEndsAtTick, that nation's territories
+   * get PEACE_DECLINE_EXHAUSTION_BUMP added to their equilibrium.
+   */
+  exhaustionByNation: Record<string, number>;
 }
 
 export interface WorldState {

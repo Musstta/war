@@ -46,7 +46,12 @@ import {
   NO_CB_SPIKE_DURATION,
   BATTLE_LOSER_LOSS_RATE,
   BATTLE_WINNER_LOSS_RATE,
+  PEACE_PROPOSAL_LAPSE_TICKS,
+  PEACE_DECLINE_EXHAUSTION_BUMP,
+  PEACE_DECLINE_EXHAUSTION_TICKS,
+  PEACE_TRUST_BONUS,
 } from './war';
+import type { PeaceDeal } from './types';
 
 // ── Placeholder constants ─────────────────────────────────────────────────────
 // These numbers are not final. All tuning happens via the simulation harness
@@ -262,6 +267,25 @@ export function resolveTick(
           break;
         }
 
+        case 'propose_peace': {
+          // Validation at queue time; engine sets the pendingPeaceDeal and transitions status.
+          // The deal is a pass-through — actual execution fires when accept_peace is queued.
+          apply(action);
+          break;
+        }
+
+        case 'accept_peace': {
+          // Accept is a pass-through marker collected below in peace resolution.
+          apply(action);
+          break;
+        }
+
+        case 'decline_peace': {
+          // Decline is a pass-through marker collected below in peace resolution.
+          apply(action);
+          break;
+        }
+
         default:
           discard(action, `unknown action type: ${action.type}`);
           break;
@@ -279,7 +303,8 @@ export function resolveTick(
     }
 
     for (const war of draft.wars) {
-      if (war.status !== 'active') continue;
+      // Battle continues during peace_negotiation — both parties may still queue attacks.
+      if (war.status !== 'active' && war.status !== 'peace_negotiation') continue;
 
       const attacker = draft.nations[war.attackerId];
       const defender = draft.nations[war.defenderId];
@@ -407,6 +432,152 @@ export function resolveTick(
               });
             }
           }
+        }
+      }
+    }
+
+    // ── Peace resolution ─────────────────────────────────────────────────────
+    // Runs after all battle resolution. Handles:
+    //   1. propose_peace  — attach deal to war, set status = peace_negotiation (server-side).
+    //      Engine just acknowledges the action; the server handler mutates the DB War row
+    //      directly before the tick fires, so the loaded world already has status=peace_negotiation
+    //      and pendingPeaceDeal populated. The engine then sees the state and processes responses.
+    //   2. accept_peace   — execute deal: cessions, tribute treaty, return remaining occupied.
+    //   3. decline_peace  — apply exhaustion bump to decliner, reset to active.
+    //   4. lapse          — if peace_negotiation and no accept/decline this tick and proposal
+    //      has exceeded PEACE_PROPOSAL_LAPSE_TICKS → silently revert to active.
+
+    // Collect peace action intents this tick.
+    const peaceAcceptors = new Set<string>();   // nationIds that queued accept_peace
+    const peaceDeclinersByWar = new Map<string, string>(); // warId-keyed → declining nationId
+    for (const action of actions) {
+      if (action.type === 'accept_peace') peaceAcceptors.add(action.nationId);
+      if (action.type === 'decline_peace') {
+        const p = action.payload as { warId: number };
+        peaceDeclinersByWar.set(String(p.warId), action.nationId);
+      }
+    }
+
+    // Helper: execute a peace deal on the draft world.
+    const executePeaceDeal = (war: typeof draft.wars[number], deal: PeaceDeal) => {
+      const attackerName = draft.nations[war.attackerId]?.name ?? war.attackerId;
+      const defenderName = draft.nations[war.defenderId]?.name ?? war.defenderId;
+
+      // 1. Territory cessions — transfer ownership with conquest shock.
+      for (const cession of deal.territoryCessions) {
+        const terr = draft.territories[cession.territoryId];
+        if (!terr) continue;
+        terr.state.ownerId = cession.toNationId;
+        terr.state.acquiredTick = world.tick;
+        terr.state.ownershipShock = 0.50; // [PLACEHOLDER] same as battle capture
+        draft.eventLog.push({
+          tick: world.tick + 1,
+          message: `${draft.nations[cession.toNationId]?.name ?? cession.toNationId} received ${terr.def.name} via peace treaty.`,
+        });
+      }
+
+      // 2. All occupied territories NOT in cession list → returned to original owner.
+      // "Original owner" = the other belligerent (the war is bilateral).
+      const cedingIds = new Set(deal.territoryCessions.map((c) => c.territoryId));
+      for (const occ of war.occupiedTerritories) {
+        if (cedingIds.has(occ.territoryId)) continue;
+        // Return to the non-occupying belligerent.
+        const returnToId = occ.occupyingNationId === war.attackerId ? war.defenderId : war.attackerId;
+        const terr = draft.territories[occ.territoryId];
+        if (terr) {
+          terr.state.ownerId = returnToId;
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `${terr.def.name} returned to ${draft.nations[returnToId]?.name ?? returnToId} under peace terms.`,
+          });
+        }
+      }
+      war.occupiedTerritories = [];
+
+      // 3. Tribute creates a new treaty — recorded in eventLog; server builds the Treaty row.
+      //    The engine emits a tribute-treaty-needed event which the server save hook reads.
+      if (deal.tributeWealth > 0 && deal.tributeTicks > 0) {
+        draft.eventLog.push({
+          tick: world.tick + 1,
+          message: `[TRIBUTE_TREATY] warId=${war.id} fromNationId=${war.attackerId} toNationId=${war.defenderId} amount=${deal.tributeWealth} ticks=${deal.tributeTicks}`,
+        });
+      }
+
+      // 4. Trust bonus for peaceful resolution.
+      for (const nId of [war.attackerId, war.defenderId]) {
+        const n = draft.nations[nId];
+        if (n) n.trust = Math.min(100, n.trust + PEACE_TRUST_BONUS);
+      }
+
+      // 5. Defense pact check — emit event noting unfulfilled pact (inert in v1).
+      // (Happens in war-end cleanup below via common path.)
+
+      // 6. End the war.
+      war.status = 'ended';
+      war.endTick = world.tick + 1;
+      war.pendingPeaceDeal = null;
+
+      draft.eventLog.push({
+        tick: world.tick + 1,
+        message: `Peace of tick ${world.tick + 1} signed between ${attackerName} and ${defenderName}.`,
+      });
+    };
+
+    // Helper: war-end cleanup (defense pact notice + army action cleanup handled by server).
+    const endWarCleanup = (war: typeof draft.wars[number]) => {
+      // Defense pact: check if any treaty involves a third party with a defense_pact toward defender.
+      // Inert in v1 — just emit the event.
+      for (const treaty of draft.treaties) {
+        if (!treaty.partyIds.includes(war.defenderId)) continue;
+        const hasPact = treaty.clauses.some((c) => c.type === 'defense_pact' && c.clauseStatus === 'active');
+        if (!hasPact) continue;
+        const thirdPartyId = treaty.partyIds.find((id) => id !== war.defenderId);
+        if (!thirdPartyId || thirdPartyId === war.attackerId) continue;
+        const thirdName = draft.nations[thirdPartyId]?.name ?? thirdPartyId;
+        const defName = draft.nations[war.defenderId]?.name ?? war.defenderId;
+        draft.eventLog.push({
+          tick: world.tick + 1,
+          message: `[DEFENSE_PACT_UNHONORED] ${thirdName} had a defense pact with ${defName} but did not intervene. (Activation deferred — v1 stub.)`,
+        });
+      }
+    };
+
+    for (const war of draft.wars) {
+      if (war.status === 'peace_negotiation' && war.pendingPeaceDeal) {
+        const deal = war.pendingPeaceDeal;
+        const warIdStr = String(war.id);
+        const nonProposer = [war.attackerId, war.defenderId].find((id) => id !== deal.proposingNationId)!;
+
+        // Did the non-proposing party accept this tick?
+        if (peaceAcceptors.has(nonProposer)) {
+          executePeaceDeal(war, deal);
+          endWarCleanup(war);
+          continue;
+        }
+
+        // Did the non-proposing party decline?
+        const decliner = peaceDeclinersByWar.get(warIdStr);
+        if (decliner === nonProposer) {
+          // Apply exhaustion bump to the declining party.
+          war.exhaustionByNation[decliner] = world.tick + 1 + PEACE_DECLINE_EXHAUSTION_TICKS;
+          war.pendingPeaceDeal = null;
+          war.status = 'active';
+          const declinerName = draft.nations[decliner]?.name ?? decliner;
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `${declinerName} declined the peace proposal. War continues. Exhaustion penalty applied.`,
+          });
+          continue;
+        }
+
+        // Lapse: proposal expired with no response?
+        if (world.tick + 1 >= deal.proposedAtTick + PEACE_PROPOSAL_LAPSE_TICKS) {
+          war.pendingPeaceDeal = null;
+          war.status = 'active';
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `Peace proposal in war #${war.id} lapsed without response. War continues.`,
+          });
         }
       }
     }
@@ -788,9 +959,10 @@ export function resolveTick(
     const warOverextensionByNation: Record<string, number> = {};
     const warInsolventNations = new Set<string>();
     const warNoCBDeclarer = new Set<string>(); // no-CB spike still active
+    const warExhaustionNations = new Set<string>(); // exhaustion bump from declined peace
 
     for (const war of draft.wars) {
-      if (war.status !== 'active') continue;
+      if (war.status !== 'active' && war.status !== 'peace_negotiation') continue;
       nationAtWar.add(war.attackerId);
       nationAtWar.add(war.defenderId);
 
@@ -804,6 +976,13 @@ export function resolveTick(
       // No-CB spike: still active if within NO_CB_SPIKE_DURATION ticks of declaration.
       if (!war.hasCasusBelli && (world.tick - war.declaredTick) < NO_CB_SPIKE_DURATION) {
         warNoCBDeclarer.add(war.attackerId);
+      }
+
+      // Exhaustion bump from a declined peace proposal (active until exhaustionEndsAtTick).
+      for (const [nationId, endsAtTick] of Object.entries(war.exhaustionByNation)) {
+        if (world.tick < endsAtTick) {
+          warExhaustionNations.add(nationId);
+        }
       }
     }
 
@@ -863,6 +1042,11 @@ export function resolveTick(
       if (warNoCBDeclarer.has(ownerId) &&
           (t.state.valueTraits.militaristic < -0.3 || t.state.valueTraits.expansionist < -0.3)) {
         warEquilibriumAdj += NO_CB_UNREST_SPIKE;
+      }
+
+      // Exhaustion bump: nation that declined a peace proposal.
+      if (warExhaustionNations.has(ownerId)) {
+        warEquilibriumAdj += PEACE_DECLINE_EXHAUSTION_BUMP;
       }
 
       const effectiveEquilibrium = Math.min(1, Math.max(0, causes.equilibrium + warEquilibriumAdj));

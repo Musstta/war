@@ -82,6 +82,33 @@ export const NO_CB_UNREST_SPIKE = 0.05;
  */
 export const NO_CB_SPIKE_DURATION = 5;
 
+// ── Peace negotiation constants ───────────────────────────────────────────────
+
+/**
+ * Ticks a peace proposal remains open before it lapses (no exhaustion bump).
+ * If neither accept_peace nor decline_peace is queued within this window,
+ * the proposal is silently dropped and the war returns to active. [PLACEHOLDER]
+ */
+export const PEACE_PROPOSAL_LAPSE_TICKS = 3;
+
+/**
+ * Unrest equilibrium bump applied to ALL territories of the party that declined
+ * a peace proposal. Decays normally — not a permanent change. [PLACEHOLDER]
+ */
+export const PEACE_DECLINE_EXHAUSTION_BUMP = 0.04;
+
+/**
+ * How many ticks the decline exhaustion bump persists (as an additive equilibrium
+ * pressure, not stored separately — tracked via warExhaustionByNation). [PLACEHOLDER]
+ */
+export const PEACE_DECLINE_EXHAUSTION_TICKS = 3;
+
+/**
+ * Trust bonus awarded to both parties when a war ends via signed peace deal
+ * (accepted, not force-ended). [PLACEHOLDER]
+ */
+export const PEACE_TRUST_BONUS = 5;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Returns true if the two nations are currently at war with each other. */

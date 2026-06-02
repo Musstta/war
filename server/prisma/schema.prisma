@@ -239,7 +239,9 @@ model War {
   declaredTick          Int      // same as startTick; kept separate for no-CB duration tracking
   endTick               Int?
   occupiedTerritories   Json     @default("[]")         // OccupiedTerritory[]
-  pendingPeaceDeal      Json?                            // null until Prompt 2
+  pendingPeaceDeal      Json?                            // PeaceDeal | null
+  // Per-nation exhaustion from a declined peace proposal: { nationId: exhaustionEndsAtTick }
+  exhaustionByNation    Json     @default("{}")
 }
 
 // ── Trade ─────────────────────────────────────────────────────────────────────

@@ -14,6 +14,9 @@ import { declineInstantTradeHandler } from './declineInstantTrade';
 import { declareWarHandler } from './declareWar';
 import { attackTerritoryHandler } from './attackTerritory';
 import { retreatArmyHandler } from './retreatArmy';
+import { proposePeaceHandler } from './proposePeace';
+import { acceptPeaceHandler } from './acceptPeace';
+import { declinePeaceHandler } from './declinePeace';
 
 /**
  * Registry of action handlers keyed by action type string.
@@ -36,6 +39,9 @@ export const actionRegistry: Record<string, ActionHandler> = {
   declare_war:                   declareWarHandler,
   attack_territory:              attackTerritoryHandler,
   retreat_army:                  retreatArmyHandler,
+  propose_peace:                 proposePeaceHandler,
+  accept_peace:                  acceptPeaceHandler,
+  decline_peace:                 declinePeaceHandler,
 };
 
 export type { ActionHandler, ActionContext, ValidateResult } from './types';

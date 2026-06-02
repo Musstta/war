@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState, CulturalFamily, Treaty, Proposal, TreatyClause, ClauseType, InstantTrade, TradeRoute, InstantTradeStatus, TradeResource, ObjectiveClause, ObjectiveType, ObjectiveStatus, ResponsibleParty, War, WarType, WarStatus, OccupiedTerritory } from '@war/engine';
+import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState, CulturalFamily, Treaty, Proposal, TreatyClause, ClauseType, InstantTrade, TradeRoute, InstantTradeStatus, TradeResource, ObjectiveClause, ObjectiveType, ObjectiveStatus, ResponsibleParty, War, WarType, WarStatus, OccupiedTerritory, PeaceDeal } from '@war/engine';
 import { prisma } from './db';
 
 type TxClient = Prisma.TransactionClient;
@@ -211,7 +211,8 @@ export async function loadWorldState(
     declaredTick: w.declaredTick,
     endTick: w.endTick ?? null,
     occupiedTerritories: (w.occupiedTerritories as OccupiedTerritory[]) ?? [],
-    pendingPeaceDeal: (w.pendingPeaceDeal as Record<string, unknown> | null) ?? null,
+    pendingPeaceDeal: (w.pendingPeaceDeal as PeaceDeal | null) ?? null,
+    exhaustionByNation: ((w as any).exhaustionByNation as Record<string, number>) ?? {},
   }));
 
   // Event log is write-only from the engine's perspective; we don't need to load
@@ -333,9 +334,102 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         status: war.status,
         endTick: war.endTick,
         occupiedTerritories: war.occupiedTerritories as Prisma.InputJsonValue,
-        pendingPeaceDeal: war.pendingPeaceDeal as Prisma.InputJsonValue ?? Prisma.JsonNull,
+        pendingPeaceDeal: war.pendingPeaceDeal != null
+          ? war.pendingPeaceDeal as unknown as Prisma.InputJsonValue
+          : Prisma.JsonNull,
+        exhaustionByNation: war.exhaustionByNation as Prisma.InputJsonValue,
       },
     });
+  }
+
+  // Tribute-treaty creation: engine emits a structured [TRIBUTE_TREATY] event log entry
+  // when a peace deal includes tribute. Parse and create the Treaty row here.
+  for (const entry of world.eventLog) {
+    if (!entry.message.startsWith('[TRIBUTE_TREATY]')) continue;
+    // Parse: [TRIBUTE_TREATY] warId=N fromNationId=X toNationId=Y amount=Z ticks=W
+    const m = entry.message.match(
+      /\[TRIBUTE_TREATY\] warId=(\d+) fromNationId=(\S+) toNationId=(\S+) amount=([\d.]+) ticks=(\d+)/,
+    );
+    if (!m) continue;
+    const [, , fromNationId, toNationId, amountStr, ticksStr] = m;
+    const amount = parseFloat(amountStr!);
+    const termTicks = parseInt(ticksStr!, 10);
+    const currentTick = world.tick;
+
+    // Create a minimal tribute-only treaty via the Proposal→Treaty path.
+    // We create a Proposal row and immediately accept it in one transaction.
+    const proposal = await tx.proposal.create({
+      data: {
+        proposerId: fromNationId!,
+        targetId: toNationId!,
+        status: 'accepted',
+        termTicks,
+        proposerCollateral: 0,
+        targetCollateral: 0,
+        tickProposed: currentTick,
+        expiresAtTick: currentTick, // already accepted
+      },
+    });
+
+    await tx.proposalClause.create({
+      data: {
+        proposalId: proposal.id,
+        type: 'tribute',
+        collateral: 0,
+        payload: { amount, fromNationId, toNationId } as Prisma.InputJsonValue,
+      },
+    });
+
+    const treaty = await tx.treaty.create({
+      data: {
+        proposalId: proposal.id,
+        status: 'active',
+        termTicks,
+        tickStarted: currentTick,
+        tickEnds: currentTick + termTicks,
+        totalCollateral: 0,
+      },
+    });
+
+    // TreatyParty rows for both nations.
+    for (const nationId of [fromNationId!, toNationId!]) {
+      await tx.treatyParty.create({
+        data: {
+          treatyId: treaty.id,
+          nationId,
+          collateralDeposited: 0,
+        },
+      });
+    }
+
+    // TreatyClause row.
+    await tx.treatyClause.create({
+      data: {
+        treatyId: treaty.id,
+        clauseIndex: 0,
+        type: 'tribute',
+        collateral: 0,
+        payload: { amount, fromNationId, toNationId } as Prisma.InputJsonValue,
+        clauseStatus: 'active',
+      },
+    });
+  }
+
+  // Delete queued attack_territory actions for ended wars so they don't fire next tick.
+  const endedWarIds = world.wars
+    .filter((w) => w.status === 'ended')
+    .map((w) => w.id);
+  if (endedWarIds.length > 0) {
+    // Find belligerents for ended wars and delete their pending attack actions.
+    const endedWars = world.wars.filter((w) => w.status === 'ended');
+    for (const war of endedWars) {
+      await tx.queuedAction.deleteMany({
+        where: {
+          type: 'attack_territory',
+          nationId: { in: [war.attackerId, war.defenderId] },
+        },
+      });
+    }
   }
 
   if (world.eventLog.length > 0) {

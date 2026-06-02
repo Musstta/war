@@ -1018,6 +1018,152 @@ const start = async () => {
     return { ok: true };
   });
 
+  // POST /api/admin/force-peace — force-accept a peace deal with specified terms for testing.
+  // Immediately ends the war, applies cessions, and creates tribute treaty if specified.
+  // curl -X POST http://localhost:3001/api/admin/force-peace \
+  //   -H "X-Admin-Key: dev-only-insecure-key" \
+  //   -H "Content-Type: application/json" \
+  //   -d '{"warId":1,"terms":{"warType":"negotiated","territoryCessions":[{"territoryId":"guatemala","fromNationId":"nation_guatemala","toNationId":"nation_costa_rica"}],"tributeWealth":0,"tributeTicks":0}}'
+  app.post('/api/admin/force-peace', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { warId, terms } = request.body as {
+      warId?: number;
+      terms?: {
+        warType?: string;
+        territoryCessions?: Array<{ territoryId: string; fromNationId: string; toNationId: string }>;
+        tributeWealth?: number;
+        tributeTicks?: number;
+      };
+    };
+    if (typeof warId !== 'number') return reply.code(400).send({ error: 'warId required' });
+    if (!terms) return reply.code(400).send({ error: 'terms required' });
+
+    const war = await prisma.war.findUnique({ where: { id: warId } });
+    if (!war) return reply.code(404).send({ error: 'War not found' });
+    if (war.status === 'ended') return reply.code(400).send({ error: 'War already ended' });
+
+    // Validate raid wars: no territory cessions.
+    const cessions = terms.territoryCessions ?? [];
+    if (war.type === 'raid' && cessions.length > 0) {
+      return reply.code(400).send({ error: 'Raid wars may not include territory cessions' });
+    }
+
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    const currentTick = meta?.tick ?? 0;
+
+    await prisma.$transaction(async (tx) => {
+      // Apply territory cessions.
+      for (const c of cessions) {
+        await tx.territoryState.update({
+          where: { id: c.territoryId },
+          data: {
+            ownerId: c.toNationId,
+            ownershipShock: 0.50, // [PLACEHOLDER]
+            acquiredTick: currentTick,
+          },
+        });
+        const [fromN, toN] = await Promise.all([
+          tx.nation.findUnique({ where: { id: c.fromNationId }, select: { name: true } }),
+          tx.nation.findUnique({ where: { id: c.toNationId }, select: { name: true } }),
+        ]);
+        await tx.eventLog.create({
+          data: {
+            tick: currentTick,
+            message: `[admin] ${toN?.name ?? c.toNationId} received ${c.territoryId} from ${fromN?.name ?? c.fromNationId} via force-peace.`,
+          },
+        });
+      }
+
+      // Return all occupied territories not in cession list.
+      const cedingIds = new Set(cessions.map((c) => c.territoryId));
+      const occupied = (war.occupiedTerritories as Array<{ territoryId: string; occupyingNationId: string }>) ?? [];
+      for (const occ of occupied) {
+        if (cedingIds.has(occ.territoryId)) continue;
+        const returnToId = occ.occupyingNationId === war.attackerId ? war.defenderId : war.attackerId;
+        await tx.territoryState.update({
+          where: { id: occ.territoryId },
+          data: { ownerId: returnToId },
+        });
+      }
+
+      // Tribute treaty if specified.
+      const tributeWealth = terms.tributeWealth ?? 0;
+      const tributeTicks = terms.tributeTicks ?? 0;
+      if (tributeWealth > 0 && tributeTicks > 0) {
+        const proposal = await tx.proposal.create({
+          data: {
+            proposerId: war.attackerId,
+            targetId: war.defenderId,
+            status: 'accepted',
+            termTicks: tributeTicks,
+            proposerCollateral: 0,
+            targetCollateral: 0,
+            tickProposed: currentTick,
+            expiresAtTick: currentTick,
+          },
+        });
+        await tx.proposalClause.create({
+          data: {
+            proposalId: proposal.id,
+            type: 'tribute',
+            collateral: 0,
+            payload: { amount: tributeWealth, fromNationId: war.attackerId, toNationId: war.defenderId } as Prisma.InputJsonValue,
+          },
+        });
+        const treaty = await tx.treaty.create({
+          data: {
+            proposalId: proposal.id,
+            status: 'active',
+            termTicks: tributeTicks,
+            tickStarted: currentTick,
+            tickEnds: currentTick + tributeTicks,
+            totalCollateral: 0,
+          },
+        });
+        for (const nationId of [war.attackerId, war.defenderId]) {
+          await tx.treatyParty.create({ data: { treatyId: treaty.id, nationId, collateralDeposited: 0 } });
+        }
+        await tx.treatyClause.create({
+          data: {
+            treatyId: treaty.id,
+            clauseIndex: 0,
+            type: 'tribute',
+            collateral: 0,
+            payload: { amount: tributeWealth, fromNationId: war.attackerId, toNationId: war.defenderId } as Prisma.InputJsonValue,
+            clauseStatus: 'active',
+          },
+        });
+      }
+
+      // Trust bonus for peaceful end.
+      for (const nationId of [war.attackerId, war.defenderId]) {
+        await tx.nation.update({
+          where: { id: nationId },
+          data: { trust: { increment: 5 } }, // PEACE_TRUST_BONUS [PLACEHOLDER]
+        });
+      }
+
+      // End the war.
+      await tx.war.update({
+        where: { id: warId },
+        data: { status: 'ended', endTick: currentTick, occupiedTerritories: [], pendingPeaceDeal: Prisma.JsonNull },
+      });
+
+      const [attackerN, defenderN] = await Promise.all([
+        tx.nation.findUnique({ where: { id: war.attackerId }, select: { name: true } }),
+        tx.nation.findUnique({ where: { id: war.defenderId }, select: { name: true } }),
+      ]);
+      await tx.eventLog.create({
+        data: {
+          tick: currentTick,
+          message: `[admin] Force-peace: ${attackerN?.name ?? war.attackerId} and ${defenderN?.name ?? war.defenderId} signed peace (${terms.warType ?? 'negotiated'}).`,
+        },
+      });
+    });
+
+    return { ok: true };
+  });
+
   // POST /api/admin/objective/:id/force-meet — force an objective clause to 'met' status
   // Used for testing without building the real infrastructure.
   // curl -X POST http://localhost:3001/api/admin/objective/1/force-meet -H "X-Admin-Key: dev-only-insecure-key"
