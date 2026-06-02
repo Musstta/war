@@ -864,97 +864,7 @@ const start = async () => {
     return { ok: true };
   });
 
-  // POST /api/admin/nation/:id/set-tier — force-set inactivity tier (for testing degradation)
-  app.post('/api/admin/nation/:id/set-tier', async (request, reply) => {
-    if (!requireAdminKey(request, reply)) return;
-    const { id } = request.params as { id: string };
-    const { tier } = request.body as { tier?: string };
-    const validTiers = ['active', 'dormant', 'autopilot', 'abandoned'];
-    if (!tier || !validTiers.includes(tier)) {
-      return reply.code(400).send({ error: `tier must be one of: ${validTiers.join(', ')}` });
-    }
-
-    // When setting Dormant: trigger treaty degradation — escrow inactive party's collateral
-    // and start active partner's refund. Mirror of the design doc §8.5 mechanic.
-    if (tier === 'dormant') {
-      const nation = await prisma.nation.findUnique({ where: { id } });
-      if (!nation) return reply.code(404).send({ error: 'Nation not found' });
-      const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
-      const currentTick = meta?.tick ?? 0;
-
-      const activeTreaties = await prisma.treaty.findMany({
-        where: { status: 'active', parties: { some: { nationId: id } } },
-        include: { parties: true },
-      });
-
-      for (const treaty of activeTreaties) {
-        const inactiveParty = treaty.parties.find((p) => p.nationId === id)!;
-        const activeParty   = treaty.parties.find((p) => p.nationId !== id)!;
-
-        // Move inactive party's collateral to escrow.
-        await prisma.treatyParty.update({
-          where: { id: inactiveParty.id },
-          data: { escrowAmount: inactiveParty.collateralDeposited, escrowStartTick: currentTick, collateralDeposited: 0 },
-        });
-
-        // Begin active partner's refund over DEGRADATION_REFUND_TICKS.
-        await prisma.treatyParty.update({
-          where: { id: activeParty.id },
-          data: { refundRemaining: activeParty.collateralDeposited, refundStartTick: currentTick },
-        });
-
-        // Degrade treaty status.
-        await prisma.treaty.update({ where: { id: treaty.id }, data: { status: 'degraded' } });
-
-        await prisma.eventLog.create({
-          data: {
-            tick: currentTick,
-            message: `${nation.name} went Dormant. Treaty #${treaty.id} degraded. Active partner's collateral refund started.`,
-          },
-        });
-      }
-    }
-
-    // If returning to active from dormant: auto-upgrade degraded treaties, apply escrow skim.
-    if (tier === 'active') {
-      const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
-      const currentTick = meta?.tick ?? 0;
-      const { ESCROW_SKIM_RATE } = await import('@war/engine');
-
-      const degradedTreaties = await prisma.treaty.findMany({
-        where: { status: 'degraded', parties: { some: { nationId: id } } },
-        include: { parties: true },
-      });
-
-      for (const treaty of degradedTreaties) {
-        const returningParty = treaty.parties.find((p) => p.nationId === id)!;
-        const escrow = returningParty.escrowAmount;
-        const skim = escrow * ESCROW_SKIM_RATE;
-        const refund = escrow - skim;
-
-        if (refund > 0) {
-          await prisma.nation.update({ where: { id }, data: { wealthStock: { increment: refund } } });
-        }
-
-        await prisma.treatyParty.update({
-          where: { id: returningParty.id },
-          data: { escrowAmount: 0, escrowStartTick: null, collateralDeposited: refund },
-        });
-
-        await prisma.treaty.update({ where: { id: treaty.id }, data: { status: 'active' } });
-
-        await prisma.eventLog.create({
-          data: {
-            tick: currentTick,
-            message: `Nation returned from Dormant. Treaty #${treaty.id} upgraded. Escrow skim: ${skim.toFixed(2)} Wealth.`,
-          },
-        });
-      }
-    }
-
-    await prisma.nation.update({ where: { id }, data: { inactivityTier: tier } });
-    return { ok: true, tier };
-  });
+  // set-tier moved to §Activity tier admin endpoints below (consolidated with activityTier support).
 
   // POST /api/admin/treaty/:id/force-break — admin force-breaks a treaty (no Trust penalty)
   app.post('/api/admin/treaty/:id/force-break', async (request, reply) => {
@@ -1245,14 +1155,46 @@ const start = async () => {
     const nation = await prisma.nation.findUnique({ where: { id } });
     if (!nation) return reply.code(404).send({ error: 'Nation not found' });
 
-    const updateData: Record<string, unknown> = { activityTier: tier };
+    const updateData: Record<string, unknown> = { activityTier: tier, inactivityTier: tier };
     if (tier === 'active') updateData['lastActiveAt'] = new Date();
     if (tier === 'abandoned' && !(nation as any).abandonedAt) updateData['abandonedAt'] = new Date();
 
     await prisma.nation.update({ where: { id }, data: updateData as any });
     const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    const currentTick = meta?.tick ?? 0;
+
+    // Dormant: trigger treaty degradation.
+    if (tier === 'dormant') {
+      const activeTreaties = await prisma.treaty.findMany({
+        where: { status: 'active', parties: { some: { nationId: id } } },
+        include: { parties: true },
+      });
+      for (const treaty of activeTreaties) {
+        const inactiveParty = treaty.parties.find((p) => p.nationId === id)!;
+        const activeParty   = treaty.parties.find((p) => p.nationId !== id)!;
+        await prisma.treatyParty.update({ where: { id: inactiveParty.id }, data: { escrowAmount: inactiveParty.collateralDeposited, escrowStartTick: currentTick, collateralDeposited: 0 } });
+        await prisma.treatyParty.update({ where: { id: activeParty.id }, data: { refundRemaining: activeParty.collateralDeposited, refundStartTick: currentTick } });
+        await prisma.treaty.update({ where: { id: treaty.id }, data: { status: 'degraded' } });
+        await prisma.eventLog.create({ data: { tick: currentTick, message: `${nation.name} went Dormant. Treaty #${treaty.id} degraded.` } });
+      }
+    }
+    // Active: upgrade degraded treaties, apply escrow skim.
+    if (tier === 'active') {
+      const { ESCROW_SKIM_RATE } = await import('@war/engine');
+      const degradedTreaties = await prisma.treaty.findMany({ where: { status: 'degraded', parties: { some: { nationId: id } } }, include: { parties: true } });
+      for (const treaty of degradedTreaties) {
+        const returningParty = treaty.parties.find((p) => p.nationId === id)!;
+        const escrow = returningParty.escrowAmount;
+        const refund = escrow - escrow * ESCROW_SKIM_RATE;
+        if (refund > 0) await prisma.nation.update({ where: { id }, data: { wealthStock: { increment: refund } } });
+        await prisma.treatyParty.update({ where: { id: returningParty.id }, data: { escrowAmount: 0, escrowStartTick: null, collateralDeposited: refund } });
+        await prisma.treaty.update({ where: { id: treaty.id }, data: { status: 'active' } });
+        await prisma.eventLog.create({ data: { tick: currentTick, message: `${nation.name} returned from Dormant. Treaty #${treaty.id} upgraded.` } });
+      }
+    }
+
     await prisma.eventLog.create({
-      data: { tick: meta?.tick ?? 0, message: `[admin] ${nation.name} activity tier force-set to ${tier}.` },
+      data: { tick: currentTick, message: `[admin] ${nation.name} activity tier force-set to ${tier}.` },
     });
     return { ok: true, nationId: id, tier };
   });
