@@ -83,6 +83,7 @@ export function buildWorldState(
       capitalTerritoryId: init.startingTerritoryIds[0] ?? null,
       inactivityTier: 'active',
       lastBrokenPromiseTick: null,
+      debtBalance: 0,
     };
   }
 

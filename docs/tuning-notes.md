@@ -208,7 +208,24 @@ All weights need validation once the full action set (war wins, treaty completio
 
 ---
 
-## War insolvency ramp — known gap
+## Insolvency constants (Phase 5 v0.16 — all [PLACEHOLDER])
+
+All in `engine/src/war.ts` and `engine/src/culture.ts`.
+
+**`DEBT_RECOVERY_SKIM_RATE = 0.20`** (war.ts)
+Fraction of incoming wealth each tick applied toward debt repayment during recovery (wealthStock ≥ 0 but debtBalance > 0). Target: a nation that went −30 Wealth deep should recover in ~5–8 ticks at normal production. At 5 Wealth/tick income: skim = 1/tick → 30 ticks to clear −30 debt. That's too slow — production rates need to be considered alongside the debt depth. If typical debt is −10 to −20 (2–3 ticks at 8/tick tribute), 0.20 × 5 = 1/tick takes 10–20 ticks. Consider raising to 0.30–0.50 once real play data shows typical insolvency depth and income rates.
+
+**`INSOLVENCY_GENERAL_UNREST_PER_TICK = 0.02`** (culture.ts)
+Applied to all territories when wealthStock < 0, regardless of war status. Separates "broke" (general) from "broke while at war" (adds WAR_INSOLVENCY_UNREST_PER_TICK = 0.03 on top). Total insolvency + war pressure = 0.05/tick. At UNREST_DRIFT_RATE = 0.10, effective equilibrium rise = 0.05 → drift adds 0.005/tick. From base equilibrium ~0.02, revolt threshold is 0.80 — at 0.05 added, the territory would need ~156 ticks to reach 0.80 by drift alone (from 0). This is intentionally slow — insolvency is a pressure signal, not an instant revolt trigger. War overextension compounds.
+
+**Mandate surcharge threshold** (`cost >= 2` in `/api/action` route)
+The +1 Mandate surcharge on actions costing 2+ while insolvent (wealthStock < 0 or debtBalance > 0) is a first-pass guess. Revisit if this makes diplomacy during war too punishing — `propose_treaty` (1 Mandate) is exempt, so basic diplomacy is unaffected. `attack_territory` (2 → 3 Mandate), `declare_war` (3 → 4), `build_port` (2 → 3) are all surcharge-eligible. The threshold could be raised to cost >= 3 to exempt `attack_territory` and `build_port` if war-fighting proves too expensive.
+
+---
+
+## War insolvency ramp — resolved (v0.16)
+
+Previously documented as unreachable because tribute and upkeep were clamped at 0. Fixed in v0.16 by removing all `Math.max(0, ...)` floors on wealth deductions. Wealth now goes genuinely negative; the `wealthStock < 0` insolvency check fires correctly. `debtBalance` tracks cumulative debt. Recovery skim reduces debtBalance over subsequent ticks.
 
 `WAR_INSOLVENCY_UNREST_PER_TICK` fires when `nation.stockpiles.wealth < 0`. However, both tribute payments (`Math.min(amount, from.stockpiles.wealth)`) and upkeep (`Math.max(0, wealth - upkeep)`) clamp wealth at 0 — so the condition `wealth < 0` is structurally unreachable under the current engine. The `war-exhaustion` harness scenario documents this: a nation with tribute obligations + army upkeep drains to 0 but never crosses into negative. Resolution options: (a) allow wealth to go genuinely negative before end-of-tick clamp, (b) replace the `< 0` check with `< some_floor`, or (c) track "debt" separately. Deferred to post-Phase 5 tuning pass.
 

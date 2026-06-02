@@ -1,6 +1,6 @@
 {
   "name": "war-exhaustion",
-  "description": "Costa Rica declares war on Nicaragua at T1. Nicaragua has a pre-existing tribute obligation to Honduras of 8 Wealth/tick — signed at T1. Nicaragua's production (~5 wealth/tick) cannot cover both tribute and army upkeep, so its wealth stays at 0 every tick. Note: WAR_INSOLVENCY_UNREST_PER_TICK fires when wealthStock < 0; current engine payment logic clamps at 0 rather than going negative, so the insolvency ramp does not trigger in this scenario [known gap — deferred]. The scenario validates war under financial stress: wealth pinned at floor, army degrading over time.",
+  "description": "Costa Rica declares war on Nicaragua at T1. Nicaragua has a pre-existing tribute obligation to Honduras of 8 Wealth/tick — signed at T1. Nicaragua's production (~5 wealth/tick) cannot cover tribute (8/tick) + army upkeep (50 × 0.05 = 2.5/tick), so its wealth goes genuinely negative each tick. Expected: Nicaragua hits insolvency at T1 (WAR_INSOLVENCY_UNREST_PER_TICK +0.03/tick fires), INSOLVENCY_GENERAL_UNREST_PER_TICK (+0.02/tick) also fires, insolvencyPressure appears as a named component in the territory breakdown, equilibrium climbs toward revolt threshold over 15 ticks.",
   "ticks": 15,
   "rngSeed": 42,
   "world": {

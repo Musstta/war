@@ -54,6 +54,8 @@ export interface UnrestCauses {
   militaryBonus: number;
   /** Pressure from active treaty clauses that culturally clash with this territory's traits. */
   treatyCulturalClash: number;
+  /** General insolvency pressure when wealthStock < 0 (outside war — war path uses warEquilibriumAdj). */
+  insolvencyPressure: number;
   /** Clamped sum [0, 1]. This is the target unrest asymptotes toward. */
   equilibrium: number;
 }
@@ -147,6 +149,13 @@ export interface Nation {
   inactivityTier: string;
   /** Tick of the last broken-promise event; gates passive Trust recovery. null = never broken. */
   lastBrokenPromiseTick: number | null;
+  /**
+   * Cumulative wealth debt accrued while wealthStock < 0.
+   * During insolvency: debtBalance grows each tick.
+   * During recovery (wealthStock >= 0 but debtBalance > 0): incoming wealth applies a skim
+   * toward debtBalance until it reaches 0. Insolvent = wealthStock < 0 || debtBalance > 0.
+   */
+  debtBalance: number;
 }
 
 export interface EventLogEntry {

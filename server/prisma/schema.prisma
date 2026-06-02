@@ -33,6 +33,8 @@ model Nation {
   inactivityTier     String  @default("active")
   // Tick of the last broken-promise event, for passive Trust recovery gating.
   lastBrokenPromiseTick Int?
+  // Cumulative debt from insolvency (wealthStock < 0). Cleared via recovery skim. [PLACEHOLDER]
+  debtBalance           Float @default(0)
 
   territories    TerritoryState[]
   actions        QueuedAction[]

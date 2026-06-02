@@ -18,7 +18,7 @@ const CONSTRUCTION_NAMES: Record<string, string> = {
 };
 
 
-const CAUSE_LABELS: Record<keyof UnrestCauses, string> = {
+const CAUSE_LABELS: Partial<Record<keyof UnrestCauses, string>> = {
   base: 'Base floor',
   compatibilityPressure: 'Cultural clash',
   distancePressure: 'Distance from capital',
@@ -27,6 +27,8 @@ const CAUSE_LABELS: Record<keyof UnrestCauses, string> = {
   ownershipShock: 'Conquest shock',
   recentConquestPressure: 'Rapid expansion',
   militaryBonus: 'Military presence',
+  treatyCulturalClash: 'Treaty culture clash',
+  insolvencyPressure: 'Insolvency pressure',
   equilibrium: 'Equilibrium',
 };
 
@@ -58,7 +60,7 @@ function UnrestPanel({ unrest, causes }: { unrest: number; causes: UnrestCauses 
   const causeKeys: (keyof UnrestCauses)[] = [
     'base', 'compatibilityPressure', 'distancePressure',
     'infrastructureBonus', 'overexpansionPressure', 'ownershipShock',
-    'recentConquestPressure', 'militaryBonus',
+    'recentConquestPressure', 'militaryBonus', 'treatyCulturalClash', 'insolvencyPressure',
   ];
   return (
     <div style={{ marginTop: '0.5rem', padding: '0.35rem 0.4rem', background: '#0d0d1a', borderRadius: 3 }}>
@@ -265,16 +267,34 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
       )}
 
       {/* Stockpiles */}
-      {isOwn && myStockpiles && (
-        <div style={{ marginTop: '0.75rem', padding: '0.4rem 0.5rem', background: '#0d0d1a', borderRadius: 3 }}>
-          <div style={{ fontSize: '0.7rem', color: '#555', marginBottom: '0.25rem', letterSpacing: '0.05em' }}>STOCKPILES</div>
-          <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.8rem' }}>
-            <span><span style={{ color: '#555' }}>Pop </span><span style={{ color: '#ccc' }}>{Math.floor(myStockpiles.population)}</span></span>
-            <span><span style={{ color: '#555' }}>Ind </span><span style={{ color: '#f0a500' }}>{Math.floor(myStockpiles.industry)}</span></span>
-            <span><span style={{ color: '#555' }}>Wlth </span><span style={{ color: '#ccc' }}>{Math.floor(myStockpiles.wealth)}</span></span>
+      {isOwn && myStockpiles && (() => {
+        const myNation = world.nations[world.myNationId];
+        const isInsolvent = myNation?.isInsolvent ?? false;
+        const debtBalance = myNation?.debtBalance ?? 0;
+        const wealthNeg = myStockpiles.wealth < 0;
+        return (
+          <div style={{ marginTop: '0.75rem', padding: '0.4rem 0.5rem', background: '#0d0d1a', borderRadius: 3 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+              <span style={{ fontSize: '0.7rem', color: '#555', letterSpacing: '0.05em' }}>STOCKPILES</span>
+              {isInsolvent && (
+                <span style={{ fontSize: '0.65rem', color: '#ff4444', background: '#2a0000', border: '1px solid #7a0000', borderRadius: 2, padding: '0.05rem 0.3rem', letterSpacing: '0.08em' }}>
+                  INSOLVENT
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.8rem' }}>
+              <span><span style={{ color: '#555' }}>Pop </span><span style={{ color: '#ccc' }}>{Math.floor(myStockpiles.population)}</span></span>
+              <span><span style={{ color: '#555' }}>Ind </span><span style={{ color: '#f0a500' }}>{Math.floor(myStockpiles.industry)}</span></span>
+              <span><span style={{ color: '#555' }}>Wlth </span><span style={{ color: wealthNeg ? '#ff4444' : '#ccc' }}>{myStockpiles.wealth.toFixed(1)}</span></span>
+            </div>
+            {!wealthNeg && debtBalance > 0 && (
+              <div style={{ marginTop: '0.2rem', fontSize: '0.72rem', color: '#f0a500' }}>
+                Debt: {debtBalance.toFixed(1)} Wealth remaining
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Build actions */}
       {isOwn && (

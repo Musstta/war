@@ -69,6 +69,7 @@ export async function loadWorldState(
       capitalTerritoryId: n.capitalTerritoryId ?? null,
       inactivityTier: n.inactivityTier,
       lastBrokenPromiseTick: n.lastBrokenPromiseTick ?? null,
+      debtBalance: (n as any).debtBalance ?? 0,
     };
   }
 
@@ -238,6 +239,7 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         capitalTerritoryId: nation.capitalTerritoryId,
         inactivityTier: nation.inactivityTier,
         lastBrokenPromiseTick: nation.lastBrokenPromiseTick,
+        debtBalance: nation.debtBalance,
       },
     });
   }

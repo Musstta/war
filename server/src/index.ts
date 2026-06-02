@@ -211,6 +211,8 @@ const start = async () => {
       if (n.id === nationId) {
         entry.stockpiles = { population: n.popStock, industry: n.indStock, wealth: n.wealthStock };
         entry.armySize = n.armySize;
+        entry.debtBalance = (n as any).debtBalance ?? 0;
+        entry.isInsolvent = n.wealthStock < 0 || ((n as any).debtBalance ?? 0) > 0;
       }
       nations[n.id] = entry;
     }
@@ -276,9 +278,13 @@ const start = async () => {
     if (result.ok === 'error') return reply.code(result.status).send({ error: result.reason });
 
     // result.ok === 'ready' — normal path: mandate check then queue
-    const { cost, finalPayload } = result;
+    let { cost, finalPayload } = result;
+    // Insolvency mandate surcharge: +1 Mandate on actions costing 2+ while wealthStock < 0 or debtBalance > 0.
+    // [PLACEHOLDER] revisit if this makes diplomacy during war too punishing.
+    const isInsolvent = nation.wealthStock < 0 || (nation as any).debtBalance > 0;
+    if (isInsolvent && cost >= 2) cost += 1;
     if (nation.mandateUsed + cost > myBudget) {
-      return reply.code(400).send({ error: 'Insufficient mandates' });
+      return reply.code(400).send({ error: isInsolvent && cost > result.cost ? 'Insufficient mandates (insolvency surcharge +1 Mandate applied)' : 'Insufficient mandates' });
     }
 
     await handler.queue(ctx, cost, finalPayload);

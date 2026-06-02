@@ -111,6 +111,7 @@ export interface NationDiplomacySnapshot {
   trust: number;
   inactivityTier: string;
   wealthStock: number;
+  debtBalance: number;
 }
 
 export interface ObjectiveSnapshot {

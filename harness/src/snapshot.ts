@@ -97,6 +97,7 @@ export function captureSnapshot(world: WorldState, tick: number, defs: Territory
         trust: n.trust,
         inactivityTier: n.inactivityTier,
         wealthStock: n.stockpiles.wealth,
+        debtBalance: n.debtBalance,
       }]),
     ),
     treaties: world.treaties.map((t) => ({

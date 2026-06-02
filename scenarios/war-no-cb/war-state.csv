@@ -1,0 +1,13 @@
+tick,war_id,attacker_id,defender_id,type,has_casus_belli,status,start_tick,occupied_count
+1,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0
+2,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0
+3,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0
+4,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0
+5,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0
+6,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0
+7,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0
+8,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0
+9,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0
+10,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0
+11,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0
+12,1,nation_costa_rica,nation_nicaragua,conquest,0,active,0,0

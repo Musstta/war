@@ -295,12 +295,12 @@ export function generateCSVs(result: RunResult, outputDir: string): void {
     writeFileSync(join(outputDir, 'treaty-metrics.csv'), tmRows.join('\n') + '\n');
   }
 
-  // nation-diplomacy.csv — trust + wealth per nation per tick
-  const ndHeader = 'tick,nation_id,trust,inactivity_tier,wealth_stock';
+  // nation-diplomacy.csv — trust + wealth + debt per nation per tick
+  const ndHeader = 'tick,nation_id,trust,inactivity_tier,wealth_stock,debt_balance';
   const ndRows: string[] = [ndHeader];
   for (const snap of snapshots) {
     for (const [nid, ns] of Object.entries(snap.diplomacy.nationState)) {
-      ndRows.push([snap.tick, nid, ns.trust.toFixed(3), ns.inactivityTier, ns.wealthStock.toFixed(2)].join(','));
+      ndRows.push([snap.tick, nid, ns.trust.toFixed(3), ns.inactivityTier, ns.wealthStock.toFixed(2), ns.debtBalance.toFixed(2)].join(','));
     }
   }
   writeFileSync(join(outputDir, 'nation-diplomacy.csv'), ndRows.join('\n') + '\n');

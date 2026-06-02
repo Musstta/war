@@ -1,0 +1,8 @@
+tick,war_id,attacker_id,defender_id,type,has_casus_belli,status,start_tick,occupied_count
+2,1,nation_guatemala,nation_costa_rica,conquest,1,active,1,0
+3,1,nation_guatemala,nation_costa_rica,conquest,1,active,1,0
+4,1,nation_guatemala,nation_costa_rica,conquest,1,active,1,0
+5,1,nation_guatemala,nation_costa_rica,conquest,1,active,1,0
+6,1,nation_guatemala,nation_costa_rica,conquest,1,active,1,0
+7,1,nation_guatemala,nation_costa_rica,conquest,1,active,1,0
+8,1,nation_guatemala,nation_costa_rica,conquest,1,active,1,0

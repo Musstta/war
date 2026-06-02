@@ -28,6 +28,8 @@ export interface UnrestCauses {
   ownershipShock: number;
   recentConquestPressure: number;
   militaryBonus: number;
+  treatyCulturalClash?: number;
+  insolvencyPressure?: number;
   equilibrium: number;
 }
 
@@ -70,6 +72,8 @@ export interface NationView {
   // present only for own nation
   stockpiles?: { population: number; industry: number; wealth: number };
   armySize?: number;
+  debtBalance?: number;
+  isInsolvent?: boolean;
 }
 
 export interface WorldView {

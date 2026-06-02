@@ -92,6 +92,13 @@ export const RECENT_ACQUISITION_WINDOW = 12;
 /** Unrest added per unit of rapid-expansion weight (summed across recently acquired territories). [PLACEHOLDER] */
 export const RECENT_CONQUEST_PRESSURE_PER_TERRITORY = 0.06;
 
+/**
+ * General insolvency unrest pressure applied to all territories when wealthStock < 0,
+ * even outside war. Separate from WAR_INSOLVENCY_UNREST_PER_TICK (which is war-gated).
+ * Surfaces as a named component in UnrestCauses for legibility. [PLACEHOLDER]
+ */
+export const INSOLVENCY_GENERAL_UNREST_PER_TICK = 0.02;
+
 // ── Infrastructure investment ─────────────────────────────────────────────────
 // Each built structure reduces the territory's unrest equilibrium.
 // Roads = integration backbone (largest bonus); ports = economic link; forts = security presence.
@@ -296,7 +303,8 @@ export function computeUnrestEquilibrium(
   ownershipShock: number,
   recentAcquisitionCount: number,
   treatyCulturalClash = 0,
-  militaryBonus = 0,   // negative = happier; activated by War sub-phase for Militaristic territories
+  militaryBonus = 0,        // negative = happier; activated by War sub-phase for Militaristic territories
+  insolvencyPressure = 0,   // general insolvency pressure (wealthStock < 0, any context)
 ): UnrestCauses {
   const base = BASE_UNREST_FLOOR;
 
@@ -320,7 +328,7 @@ export function computeUnrestEquilibrium(
   const equilibrium = Math.max(0, Math.min(1,
     base + compatibilityPressure + distancePressure + infrastructureBonus +
     overexpansionPressure + ownershipShock + recentConquestPressure + militaryBonus +
-    treatyCulturalClash,
+    treatyCulturalClash + insolvencyPressure,
   ));
 
   return {
@@ -333,6 +341,7 @@ export function computeUnrestEquilibrium(
     recentConquestPressure,
     militaryBonus,
     treatyCulturalClash,
+    insolvencyPressure,
     equilibrium,
   };
 }

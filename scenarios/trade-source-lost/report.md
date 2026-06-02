@@ -39,6 +39,7 @@
 | Tick | Event |
 |------|-------|
 | T5 | Trade clause degraded: treaty #1 clause 1 — guatemala no longer owned by sender. |
+| T7 | Guatemala has become insolvent (wealth -2.5). |
 | T12 | Treaty #1 between Costa Rica and Guatemala has completed its term. Both parties gain Trust. |
 
 ---
@@ -71,9 +72,9 @@
 | T4 | 53.0 | 5.0 | 12.0 | 2.0 | 22.0 |
 | T5 | 57.5 | 2.5 | 17.5 | 2.5 | 27.5 |
 | T6 | 62.0 | 0.0 | 23.0 | 3.0 | 33.0 |
-| T8 | 71.0 | 0.0 | 34.0 | 4.0 | 44.0 |
-| T10 | 80.0 | 0.0 | 45.0 | 5.0 | 55.0 |
-| T12 | 89.0 | 0.0 | 56.0 | 6.0 | 66.0 |
+| T8 | 71.0 | -5.0 | 34.0 | 4.0 | 44.0 |
+| T10 | 80.0 | -10.0 | 45.0 | 5.0 | 55.0 |
+| T12 | 89.0 | -15.0 | 56.0 | 6.0 | 66.0 |
 
 ### Treaty Status Timeline
 

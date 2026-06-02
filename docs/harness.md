@@ -175,7 +175,7 @@ total_collateral, collateral_a, collateral_b, escrow_a, escrow_b, refund_a, refu
 
 ### `nation-diplomacy.csv`
 
-One row per nation per tick. Columns: `tick, nation_id, trust, inactivity_tier, wealth_stock`. Always written, even when there are no treaties — useful for verifying Trust stays at baseline in culture-only scenarios.
+One row per nation per tick. Columns: `tick, nation_id, trust, inactivity_tier, wealth_stock, debt_balance`. Always written. `wealth_stock` may be negative when insolvency is active. `debt_balance` tracks cumulative debt accrued while insolvent; non-zero during recovery phase.
 
 ### `trade-flows.csv` *(only when trade clauses exist)*
 
@@ -290,5 +290,5 @@ To test a specific mechanism in isolation, use `territoryOverrides` to set a ter
 | `war-conquest.json` | CR declares war on Nicaragua (CB) at T1; attacks each tick; L0 fort; peace deal at T8 with nicaragua ceded | Siege completes in ≤2 ticks (L0 = 1 tick needed); territory captured with ownershipShock=0.50; peace deal executes — ownership transfers, Trust +5 both parties, war ends? |
 | `war-fortified.json` | Same war but nicaragua has fortificationLevel=2 (requires 3 consecutive wins) | siegeProgress increments 1/3 → 2/3 → 3/3 across consecutive winning ticks; territory not captured prematurely; army losses accumulate on both sides? |
 | `war-no-cb.json` | CR declares war on Nicaragua **without** CB; costa_rica territory has militaristic=−0.6, expansionist=−0.5 | CR Trust −10 at declaration; Peaceful+Isolationist territories show elevated equilibrium (+0.05) for 5 ticks (NO_CB_UNREST_SPIKE window)? |
-| `war-exhaustion.json` | CR declares war on Nicaragua; Nicaragua owes 8 Wealth/tick tribute to Honduras; Nicaragua wealth pinned at 0 | Wealth floor behaviour documented: tribute + upkeep clamp at 0, insolvency ramp (`< 0` check) structurally unreachable [known gap in tuning-notes]. Validates: war under financial stress, army degrading. |
+| `war-exhaustion.json` | CR declares war on Nicaragua; Nicaragua owes 8 Wealth/tick tribute to Honduras (5/tick production, 2.5/tick upkeep) | Nicaragua enters insolvency at T1 (wealth < 0); `WAR_INSOLVENCY_UNREST_PER_TICK` (+0.03) and `INSOLVENCY_GENERAL_UNREST_PER_TICK` (+0.02) both fire each tick; `insolvencyPressure` visible as named component; equilibrium climbs over 15 ticks. `debt_balance` column in `nation-diplomacy.csv` tracks cumulative debt. |
 | `war-defense-pact.json` | CR + Honduras sign defense_pact at T1; Guatemala declares war on CR at T2 | War inserted into world.wars at T2; event log "Guatemala declared war on Costa Rica." emitted. Note: Honduras auto-defense is a server-side effect (fires in `runTick` post-engine) — not observable in the pure-engine harness. Validates: engine-side war state, event log, treaty survives alongside war. |

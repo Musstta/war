@@ -51,7 +51,9 @@ import {
   PEACE_DECLINE_EXHAUSTION_BUMP,
   PEACE_DECLINE_EXHAUSTION_TICKS,
   PEACE_TRUST_BONUS,
+  DEBT_RECOVERY_SKIM_RATE,
 } from './war';
+import { INSOLVENCY_GENERAL_UNREST_PER_TICK } from './culture';
 import type { PeaceDeal } from './types';
 
 // ── Placeholder constants ─────────────────────────────────────────────────────
@@ -655,15 +657,14 @@ export function resolveTick(
     for (const treaty of draft.treaties) {
       if (!isTreatyOperational(treaty)) continue;
 
-      // Tribute transfers fire every tick.
+      // Tribute transfers fire every tick. Full amount deducted — wealth may go negative.
       const transfers = computeTributeTransfers(treaty);
       for (const { fromId, toId, amount } of transfers) {
         const from = draft.nations[fromId];
         const to = draft.nations[toId];
         if (!from || !to) continue;
-        const actual = Math.min(amount, from.stockpiles.wealth);
-        from.stockpiles.wealth -= actual;
-        to.stockpiles.wealth += actual;
+        from.stockpiles.wealth -= amount;
+        to.stockpiles.wealth += amount;
       }
 
       // Trade clause flows: deduct from source territory's local stockpile → add to recipient nation.
@@ -942,7 +943,7 @@ export function resolveTick(
       const count = activeTreatyCountByNation[nation.id] ?? 0;
       if (count === 0) continue;
       const fine = count * LOW_TRUST_FINE_PER_TREATY;
-      nation.stockpiles.wealth = Math.max(0, nation.stockpiles.wealth - fine);
+      nation.stockpiles.wealth -= fine; // wealth may go negative (insolvency)
     }
 
     // 4. Passive Trust recovery toward baseline.
@@ -1020,10 +1021,17 @@ export function resolveTick(
       }
     }
 
-    // Insolvency check: nations whose wealthStock has gone negative.
+    // Insolvency: wealthStock < 0 OR debtBalance > 0 (still in recovery).
+    // warInsolventNations: subset at war (WAR_INSOLVENCY_UNREST_PER_TICK applies).
+    // generalInsolventNations: all insolvent nations (INSOLVENCY_GENERAL_UNREST_PER_TICK applies).
+    const generalInsolventNations = new Set<string>();
     for (const nation of Object.values(draft.nations)) {
-      if (nationAtWar.has(nation.id) && nation.stockpiles.wealth < 0) {
-        warInsolventNations.add(nation.id);
+      const isInsolvent = nation.stockpiles.wealth < 0 || nation.debtBalance > 0;
+      if (isInsolvent) {
+        generalInsolventNations.add(nation.id);
+        if (nationAtWar.has(nation.id)) {
+          warInsolventNations.add(nation.id);
+        }
       }
     }
 
@@ -1052,12 +1060,17 @@ export function resolveTick(
         ? WAR_MILITARISTIC_HAPPINESS_BONUS
         : 0;
 
+      // General insolvency pressure: applies when wealthStock < 0, even outside war.
+      const insolvencyPressure = generalInsolventNations.has(ownerId)
+        ? INSOLVENCY_GENERAL_UNREST_PER_TICK
+        : 0;
+
       const compat = computeCompatibility(t.state.valueTraits, t.def.culturalFamily, nationCulture);
       const causes = computeUnrestEquilibrium(
         compat, hops,
         t.state.hasRoad, t.state.hasPort, t.state.fortificationLevel,
         tcount, t.state.ownershipShock, recentWeight, clashPressure,
-        militaryBonus,
+        militaryBonus, insolvencyPressure,
       );
 
       // War unrest additions (applied directly to equilibrium after computeUnrestEquilibrium).
@@ -1129,6 +1142,8 @@ export function resolveTick(
     }
 
     // Flush all remaining local stock to nation general stockpile.
+    // Track incoming wealth per nation for debt recovery skim calculation.
+    const incomingWealthByNation: Record<string, number> = {};
     for (const t of Object.values(draft.territories)) {
       const oid = t.state.ownerId;
       if (!oid) continue;
@@ -1137,16 +1152,60 @@ export function resolveTick(
       nation.stockpiles.population += t.state.localPopStock;
       nation.stockpiles.industry   += t.state.localIndStock;
       nation.stockpiles.wealth     += t.state.localWltStock;
+      incomingWealthByNation[oid] = (incomingWealthByNation[oid] ?? 0) + t.state.localWltStock;
       // Reset to zero — flush is complete. Production next tick refills.
       t.state.localPopStock = 0;
       t.state.localIndStock = 0;
       t.state.localWltStock = 0;
     }
 
-    // Upkeep paid from nation general Wealth after flush.
+    // Upkeep paid from nation general Wealth after flush. Wealth may go negative (insolvency).
     for (const nation of Object.values(draft.nations)) {
       const upkeep = nation.armySize * UPKEEP_PER_SOLDIER;
-      nation.stockpiles.wealth = Math.max(0, nation.stockpiles.wealth - upkeep);
+      nation.stockpiles.wealth -= upkeep;
+    }
+
+    // ── Insolvency + debt resolution ──────────────────────────────────────────
+    // Runs after all deductions. Three states per nation:
+    //   1. Insolvent entry:  wealthStock < 0, was solvent last tick (debtBalance was 0 pre-tick)
+    //   2. Continuing debt:  wealthStock < 0, debtBalance already > 0
+    //   3. Recovery:         wealthStock >= 0, debtBalance > 0 — skim incoming wealth toward debt
+    //   4. Solvent:          wealthStock >= 0, debtBalance == 0 — no action
+    for (const nation of Object.values(draft.nations)) {
+      const wealth = nation.stockpiles.wealth;
+      const prevDebt = nation.debtBalance;
+
+      if (wealth < 0) {
+        // Nation is actively insolvent this tick.
+        const additionalDebt = Math.abs(wealth);
+        if (prevDebt === 0) {
+          // Just became insolvent.
+          nation.debtBalance = additionalDebt;
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `${nation.name} has become insolvent (wealth ${wealth.toFixed(1)}).`,
+          });
+        } else {
+          // Already in debt — accumulate.
+          nation.debtBalance += additionalDebt;
+        }
+        // wealth stays negative — intentional (insolvency is real)
+      } else if (prevDebt > 0) {
+        // Recovery phase: wealth is non-negative, still carrying debt.
+        const incoming = incomingWealthByNation[nation.id] ?? 0;
+        const skim = Math.floor(incoming * DEBT_RECOVERY_SKIM_RATE);
+        if (skim > 0) {
+          const applied = Math.min(skim, nation.debtBalance);
+          nation.debtBalance = Math.max(0, nation.debtBalance - applied);
+          nation.stockpiles.wealth -= applied; // skim comes off current wealth
+          if (nation.debtBalance === 0) {
+            draft.eventLog.push({
+              tick: world.tick + 1,
+              message: `${nation.name} has cleared its debt.`,
+            });
+          }
+        }
+      }
     }
 
     draft.tick += 1;

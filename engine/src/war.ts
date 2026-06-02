@@ -60,10 +60,17 @@ export const SIEGE_TICKS_BASE = 1;
 export const WAR_OVEREXTENSION_PRESSURE_PER_DIST = 0.02;
 
 /**
- * Unrest ramp added to all territories of an insolvent nation (wealthStock < 0) per tick.
- * Compounds — each tick the nation stays insolvent adds this on top. [PLACEHOLDER]
+ * Unrest ramp added to all territories of an insolvent nation (wealthStock < 0) that is at war.
+ * Fires when warInsolventNations includes the nation. [PLACEHOLDER]
  */
 export const WAR_INSOLVENCY_UNREST_PER_TICK = 0.03;
+
+/**
+ * Fraction of each tick's incoming wealth that is skimmed toward debt repayment
+ * while a nation has debtBalance > 0 but wealthStock >= 0 (recovery phase). [PLACEHOLDER]
+ * Target: a nation −30 Wealth deep recovers in ~5–8 ticks at normal production rates.
+ */
+export const DEBT_RECOVERY_SKIM_RATE = 0.20;
 
 /**
  * Equilibrium reduction for territories owned by a nation at war
