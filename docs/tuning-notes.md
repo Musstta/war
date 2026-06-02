@@ -158,6 +158,14 @@ Observations from running the three seed scenarios (belize-neglect, belize-integ
 
 ---
 
+## Road network vs. local segment
+
+**Current implementation:** `hasRoad` is a per-territory boolean — roads help locally for unrest and integration with no network connectivity requirement. The `build_road_connection` objective clause uses BFS reachability across the road graph, treating roads as a network for that specific mechanic.
+
+This inconsistency is intentional for now — the design doc §13 question ("network or local?") is answered differently by different subsystems pending a formal decision. Revisit when the War phase introduces army movement, which will force a definitive answer: movement speed bonuses either require a connected network or they don't.
+
+---
+
 ## Fast-forward vote (deferred feature)
 
 when all active players check "ready for next tick," the tick fires immediately instead of waiting for midnight. Preserves the persistent-world design as default but lets a synchronously-online group compress time. Build post-Phase 4, post-harness. Needs to handle: who counts as "active" for the vote, what happens to queued actions for absent-but-not-Dormant players, whether the vote requires unanimous or majority. Need to differentiate between if this is possible in prep or only main phase and what the difference is. Differences in phases at the moment are still unrealized, so defer until the full action set and phase structure are specced.
