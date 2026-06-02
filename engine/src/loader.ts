@@ -39,6 +39,9 @@ function initialState(def: TerritoryDef): TerritoryState {
     pendingConstructionType: null,
     ownershipShock: 0,
     acquiredTick: null,
+    localPopStock: 0,
+    localIndStock: 0,
+    localWltStock: 0,
   };
 }
 
@@ -78,6 +81,8 @@ export function buildWorldState(
       trust: 50,
       prestige: 0,
       capitalTerritoryId: init.startingTerritoryIds[0] ?? null,
+      inactivityTier: 'active',
+      lastBrokenPromiseTick: null,
     };
   }
 
@@ -87,5 +92,9 @@ export function buildWorldState(
     territories,
     nations: nationMap,
     eventLog: [],
+    treaties: [],
+    proposals: [],
+    instantTrades: [],
+    tradeRoutes: [],
   };
 }

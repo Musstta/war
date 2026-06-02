@@ -4,6 +4,7 @@ import { LoginForm } from './components/LoginForm';
 import { PhaseBar } from './components/PhaseBar';
 import { GameMap } from './components/GameMap';
 import { InfoPanel } from './components/InfoPanel';
+import { DiplomacyPanel } from './components/DiplomacyPanel';
 
 type AuthState = 'loading' | 'logged-out' | 'logged-in';
 
@@ -14,6 +15,7 @@ export default function App() {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [world, setWorld] = useState<WorldView | null>(null);
   const [selectedTerritoryId, setSelectedTerritoryId] = useState<string | null>(null);
+  const [showDiplomacy, setShowDiplomacy] = useState(false);
   // Territory display names loaded from geojson
   const [defNames, setDefNames] = useState<Record<string, string>>({});
 
@@ -88,18 +90,34 @@ export default function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       <PhaseBar world={world} myName={me.name} onLogout={handleLogout} />
-<div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      {/* Diplomacy toggle button */}
+      <div style={{ position: 'fixed', bottom: '1rem', right: '1rem', zIndex: 100 }}>
+        <button
+          onClick={() => setShowDiplomacy((v) => !v)}
+          style={{
+            background: showDiplomacy ? '#2a4a3a' : '#1a1a2e',
+            border: '1px solid #3a3a6a', color: '#aab', padding: '0.4rem 0.8rem',
+            cursor: 'pointer', fontFamily: 'monospace', fontSize: '0.78rem', borderRadius: '3px',
+          }}
+        >
+          {showDiplomacy ? '✕ Diplomacy' : '🤝 Diplomacy'}
+        </button>
+      </div>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <GameMap
           world={world}
           selectedId={selectedTerritoryId}
           onSelect={setSelectedTerritoryId}
         />
-        <InfoPanel
-          territoryId={selectedTerritoryId}
-          world={world}
-          defNames={defNames}
-          onActionQueued={handleActionQueued}
-        />
+        {showDiplomacy
+          ? <DiplomacyPanel world={world} onActionQueued={handleActionQueued} />
+          : <InfoPanel
+              territoryId={selectedTerritoryId}
+              world={world}
+              defNames={defNames}
+              onActionQueued={handleActionQueued}
+            />
+        }
       </div>
       {world.recentEvents.length > 0 && (
         <div style={{

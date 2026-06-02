@@ -1,0 +1,53 @@
+{
+  "name": "treaty-degradation",
+  "description": "Costa Rica and Guatemala sign a defense_pact at T1, term 20 ticks. At T5 Costa Rica goes Dormant: treaty degrades, active partner (Guatemala) gets collateral refunded over 3 ticks, inactive's collateral goes to escrow. At T15 Costa Rica returns to Active: treaty auto-upgrades, escrowed collateral refunded minus 5% skim. No Trust change for either party throughout.",
+  "ticks": 20,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50, "wealthStock": 50 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50, "wealthStock": 50 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_costa_rica", "nation_guatemala"],
+        "clauses": [
+          { "type": "defense_pact", "collateral": 10 }
+        ],
+        "termTicks": 20,
+        "collateralByParty": {
+          "nation_costa_rica": 10,
+          "nation_guatemala":  10
+        }
+      }
+    },
+    {
+      "tick": 5,
+      "type": "set_nation_tier",
+      "payload": {
+        "nationId": "nation_costa_rica",
+        "tier": "dormant"
+      }
+    },
+    {
+      "tick": 15,
+      "type": "set_nation_tier",
+      "payload": {
+        "nationId": "nation_costa_rica",
+        "tier": "active"
+      }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

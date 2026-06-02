@@ -1,0 +1,47 @@
+{
+  "name": "objective-port",
+  "description": "Variant B (failure path): Costa Rica and Guatemala sign a 10-tick treaty with a build_port objective on costa_rica, responsible party Costa Rica (partyA), deadline 8 ticks. Costa Rica never queues the build. Expected: objective status stays 'pending' until tick 9 (tickStarted=0 + deadlineTicks=8, so deadline=8; failure fires when world.tick+1 > 8, i.e. at tick 8 resolution). Costa Rica Trust −20, collateral (objective clause share) forfeited to Guatemala. Treaty continues to term end. See objective-port-met.json for Variant A (port built at T3, objective met at T5 when construction completes, Trust bonus fires, treaty auto-completes early).",
+  "ticks": 12,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50, "wealthStock": 30 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50, "wealthStock": 20 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_costa_rica", "nation_guatemala"],
+        "clauses": [
+          { "type": "non_aggression", "collateral": 5 },
+          {
+            "type": "objective",
+            "collateral": 10,
+            "payload": {
+              "objectiveType": "build_port",
+              "targetTerritoryId": "costa_rica",
+              "deadlineTicks": 8,
+              "responsibleParty": "partyA"
+            }
+          }
+        ],
+        "termTicks": 10,
+        "collateralByParty": {
+          "nation_costa_rica": 15,
+          "nation_guatemala": 5
+        }
+      }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

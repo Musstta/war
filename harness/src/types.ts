@@ -9,12 +9,16 @@ export type MetricName =
   | 'equilibrium_components_per_territory_per_tick'
   | 'nation_culture_per_tick'
   | 'revolt_events'
-  | 'stockpiles_per_nation_per_tick';
+  | 'stockpiles_per_nation_per_tick'
+  | 'treaty_state_per_tick';
 
 /** Harness-level action types. Engine action types (build_road etc.) pass through to resolveTick. */
 export type ActionType =
   | 'assign_territory'   // harness: directly set ownerId + compute conquest shock
   | 'set_unrest'         // harness: force unrest to a value (testing tool)
+  | 'create_treaty'      // harness: directly place an active treaty into world state
+  | 'break_treaty'       // harness: voluntarily break a treaty (collateral transfer + Trust hit)
+  | 'set_nation_tier'    // harness: set inactivityTier, trigger degradation/upgrade logic
   | 'build_road'
   | 'build_port'
   | 'build_fort';
@@ -22,9 +26,12 @@ export type ActionType =
 export interface ScenarioAction {
   tick: number;
   type: ActionType;
-  /** For assign_territory: { territoryId, ownerId }
-   *  For set_unrest:        { territoryId, value }
-   *  For build_*:           { territoryId } — nationId derived from territory owner */
+  /** For assign_territory:  { territoryId, ownerId }
+   *  For set_unrest:         { territoryId, value }
+   *  For create_treaty:      { id, partyIds, clauses, termTicks, collateralByParty }
+   *  For break_treaty:       { treatyId, breakerNationId }
+   *  For set_nation_tier:    { nationId, tier }
+   *  For build_*:            { territoryId } — nationId derived from territory owner */
   payload: Record<string, unknown>;
 }
 
@@ -34,6 +41,10 @@ export interface ScenarioNation {
   territories: string[];           // starting territory IDs
   armySize?: number;               // default 50
   capitalTerritoryId?: string;     // default = first territory
+  /** Starting stockpile overrides — useful for treaty collateral scenarios. */
+  wealthStock?: number;
+  industryStock?: number;
+  populationStock?: number;
 }
 
 export interface ScenarioWorld {
@@ -79,10 +90,55 @@ export interface NationSnapshot {
   culture: NationCulture | null;
 }
 
+export interface NationDiplomacySnapshot {
+  trust: number;
+  inactivityTier: string;
+  wealthStock: number;
+}
+
+export interface ObjectiveSnapshot {
+  clauseIndex: number;
+  objectiveType: string;
+  status: string;   // 'pending' | 'met' | 'failed' | 'waived'
+  deadlineTicks: number;
+  responsibleParty: string;
+}
+
+export interface TradeClauseState {
+  clauseIndex: number;
+  clauseStatus: string;   // 'active' | 'degraded' | 'breached'
+  missedPayments: number;
+  /** Clause payload fields for flow reconstruction. */
+  resource: string;
+  amount: number;
+  fromNationId: string;
+  toNationId: string;
+  sourceTerritoryId: string;
+}
+
+export interface TreatySnapshot {
+  id: number;
+  status: string;
+  partyIds: [string, string];
+  clauses: string[];        // clause type names
+  termTicks: number;
+  tickEnds: number;
+  totalCollateral: number;
+  collateralByParty: Record<string, number>;
+  escrowAmountByParty: Record<string, number>;
+  refundRemainingByParty: Record<string, number>;
+  objectives: ObjectiveSnapshot[];
+  tradeClauses: TradeClauseState[];
+}
+
 export interface TickSnapshot {
   tick: number;
   territories: Record<string, TerritorySnapshot>;
   nations: Record<string, NationSnapshot>;
+  diplomacy: {
+    nationState: Record<string, NationDiplomacySnapshot>;
+    treaties: TreatySnapshot[];
+  };
   events: Array<{ tick: number; message: string }>;
 }
 

@@ -1,0 +1,53 @@
+{
+  "name": "trade-source-lost",
+  "description": "Costa Rica and Guatemala sign a 12-tick treaty at T1 with a trade clause: Guatemala sends 5 Wealth/tick sourced from the guatemala territory. At T5, the harness reassigns guatemala to Honduras (simulating conquest). Expected: trade clause degrades at T5 — the engine detects that sourceTerritoryId (guatemala) is no longer owned by the sender (Guatemala), marks the clause 'degraded', emits a degradation event, and stops flows from T5 onward. No Trust hit for degradation (only a clause-status change). Treaty remains active for the remaining term.",
+  "ticks": 14,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50, "wealthStock": 20 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50, "wealthStock": 20 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50, "wealthStock": 10 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_costa_rica", "nation_guatemala"],
+        "clauses": [
+          { "type": "non_aggression", "collateral": 0 },
+          {
+            "type": "trade",
+            "collateral": 5,
+            "payload": {
+              "resource": "wealth",
+              "amount": 5,
+              "fromNationId": "nation_guatemala",
+              "toNationId": "nation_costa_rica",
+              "sourceTerritoryId": "guatemala"
+            }
+          }
+        ],
+        "termTicks": 12,
+        "collateralByParty": {
+          "nation_costa_rica": 5,
+          "nation_guatemala": 5
+        }
+      }
+    },
+    {
+      "tick": 5,
+      "type": "assign_territory",
+      "payload": { "territoryId": "guatemala", "ownerId": "nation_honduras" }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

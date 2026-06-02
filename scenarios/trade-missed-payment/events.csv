@@ -1,0 +1,5 @@
+tick,message
+1,"Trade clause missed_payment: treaty #1 clause 1 — insufficient wealth (have 0.0, need 6)."
+2,"Trade clause missed_payment: treaty #1 clause 1 — insufficient wealth (have 2.5, need 6)."
+2,"Trade clause breached: treaty #1 clause 1 — 2 consecutive missed payments. Trust penalty applied."
+10,"Treaty #1 between Costa Rica and Guatemala has completed its term. Both parties gain Trust."

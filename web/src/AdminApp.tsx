@@ -2,6 +2,222 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, AdminWorldFull, AdminTerritoryRow, AdminNationRow } from './api';
 import { CULTURE_AXES, poleShort, poleName } from './cultureAxes';
 
+// ── Admin Diplomacy Section ───────────────────────────────────────────────────
+interface DiplomacySectionProps {
+  nations: AdminNationRow[];
+  adminKey: string;
+  onRefresh: () => void;
+}
+
+function DiplomacySection({ nations, adminKey, onRefresh }: DiplomacySectionProps) {
+  const [diplData, setDiplData] = useState<{ treaties: any[]; proposals: any[]; nations: any[] } | null>(null);
+  const [loadErr, setLoadErr] = useState('');
+
+  const loadDipl = useCallback(async () => {
+    try {
+      const d = await api.admin.diplomacy(adminKey);
+      setDiplData(d);
+    } catch (e: unknown) {
+      setLoadErr(e instanceof Error ? e.message : String(e));
+    }
+  }, [adminKey]);
+
+  useEffect(() => { loadDipl(); }, [loadDipl]);
+
+  const doAction = async (fn: () => Promise<unknown>) => {
+    try { await fn(); await loadDipl(); onRefresh(); }
+    catch (e: unknown) { alert(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const TIERS = ['active', 'dormant', 'autopilot', 'abandoned'];
+
+  return (
+    <>
+      <div style={sectionHead}>DIPLOMACY — NATIONS TRUST &amp; TIER</div>
+      <table style={tblStyle}>
+        <thead>
+          <tr>
+            {['Nation', 'Trust', 'Tier', 'Last Break Tick', 'Actions'].map((h) => <th key={h} style={th}>{h}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {(diplData?.nations ?? nations).map((n: any) => (
+            <tr key={n.id}>
+              <td style={td}>{n.name}</td>
+              <td style={td}>
+                <span style={{ color: (n.trust ?? 50) >= 50 ? '#5be' : '#e55' }}>{(n.trust ?? 50).toFixed(1)}</span>
+                <button style={{ ...btn, marginLeft: '0.5rem', padding: '0.1rem 0.3rem', fontSize: '0.68rem' }}
+                  onClick={() => {
+                    const v = parseFloat(prompt('New Trust (0–100):', String((n.trust ?? 50).toFixed(1))) ?? '');
+                    if (!isNaN(v)) doAction(() => api.admin.setTrust(adminKey, n.id, v));
+                  }}>Set</button>
+              </td>
+              <td style={td}>
+                <select
+                  value={n.inactivityTier ?? 'active'}
+                  onChange={(e) => doAction(() => api.admin.setTier(adminKey, n.id, e.target.value))}
+                  style={{ background: '#1a1a2e', color: '#bbb', border: '1px solid #2a2a4a', fontFamily: FONT, fontSize: '0.72rem', padding: '0.1rem' }}
+                >
+                  {TIERS.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </td>
+              <td style={td}>{n.lastBrokenPromiseTick !== null ? `T${n.lastBrokenPromiseTick}` : '—'}</td>
+              <td style={td}></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div style={sectionHead}>DIPLOMACY — TREATIES</div>
+      {loadErr && <div style={{ color: '#e55', fontSize: '0.72rem' }}>{loadErr}</div>}
+      {!diplData ? <div style={{ color: '#444', fontSize: '0.75rem' }}>Loading…</div> : (
+        <table style={tblStyle}>
+          <thead>
+            <tr>
+              {['#', 'Status', 'Parties', 'Clauses', 'Term', 'Ends', 'Collateral', 'Actions'].map((h) => <th key={h} style={th}>{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {diplData.treaties.map((t: any) => (
+              <>
+                <tr key={t.id}>
+                  <td style={td}>{t.id}</td>
+                  <td style={{ ...td, color: t.status === 'active' ? '#5be' : t.status === 'degraded' ? '#fa6' : '#888' }}>{t.status}</td>
+                  <td style={td}>{t.parties?.map((p: any) => p.nationId).join(' ↔ ')}</td>
+                  <td style={td}>{t.clauses?.map((c: any) => c.type).join(', ')}</td>
+                  <td style={td}>{t.termTicks}t</td>
+                  <td style={td}>T{t.tickEnds}</td>
+                  <td style={td}>{t.totalCollateral}</td>
+                  <td style={td}>
+                    {(t.status === 'active' || t.status === 'degraded') && (
+                      <button style={{ ...dangerBtn, padding: '0.1rem 0.3rem', fontSize: '0.68rem' }}
+                        onClick={() => { if (window.confirm(`Force-break treaty #${t.id}?`)) doAction(() => api.admin.forceBreakTreaty(adminKey, t.id)); }}>
+                        Break
+                      </button>
+                    )}
+                  </td>
+                </tr>
+                {/* Objective clause sub-rows */}
+                {(t.clauses ?? []).filter((c: any) => c.type === 'objective' && c.objectiveClause).map((c: any) => {
+                  const obj = c.objectiveClause;
+                  const statusColor = obj.status === 'met' ? '#5b5' : obj.status === 'failed' ? '#e55' : obj.status === 'waived' ? '#555' : '#fa6';
+                  return (
+                    <tr key={`obj-${obj.id}`} style={{ background: '#080812' }}>
+                      <td style={{ ...td, color: '#333' }}>└ obj#{obj.id}</td>
+                      <td style={{ ...td, color: statusColor }}>{obj.status}</td>
+                      <td colSpan={3} style={{ ...td, color: '#777', fontSize: '0.70rem' }}>
+                        {obj.objectiveType} · resp: {obj.responsibleParty} · deadline +{obj.deadlineTicks}t
+                        {obj.targetTerritoryId && ` · terr: ${obj.targetTerritoryId}`}
+                        {obj.targetNationId && ` · nation: ${obj.targetNationId}`}
+                      </td>
+                      <td style={td}></td>
+                      <td style={td}></td>
+                      <td style={td}>
+                        {obj.status === 'pending' && (
+                          <>
+                            <button style={{ ...btn, padding: '0.1rem 0.3rem', fontSize: '0.68rem', background: '#003300', border: '1px solid #006600' }}
+                              onClick={() => doAction(() => api.admin.forceMeetObjective(adminKey, obj.id))}>
+                              Met
+                            </button>
+                            <button style={{ ...dangerBtn, padding: '0.1rem 0.3rem', fontSize: '0.68rem', marginLeft: '0.2rem' }}
+                              onClick={() => doAction(() => api.admin.forceFailObjective(adminKey, obj.id))}>
+                              Fail
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </>
+            ))}
+            {diplData.treaties.length === 0 && <tr><td colSpan={8} style={{ ...td, color: '#333' }}>No treaties.</td></tr>}
+          </tbody>
+        </table>
+      )}
+
+      <div style={sectionHead}>DIPLOMACY — PROPOSALS</div>
+      {!diplData ? null : (
+        <table style={tblStyle}>
+          <thead>
+            <tr>
+              {['#', 'Status', 'From', 'To', 'Term', 'Expires', 'Clauses'].map((h) => <th key={h} style={th}>{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {diplData.proposals.map((p: any) => (
+              <tr key={p.id}>
+                <td style={td}>{p.id}</td>
+                <td style={{ ...td, color: p.status === 'pending' ? '#5be' : '#555' }}>{p.status}</td>
+                <td style={td}>{p.proposerId}</td>
+                <td style={td}>{p.targetId}</td>
+                <td style={td}>{p.termTicks}t</td>
+                <td style={td}>T{p.expiresAtTick}</td>
+                <td style={td}>{p.clauses?.map((c: any) => c.type).join(', ')}</td>
+              </tr>
+            ))}
+            {diplData.proposals.length === 0 && <tr><td colSpan={7} style={{ ...td, color: '#333' }}>No proposals.</td></tr>}
+          </tbody>
+        </table>
+      )}
+
+      <div style={sectionHead}>TRADE — INSTANT TRADES (last 50)</div>
+      {!diplData ? null : (
+        <table style={tblStyle}>
+          <thead>
+            <tr>
+              {['#', 'Status', 'From', 'To', 'Resource', 'Amount', 'Source Terr', 'Proposed', 'Expires'].map((h) => <th key={h} style={th}>{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {(diplData.instantTrades ?? []).map((t: any) => (
+              <tr key={t.id}>
+                <td style={td}>{t.id}</td>
+                <td style={{ ...td, color: t.status === 'pending' ? '#5be' : t.status === 'accepted' ? '#4c4' : t.status === 'expired' ? '#555' : '#e55' }}>{t.status}</td>
+                <td style={td}>{t.proposerNationId}</td>
+                <td style={td}>{t.targetNationId}</td>
+                <td style={td}>{t.resource}</td>
+                <td style={td}>{t.amount}</td>
+                <td style={td}>{t.sourceTerritoryId}</td>
+                <td style={td}>T{t.tickProposed}</td>
+                <td style={td}>T{t.expiresAtTick}</td>
+              </tr>
+            ))}
+            {(diplData.instantTrades ?? []).length === 0 && <tr><td colSpan={9} style={{ ...td, color: '#333' }}>No instant trades.</td></tr>}
+          </tbody>
+        </table>
+      )}
+
+      <div style={sectionHead}>TRADE — ROUTES</div>
+      {!diplData ? null : (
+        <table style={tblStyle}>
+          <thead>
+            <tr>
+              {['Treaty', 'Clause', 'Source Terr', 'Dest Nation', 'Type', 'Hops', 'Stale', 'Capacity', 'Friction'].map((h) => <th key={h} style={th}>{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {(diplData.tradeRoutes ?? []).map((r: any) => (
+              <tr key={r.id}>
+                <td style={td}>#{r.treatyClause?.treatyId ?? '?'}</td>
+                <td style={td}>{r.treatyClause?.clauseIndex ?? '?'} ({r.treatyClause?.type ?? '?'})</td>
+                <td style={td}>{r.sourceTerritoryId}</td>
+                <td style={td}>{r.destinationNationId}</td>
+                <td style={{ ...td, color: r.isSeaRoute ? '#5be' : '#888' }}>{r.isSeaRoute ? 'sea' : 'land'}</td>
+                <td style={td}>{Array.isArray(r.path) ? r.path.length - 1 : '?'}</td>
+                <td style={{ ...td, color: r.pathStale ? '#fa6' : '#555' }}>{r.pathStale ? 'YES' : 'no'}</td>
+                <td style={{ ...td, color: '#555' }}>{r.capacity ?? '[PLACEHOLDER]'}</td>
+                <td style={{ ...td, color: '#555' }}>{r.friction ?? '[PLACEHOLDER]'}</td>
+              </tr>
+            ))}
+            {(diplData.tradeRoutes ?? []).length === 0 && <tr><td colSpan={9} style={{ ...td, color: '#333' }}>No trade routes.</td></tr>}
+          </tbody>
+        </table>
+      )}
+    </>
+  );
+}
+
 // [DEFERRED SECURITY] Admin key lives in React state only — never persisted to
 // localStorage or cookies. Disable this entire route before public deployment. §11.
 
@@ -470,6 +686,7 @@ export default function AdminApp() {
       <div style={{ padding: '0 1rem 2rem' }}>
         <NationsTable nations={world.nations} territories={world.territories} />
         <TerritoriesTable territories={world.territories} nations={world.nations} adminKey={key} onRefresh={() => loadWorld(key)} />
+        <DiplomacySection nations={world.nations} adminKey={key} onRefresh={() => loadWorld(key)} />
         <EventLog events={world.recentEvents} />
       </div>
     </div>

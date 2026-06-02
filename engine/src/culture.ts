@@ -295,6 +295,7 @@ export function computeUnrestEquilibrium(
   nationTerritoryCount: number,
   ownershipShock: number,
   recentAcquisitionCount: number,
+  treatyCulturalClash = 0,
 ): UnrestCauses {
   const base = BASE_UNREST_FLOOR;
 
@@ -319,7 +320,8 @@ export function computeUnrestEquilibrium(
 
   const equilibrium = Math.max(0, Math.min(1,
     base + compatibilityPressure + distancePressure + infrastructureBonus +
-    overexpansionPressure + ownershipShock + recentConquestPressure + militaryBonus,
+    overexpansionPressure + ownershipShock + recentConquestPressure + militaryBonus +
+    treatyCulturalClash,
   ));
 
   return {
@@ -331,6 +333,7 @@ export function computeUnrestEquilibrium(
     ownershipShock,
     recentConquestPressure,
     militaryBonus,
+    treatyCulturalClash,
     equilibrium,
   };
 }

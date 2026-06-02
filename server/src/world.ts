@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState, CulturalFamily } from '@war/engine';
+import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState, CulturalFamily, Treaty, Proposal, TreatyClause, ClauseType, InstantTrade, TradeRoute, InstantTradeStatus, TradeResource, ObjectiveClause, ObjectiveType, ObjectiveStatus, ResponsibleParty } from '@war/engine';
 import { prisma } from './db';
 
 type TxClient = Prisma.TransactionClient;
@@ -44,6 +44,9 @@ export async function loadWorldState(
         pendingConstructionType: (s.pendingConstructionType ?? null) as TerritoryState['pendingConstructionType'],
         ownershipShock: s.ownershipShock,
         acquiredTick: s.acquiredTick ?? null,
+        localPopStock: s.localPopStock,
+        localIndStock: s.localIndStock,
+        localWltStock: s.localWltStock,
       },
     };
   }
@@ -63,12 +66,138 @@ export async function loadWorldState(
       trust: n.trust,
       prestige: n.prestige,
       capitalTerritoryId: n.capitalTerritoryId ?? null,
+      inactivityTier: n.inactivityTier,
+      lastBrokenPromiseTick: n.lastBrokenPromiseTick ?? null,
     };
   }
 
+  // Load active/degraded treaties and their parties/clauses (including objective clauses).
+  const treatyRows = await tx.treaty.findMany({
+    where: { status: { in: ['active', 'degraded'] } },
+    include: { parties: true, clauses: { include: { objectiveClause: true } } },
+  });
+  const treaties: Treaty[] = treatyRows.map((t) => {
+    const partyIds = t.parties.map((p) => p.nationId) as [string, string];
+    const collateralByParty: Record<string, number> = {};
+    const refundRemainingByParty: Record<string, number> = {};
+    const refundStartTickByParty: Record<string, number | null> = {};
+    const escrowAmountByParty: Record<string, number> = {};
+    const escrowStartTickByParty: Record<string, number | null> = {};
+    for (const p of t.parties) {
+      collateralByParty[p.nationId] = p.collateralDeposited;
+      refundRemainingByParty[p.nationId] = p.refundRemaining;
+      refundStartTickByParty[p.nationId] = p.refundStartTick ?? null;
+      escrowAmountByParty[p.nationId] = p.escrowAmount;
+      escrowStartTickByParty[p.nationId] = p.escrowStartTick ?? null;
+    }
+    return {
+      id: t.id,
+      proposalId: t.proposalId,
+      partyIds,
+      clauses: t.clauses.map((c) => {
+        const oc = (c as any).objectiveClause ?? null;
+        const objective: ObjectiveClause | null = oc ? {
+          id: oc.id,
+          treatyClauseId: oc.treatyClauseId,
+          objectiveType: oc.objectiveType as ObjectiveType,
+          targetNationId: oc.targetNationId ?? null,
+          targetTerritoryId: oc.targetTerritoryId ?? null,
+          deadlineTicks: oc.deadlineTicks,
+          status: oc.status as ObjectiveStatus,
+          responsibleParty: oc.responsibleParty as ResponsibleParty,
+        } : null;
+        return {
+          id: c.id,
+          clauseIndex: c.clauseIndex,
+          type: c.type as ClauseType,
+          collateral: c.collateral,
+          payload: c.payload as Record<string, unknown>,
+          clauseStatus: c.clauseStatus,
+          missedPayments: c.missedPayments,
+          objective,
+        };
+      }),
+      status: t.status,
+      termTicks: t.termTicks,
+      tickStarted: t.tickStarted,
+      tickEnds: t.tickEnds,
+      totalCollateral: t.totalCollateral,
+      breakerNationId: t.breakerNationId,
+      collateralByParty,
+      refundRemainingByParty,
+      refundStartTickByParty,
+      escrowAmountByParty,
+      escrowStartTickByParty,
+    };
+  });
+
+  // Load pending proposals.
+  const proposalRows = await tx.proposal.findMany({
+    where: { status: 'pending' },
+    include: { clauses: true },
+  });
+  const proposals: Proposal[] = proposalRows.map((p) => ({
+    id: p.id,
+    proposerId: p.proposerId,
+    targetId: p.targetId,
+    status: p.status,
+    termTicks: p.termTicks,
+    clauses: p.clauses.map((c, idx) => ({
+      id: c.id,
+      clauseIndex: idx,
+      type: c.type as ClauseType,
+      collateral: c.collateral,
+      payload: c.payload as Record<string, unknown>,
+      clauseStatus: 'active',
+      missedPayments: 0,
+      // Objective clause data for proposals is carried in the payload JSON;
+      // the full ObjectiveClause record is created at treaty-acceptance time.
+      objective: null,
+    })),
+    proposerCollateral: p.proposerCollateral,
+    targetCollateral: p.targetCollateral,
+    tickProposed: p.tickProposed,
+    expiresAtTick: p.expiresAtTick,
+    parentProposalId: p.parentProposalId,
+  }));
+
+  // Load pending instant trades (proposer queued, recipient hasn't responded yet).
+  const itRows = await tx.instantTrade.findMany({ where: { status: 'pending' } });
+  const instantTrades: InstantTrade[] = itRows.map((r) => ({
+    id: r.id,
+    proposerNationId: r.proposerNationId,
+    targetNationId: r.targetNationId,
+    resource: r.resource as TradeResource,
+    amount: r.amount,
+    sourceTerritoryId: r.sourceTerritoryId,
+    status: r.status as InstantTradeStatus,
+    tickProposed: r.tickProposed,
+    expiresAtTick: r.expiresAtTick,
+  }));
+
+  // Load trade routes for active treaties.
+  const activeTreatyIds = treaties.map((t) => t.id);
+  const tradeRouteRows = activeTreatyIds.length > 0
+    ? await tx.tradeRoute.findMany({
+        where: { treatyClause: { treatyId: { in: activeTreatyIds } } },
+      })
+    : [];
+  const tradeRoutes: TradeRoute[] = tradeRouteRows.map((r) => ({
+    id: r.id,
+    treatyClauseId: r.treatyClauseId,
+    sourceTerritoryId: r.sourceTerritoryId,
+    destinationNationId: r.destinationNationId,
+    path: r.path as string[],
+    pathComputedAtTick: r.pathComputedAtTick,
+    pathStale: r.pathStale,
+    capacity: r.capacity,
+    friction: r.friction,
+    isSeaRoute: r.isSeaRoute,
+  }));
+
   // Event log is write-only from the engine's perspective; we don't need to load
   // history — resolveTick emits only the new entries for the current tick.
-  return { tick: meta.tick, rngSeed: meta.rngSeed, territories, nations, eventLog: [] };
+  return { tick: meta.tick, rngSeed: meta.rngSeed, territories, nations, eventLog: [], treaties, proposals, instantTrades, tradeRoutes };
 }
 
 // ── Saving ────────────────────────────────────────────────────────────────────
@@ -87,8 +216,68 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         trust: nation.trust,
         prestige: nation.prestige,
         capitalTerritoryId: nation.capitalTerritoryId,
+        inactivityTier: nation.inactivityTier,
+        lastBrokenPromiseTick: nation.lastBrokenPromiseTick,
       },
     });
+  }
+
+  // Persist treaty status changes from the engine (expiry, breaking) and escrow/refund progress.
+  for (const treaty of world.treaties) {
+    await tx.treaty.update({
+      where: { id: treaty.id },
+      data: {
+        status: treaty.status,
+        breakerNationId: treaty.breakerNationId,
+      },
+    });
+    for (const [nationId, refundRemaining] of Object.entries(treaty.refundRemainingByParty)) {
+      await tx.treatyParty.updateMany({
+        where: { treatyId: treaty.id, nationId },
+        data: {
+          refundRemaining,
+          escrowAmount: treaty.escrowAmountByParty[nationId] ?? 0,
+          escrowStartTick: treaty.escrowStartTickByParty[nationId] ?? null,
+          refundStartTick: treaty.refundStartTickByParty[nationId] ?? null,
+        },
+      });
+    }
+    // Persist clause status, missed payment changes, and objective clause status.
+    for (const clause of treaty.clauses) {
+      await tx.treatyClause.update({
+        where: { id: clause.id },
+        data: {
+          clauseStatus: clause.clauseStatus,
+          missedPayments: clause.missedPayments,
+        },
+      });
+      if (clause.objective) {
+        await tx.objectiveClause.update({
+          where: { id: clause.objective.id },
+          data: { status: clause.objective.status },
+        });
+      }
+    }
+  }
+
+  // Persist proposal status changes (expired proposals updated by engine).
+  for (const proposal of world.proposals) {
+    if (proposal.status !== 'pending') {
+      await tx.proposal.update({
+        where: { id: proposal.id },
+        data: { status: proposal.status },
+      });
+    }
+  }
+
+  // Persist instant trade status changes (accepted/declined/expired updated by engine).
+  for (const trade of world.instantTrades) {
+    if (trade.status !== 'pending') {
+      await tx.instantTrade.update({
+        where: { id: trade.id },
+        data: { status: trade.status },
+      });
+    }
   }
 
   for (const [id, { state }] of Object.entries(world.territories)) {
@@ -110,6 +299,9 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         pendingConstructionType: state.pendingConstructionType,
         ownershipShock: state.ownershipShock,
         acquiredTick: state.acquiredTick,
+        localPopStock: state.localPopStock,
+        localIndStock: state.localIndStock,
+        localWltStock: state.localWltStock,
       },
     });
   }
@@ -150,6 +342,7 @@ export async function ensureWorldInitialized(defs: TerritoryDef[]): Promise<void
           isAI: n.isAI,
           armySize: n.armySize,
           capitalTerritoryId: n.territories[0],
+          inactivityTier: 'active',
         },
       });
       for (const tid of n.territories) ownerOf.set(tid, n.id);

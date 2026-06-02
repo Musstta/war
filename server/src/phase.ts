@@ -42,16 +42,32 @@ export function mandateBudget(developedCount: number, fullyFortifiedCount: numbe
 
 // Mandate cost per action type. build_fort cost is variable — see FORT_MANDATE_COSTS.
 export const ACTION_COSTS: Record<string, number> = {
-  build_road: 1,
-  build_port: 2,
-  build_fort: 0, // sentinel — real cost computed per fort level from FORT_MANDATE_COSTS
+  build_road:           1,
+  build_port:           2,
+  build_fort:           0, // sentinel — real cost from FORT_MANDATE_COSTS
+  propose_treaty:       1, // [PLACEHOLDER] per design doc §8.3
+  accept_treaty:        1, // [PLACEHOLDER] 0.5 rounded to 1 for now
+  decline_treaty:       0, // free
+  break_treaty:         0, // mandate is free; cost is collateral + Trust
+  propose_renewal:      1, // same as propose_treaty
+  instant_trade:        1, // [PLACEHOLDER]
+  accept_instant_trade: 0, // free
+  decline_instant_trade: 0, // free
 };
 
 // Which phase each action type is restricted to.
 export const ACTION_PHASE: Record<string, Phase> = {
-  build_road: 'main',
-  build_port: 'main',
-  build_fort: 'main',
+  build_road:           'main',
+  build_port:           'main',
+  build_fort:           'main',
+  propose_treaty:       'main',
+  accept_treaty:        'main',
+  decline_treaty:       'main',
+  break_treaty:         'main',
+  propose_renewal:      'main',
+  instant_trade:        'main',
+  accept_instant_trade: 'main',
+  decline_instant_trade: 'main',
 };
 
 /** Mandate cost to build each fort level. [PLACEHOLDER] */

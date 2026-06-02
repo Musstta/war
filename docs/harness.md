@@ -88,11 +88,28 @@ Scenario files are JSON in `scenarios/`. All fields:
 |---|---|---|
 | `assign_territory` | Harness (before tick) | `{ territoryId, ownerId: string\|null }` |
 | `set_unrest` | Harness (before tick) | `{ territoryId, value: 0.0–1.0 }` |
+| `create_treaty` | Harness (before tick) | `{ id, partyIds: [nA, nB], clauses: [{type, collateral?, payload?}], termTicks, collateralByParty: {nA: x, nB: y} }` |
+| `break_treaty` | Harness (before tick) | `{ treatyId, breakerNationId }` |
+| `set_nation_tier` | Harness (before tick) | `{ nationId, tier: 'active'\|'dormant'\|'autopilot'\|'abandoned' }` |
 | `build_road` | Engine (via resolveTick) | `{ territoryId }` |
 | `build_port` | Engine (via resolveTick) | `{ territoryId }` |
 | `build_fort` | Engine (via resolveTick) | `{ territoryId }` — targetLevel auto-derived |
 
 `assign_territory` computes compat-scaled conquest shock automatically (same formula as the live server). A low-compat conquest starts with higher shock than a compatible one.
+
+`create_treaty` directly places an active treaty into world state, deducting collateral from both parties' Wealth at the time the action fires. Use `wealthStock` on the nation definition to give nations enough starting Wealth to cover collateral.
+
+`break_treaty` marks the treaty broken, transfers the breaker's collateral to the wronged party (plus returns the wronged party's own collateral), and applies the Trust penalty (`TRUST_BREAK_PENALTY`). Trust recovery is suppressed for `TRUST_RECOVERY_COOLDOWN` ticks after the break.
+
+`set_nation_tier` to `'dormant'` triggers treaty degradation: inactive party's collateral moves to escrow, active partner's collateral begins a 3-tick refund. Setting back to `'active'` upgrades degraded treaties and applies the escrow skim (`ESCROW_SKIM_RATE = 5%`). No Trust change in either direction.
+
+### Nation starting stockpiles
+
+The `wealthStock`, `industryStock`, and `populationStock` fields on a scenario nation override the default (0) starting stockpiles. Use these when a scenario needs nations to have Wealth available for collateral before production builds up:
+
+```jsonc
+{ "id": "nation_costa_rica", "territories": ["costa_rica"], "wealthStock": 30 }
+```
 
 ---
 
@@ -136,6 +153,34 @@ culture_expansionist, culture_family
 
 All engine events with tick number and message string.
 
+### `treaty-metrics.csv` *(only when treaties exist)*
+
+One row per treaty per tick. Columns:
+
+```
+tick, treaty_id, status, party_a, party_b, clauses, term_ticks, tick_ends,
+total_collateral, collateral_a, collateral_b, escrow_a, escrow_b, refund_a, refund_b
+```
+
+### `nation-diplomacy.csv`
+
+One row per nation per tick. Columns: `tick, nation_id, trust, inactivity_tier, wealth_stock`. Always written, even when there are no treaties — useful for verifying Trust stays at baseline in culture-only scenarios.
+
+### `trade-flows.csv` *(only when trade clauses exist)*
+
+One row per trade clause per tick. Columns:
+
+```
+tick, treaty_id, clause_index, resource, amount, from_nation, to_nation,
+flow_status, missed_payments, clause_status
+```
+
+`flow_status` is inferred from consecutive `missed_payments` values: `paid` (payment transferred), `missed` (insufficient stockpile, counter incremented), `breached` (clause status = breached), `degraded` (source territory lost), `pending` (T0 pre-treaty).
+
+### `objective-metrics.csv` *(only when objective clauses exist)*
+
+One row per objective clause per tick. Columns: `tick, treaty_id, clause_index, objective_type, responsible_party, status, deadline_ticks`. Used by the objective-status panel in `treaty-status-over-time.png`.
+
 ### `charts/` directory
 
 | File | What it shows |
@@ -143,6 +188,8 @@ All engine events with tick number and message string.
 | `unrest-over-time.png` | All owned territories' unrest as lines over time. Red dashed line = revolt threshold (0.80). |
 | `equilibrium-<territory>.png` | Stacked area chart of equilibrium components for territories that changed ownership or moved meaningfully. Solid white line = actual unrest; dashed = equilibrium target. |
 | `nation-culture-drift.png` | Four subplots (one per axis) showing each nation's culture value over time. |
+| `treaty-status-over-time.png` | Three or four-panel chart: treaty status timeline (colour-coded bars), [objective clause status timeline when present,] Trust over time per nation, Wealth over time per nation. Only generated when `treaty-metrics.csv` is non-empty. |
+| `trade-flow-over-time.png` | Two-panel chart: trade clause flow status per tick (paid/missed/breached/degraded as colour-coded bars), Wealth over time per nation. Only generated when `trade-flows.csv` is non-empty. |
 
 Only "interesting" territories get equilibrium charts — those whose unrest moved more than 2% over the run.
 
@@ -189,8 +236,29 @@ To test a specific mechanism in isolation, use `territoryOverrides` to set a ter
 
 ## Seed scenarios
 
+### Culture & unrest (regression baseline)
+
 | Scenario | Description | Key question |
 |---|---|---|
 | `belize-neglect.json` | Conquer Belize, no investment, 50 ticks | Does shock persist without integration? |
 | `belize-integrate.json` | Same conquest, road at T2 + port at T5 | Does investment visibly speed shock recovery? |
 | `overexpansion.json` | Conquer 3 territories in 3 ticks, no investment | Does rapid-expansion pressure smear across all owned territories? |
+
+### Treaty system (diplomacy validation)
+
+| Scenario | Description | Key question |
+|---|---|---|
+| `treaty-honor.json` | CR + Guatemala sign 10-tick non_aggression + tribute at T1; run 15 ticks | Collateral deposited, tribute flows each tick, expiry grants Trust bonus `min(10×0.5, 15)=5`? |
+| `treaty-break.json` | Same setup; Guatemala breaks at T5 | Breaker Trust −20, collateral to wronged party, wronged Trust unchanged, recovery suppressed for 10 ticks? |
+| `treaty-degradation.json` | CR + Guatemala sign 20-tick defense_pact at T1; CR goes Dormant at T5, returns at T15 | Treaty degrades at T5, refund over 3 ticks, escrow held, upgrade at T15 with 5% skim, no Trust change, expires at T21 with bonus? |
+
+### Trade system (trade clause + objective clause validation)
+
+| Scenario | Description | Key question |
+|---|---|---|
+| `trade-flow.json` | CR + Guatemala sign 10-tick treaty with 5 Wealth/tick trade clause; 14 ticks | 5 Wealth/tick flows from Guatemala to CR each tick T1–T10, stops at expiry? Trust bonus fires at T11? |
+| `trade-missed-payment.json` | Same trade clause but flow (6/tick) exceeds Guatemala's production (5/tick); Guatemala collateral-drained to 0 at treaty sign | Missed-payment events at T1+T2, clause breaches at T2 (2 consecutive misses), Guatemala Trust −20, collateral to CR? |
+| `trade-source-lost.json` | Same trade clause; at T5 harness reassigns `guatemala` territory to Honduras | Clause degrades at T5 (source territory no longer owned by sender), flows stop, no Trust hit, treaty continues? |
+| `objective-port.json` | CR + Guatemala 10-tick treaty with build_port objective on `costa_rica`, deadline 8 ticks, responsible CR; CR never builds | Objective fails at T9 (deadline tick 8 passes), CR Trust −20, collateral forfeited to Guatemala? |
+| `objective-port-met.json` | Same treaty; CR queues build_port at T3 | Port completes at T5 (3-tick construction), objective met at T5, Trust bonus fires, treaty auto-completes early? |
+| `objective-port-failed.json` | Same as objective-port.json but with 5-tick deadline; CR never builds | Objective fails at T6, CR Trust −20, collateral transferred? |(shorter deadline variant for fast regression)|

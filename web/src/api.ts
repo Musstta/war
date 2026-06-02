@@ -56,6 +56,10 @@ export interface TerritoryView {
   pendingConstructionType?: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | 'road' | null;
   compatibility?: CompatibilityBreakdown;
   unrestCauses?: UnrestCauses;
+  // present only for own territories (trade source selection)
+  localPopStock?: number;
+  localIndStock?: number;
+  localWltStock?: number;
 }
 
 export interface NationView {
@@ -133,6 +137,124 @@ export interface AdminWorldFull {
   recentEvents: Array<{ tick: number; message: string }>;
 }
 
+// ── Diplomacy types ───────────────────────────────────────────────────────────
+
+export type ClauseType = 'non_aggression' | 'tribute' | 'trade' | 'military_access' | 'defense_pact' | 'objective';
+
+export type ObjectiveType =
+  | 'build_road_connection'
+  | 'build_port'
+  | 'maintain_peace'
+  | 'joint_invasion'   // [STUB]
+  | 'attack_player';   // [STUB]
+
+export type ObjectiveStatus = 'pending' | 'met' | 'failed' | 'waived';
+export type ResponsibleParty = 'partyA' | 'partyB' | 'both';
+
+export interface ObjectiveClauseView {
+  id: number;
+  treatyClauseId: number;
+  objectiveType: ObjectiveType;
+  targetNationId: string | null;
+  targetTerritoryId: string | null;
+  deadlineTicks: number;
+  status: ObjectiveStatus;
+  responsibleParty: ResponsibleParty;
+}
+
+export interface TradeRouteView {
+  path: string[];
+  isSeaRoute: boolean;
+  pathStale: boolean;
+  capacity: number | null;
+  friction: number | null;
+}
+
+export interface TreatyClauseView {
+  id: number;
+  clauseIndex: number;
+  type: ClauseType;
+  collateral: number;
+  payload: Record<string, unknown>;
+  clauseStatus: 'active' | 'degraded' | 'breached';
+  missedPayments: number;
+  tradeRoute?: TradeRouteView | null;
+  objectiveClause?: ObjectiveClauseView | null;
+}
+
+export interface InstantTradeView {
+  id: number;
+  proposerNationId?: string;
+  proposerName?: string;
+  targetNationId?: string;
+  targetName?: string;
+  resource: 'population' | 'industry' | 'wealth';
+  amount: number;
+  sourceTerritoryId: string;
+  tickProposed: number;
+  expiresAtTick: number;
+}
+
+export interface TreatyPartyView {
+  nationId: string;
+  nationName: string;
+  collateralDeposited: number;
+  escrowAmount: number;
+  refundRemaining: number;
+}
+
+export interface TreatyView {
+  id: number;
+  status: 'active' | 'degraded' | 'broken' | 'expired';
+  termTicks: number;
+  tickStarted: number;
+  tickEnds: number;
+  totalCollateral: number;
+  parties: TreatyPartyView[];
+  clauses: TreatyClauseView[];
+  partnerTrust: Array<{ nationId: string; trust: number }>;
+}
+
+export interface ProposalView {
+  id: number;
+  proposerId?: string;
+  proposerName?: string;
+  proposerTrust?: number;
+  targetId?: string;
+  targetName?: string;
+  termTicks: number;
+  proposerCollateral: number;
+  targetCollateral: number;
+  tickProposed: number;
+  expiresAtTick: number;
+  clauses: TreatyClauseView[];
+}
+
+export interface DiplomacyView {
+  myTrust: number;
+  inactivityTier: string;
+  treaties: TreatyView[];
+  incomingProposals: ProposalView[];
+  outgoingProposals: ProposalView[];
+  nationTrust: Record<string, { name: string; trust: number }>;
+  incomingInstantTrades: InstantTradeView[];
+  outgoingInstantTrades: InstantTradeView[];
+}
+
+export interface ObjectiveClauseInput {
+  objectiveType: ObjectiveType;
+  targetNationId?: string;
+  targetTerritoryId?: string;
+  deadlineTicks: number;
+  responsibleParty: ResponsibleParty;
+}
+
+export interface TreatyClauseInput {
+  type: ClauseType;
+  collateral?: number;
+  payload?: Record<string, unknown>;
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { credentials: 'include', ...init });
   if (!res.ok) {
@@ -165,6 +287,65 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, payload }),
+    }),
+
+  // ── Diplomacy ─────────────────────────────────────────────────────────────
+  diplomacy: () => apiFetch<DiplomacyView>('/api/diplomacy'),
+
+  proposeTreaty: (targetNationId: string, termTicks: number, clauses: TreatyClauseInput[], proposerCollateral?: number, targetCollateral?: number) =>
+    apiFetch<{ ok: boolean }>('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'propose_treaty', payload: { targetNationId, termTicks, clauses, proposerCollateral: proposerCollateral ?? 0, targetCollateral: targetCollateral ?? 0 } }),
+    }),
+
+  acceptTreaty: (proposalId: number) =>
+    apiFetch<{ ok: boolean }>('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'accept_treaty', payload: { proposalId } }),
+    }),
+
+  declineTreaty: (proposalId: number) =>
+    apiFetch<{ ok: boolean }>('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'decline_treaty', payload: { proposalId } }),
+    }),
+
+  breakTreaty: (treatyId: number) =>
+    apiFetch<{ ok: boolean }>('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'break_treaty', payload: { treatyId } }),
+    }),
+
+  proposeRenewal: (treatyId: number, termTicks?: number) =>
+    apiFetch<{ ok: boolean }>('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'propose_renewal', payload: { treatyId, ...(termTicks !== undefined ? { termTicks } : {}) } }),
+    }),
+
+  instantTrade: (resource: 'population' | 'industry' | 'wealth', amount: number, sourceTerritoryId: string, targetNationId: string) =>
+    apiFetch<{ ok: boolean }>('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'instant_trade', payload: { resource, amount, sourceTerritoryId, targetNationId } }),
+    }),
+
+  acceptInstantTrade: (tradeId: number) =>
+    apiFetch<{ ok: boolean }>('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'accept_instant_trade', payload: { tradeId } }),
+    }),
+
+  declineInstantTrade: (tradeId: number) =>
+    apiFetch<{ ok: boolean }>('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'decline_instant_trade', payload: { tradeId } }),
     }),
 
   // ── Dev endpoints (player1 only) ──────────────────────────────────────────
@@ -247,6 +428,36 @@ export const api = {
       }),
     clearConstruction: (key: string, id: string) =>
       apiFetch<{ ok: boolean }>(`/api/admin/territory/${id}/clear-construction`, {
+        method: 'POST', headers: adminHeaders(key),
+      }),
+
+    // ── Diplomacy admin ───────────────────────────────────────────────────
+    diplomacy: (key: string) =>
+      apiFetch<{ treaties: unknown[]; proposals: unknown[]; nations: unknown[] }>('/api/admin/diplomacy', {
+        headers: adminHeaders(key),
+      }),
+    setTrust: (key: string, id: string, value: number) =>
+      apiFetch<{ ok: boolean }>(`/api/admin/nation/${id}/set-trust`, {
+        method: 'POST',
+        headers: adminHeaders(key, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ value }),
+      }),
+    setTier: (key: string, id: string, tier: string) =>
+      apiFetch<{ ok: boolean; tier: string }>(`/api/admin/nation/${id}/set-tier`, {
+        method: 'POST',
+        headers: adminHeaders(key, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ tier }),
+      }),
+    forceBreakTreaty: (key: string, treatyId: number) =>
+      apiFetch<{ ok: boolean }>(`/api/admin/treaty/${treatyId}/force-break`, {
+        method: 'POST', headers: adminHeaders(key),
+      }),
+    forceMeetObjective: (key: string, objectiveId: number) =>
+      apiFetch<{ ok: boolean; status: string }>(`/api/admin/objective/${objectiveId}/force-meet`, {
+        method: 'POST', headers: adminHeaders(key),
+      }),
+    forceFailObjective: (key: string, objectiveId: number) =>
+      apiFetch<{ ok: boolean; status: string }>(`/api/admin/objective/${objectiveId}/force-fail`, {
         method: 'POST', headers: adminHeaders(key),
       }),
   },

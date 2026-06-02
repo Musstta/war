@@ -1,0 +1,48 @@
+{
+  "name": "trade-missed-payment",
+  "description": "Same treaty setup as trade-flow but Guatemala starts with wealthStock=5 (just enough to cover 5 Wealth collateral). After collateral is deducted Guatemala has 0 Wealth. The trade clause demands 6 Wealth/tick — exceeding Guatemala's 5/tick production. Trade evaluation runs before production each tick, so Guatemala misses payment at T1 (0 < 6) and T2 (5 < 6), hitting the consecutive-miss breach threshold of 2. Expected: missed_payment events at T1 and T2, clause breaches at T2, Guatemala Trust −20, collateral transferred to Costa Rica.",
+  "ticks": 12,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50, "wealthStock": 20 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50, "wealthStock": 5 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_costa_rica", "nation_guatemala"],
+        "clauses": [
+          { "type": "non_aggression", "collateral": 0 },
+          {
+            "type": "trade",
+            "collateral": 5,
+            "payload": {
+              "resource": "wealth",
+              "amount": 6,
+              "fromNationId": "nation_guatemala",
+              "toNationId": "nation_costa_rica",
+              "sourceTerritoryId": "guatemala"
+            }
+          }
+        ],
+        "termTicks": 10,
+        "collateralByParty": {
+          "nation_costa_rica": 5,
+          "nation_guatemala": 5
+        }
+      }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

@@ -163,7 +163,261 @@ def chart_nation_culture_drift(nation_rows, output_dir):
     plt.close()
     print(f"  ✓ {path}")
 
+# ── Chart 4: Treaty status over time + Trust + Wealth [+ objective status] ────
+
+STATUS_COLORS = {
+    'active':   '#5bbcff',
+    'degraded': '#ffaa33',
+    'broken':   '#ff4444',
+    'expired':  '#555555',
+}
+
+OBJ_STATUS_COLORS = {
+    'pending': '#fa6',
+    'met':     '#5b5',
+    'failed':  '#e55',
+    'waived':  '#555',
+}
+
+def chart_treaty_status_over_time(treaty_rows, dipl_rows, output_dir, obj_rows=None):
+    if not treaty_rows:
+        return
+
+    has_objectives = bool(obj_rows)
+
+    # Group treaty rows by treaty_id.
+    by_treaty = defaultdict(list)
+    for row in treaty_rows:
+        by_treaty[row['treaty_id']].append(row)
+
+    # Group nation-diplomacy rows by nation_id.
+    by_nation = defaultdict(list)
+    for row in dipl_rows:
+        by_nation[row['nation_id']].append(row)
+
+    n_treaties = len(by_treaty)
+    n_nations  = len(by_nation)
+
+    # Subplots: status, [objective status,] Trust, Wealth.
+    n_panels = 4 if has_objectives else 3
+    fig, axes = plt.subplots(n_panels, 1, figsize=(10, 3 * n_panels))
+    fig.suptitle('Treaty System — Status, Trust & Wealth Over Time', y=1.01)
+
+    ax_idx = 0
+
+    # ── Treaty status panel ───────────────────────────────────────────────────
+    ax0 = axes[ax_idx]; ax_idx += 1
+    status_order = ['active', 'degraded', 'broken', 'expired']
+    status_y     = {s: i for i, s in enumerate(status_order)}
+    sorted_treaty_ids = sorted(by_treaty.keys())
+
+    treaty_colors = cm.tab10(np.linspace(0, 1, max(n_treaties, 1)))
+    for (tid, rows), color in zip([(k, by_treaty[k]) for k in sorted_treaty_ids], treaty_colors):
+        rows_sorted = sorted(rows, key=lambda r: int(r['tick']))
+        tid_idx = sorted_treaty_ids.index(tid)
+        prev_status, seg_start = None, None
+        for row in rows_sorted:
+            tick   = int(row['tick'])
+            status = row['status']
+            if status != prev_status:
+                if prev_status is not None and seg_start is not None:
+                    y = status_y.get(prev_status, 0) + tid_idx * 0.12
+                    ax0.barh(y, tick - seg_start, left=seg_start, height=0.10,
+                             color=STATUS_COLORS.get(prev_status, '#888'), alpha=0.85)
+                seg_start = tick
+                prev_status = status
+        if prev_status is not None and seg_start is not None and rows_sorted:
+            last_tick = int(rows_sorted[-1]['tick'])
+            y = status_y.get(prev_status, 0) + tid_idx * 0.12
+            ax0.barh(y, last_tick - seg_start + 1, left=seg_start, height=0.10,
+                     color=STATUS_COLORS.get(prev_status, '#888'), alpha=0.85,
+                     label=f'Treaty #{tid}')
+
+    ax0.set_yticks(list(range(len(status_order))))
+    ax0.set_yticklabels(status_order, fontsize=8)
+    ax0.set_xlabel('Tick')
+    ax0.set_title('Treaty Status Timeline', fontsize=9)
+    ax0.legend(fontsize=7, loc='upper right')
+    ax0.grid(True, alpha=0.3, axis='x')
+
+    # ── Objective status panel (only when objectives exist) ───────────────────
+    if has_objectives:
+        ax_obj = axes[ax_idx]; ax_idx += 1
+        # obj_rows: list of dicts with tick, treaty_id, clause_index, objective_type,
+        #           responsible_party, status, deadline_ticks
+        by_obj = defaultdict(list)
+        for row in obj_rows:
+            key = f"T#{row['treaty_id']} {row['objective_type']} (c{row['clause_index']})"
+            by_obj[key].append(row)
+
+        obj_status_order = ['pending', 'met', 'failed', 'waived']
+        obj_status_y = {s: i for i, s in enumerate(obj_status_order)}
+        obj_keys = sorted(by_obj.keys())
+        obj_colors = cm.tab10(np.linspace(0, 1, max(len(obj_keys), 1)))
+
+        for (okey, rows), color in zip([(k, by_obj[k]) for k in obj_keys], obj_colors):
+            rows_sorted = sorted(rows, key=lambda r: int(r['tick']))
+            k_idx = obj_keys.index(okey)
+            prev_status, seg_start = None, None
+            for row in rows_sorted:
+                tick   = int(row['tick'])
+                status = row['status']
+                if status != prev_status:
+                    if prev_status is not None and seg_start is not None:
+                        y = obj_status_y.get(prev_status, 0) + k_idx * 0.12
+                        ax_obj.barh(y, tick - seg_start, left=seg_start, height=0.10,
+                                    color=OBJ_STATUS_COLORS.get(prev_status, '#888'), alpha=0.85)
+                    seg_start = tick
+                    prev_status = status
+            if prev_status is not None and seg_start is not None and rows_sorted:
+                last_tick = int(rows_sorted[-1]['tick'])
+                y = obj_status_y.get(prev_status, 0) + k_idx * 0.12
+                ax_obj.barh(y, last_tick - seg_start + 1, left=seg_start, height=0.10,
+                            color=OBJ_STATUS_COLORS.get(prev_status, '#888'), alpha=0.85,
+                            label=okey)
+
+        ax_obj.set_yticks(list(range(len(obj_status_order))))
+        ax_obj.set_yticklabels(obj_status_order, fontsize=8)
+        ax_obj.set_xlabel('Tick')
+        ax_obj.set_title('Objective Clause Status Over Time', fontsize=9)
+        ax_obj.legend(fontsize=7, loc='upper right')
+        ax_obj.grid(True, alpha=0.3, axis='x')
+
+    # ── Trust panel ───────────────────────────────────────────────────────────
+    ax1 = axes[ax_idx]; ax_idx += 1
+    nation_colors = cm.tab10(np.linspace(0, 1, max(n_nations, 1)))
+    for (nid, rows), color in zip(sorted(by_nation.items()), nation_colors):
+        rows_sorted = sorted(rows, key=lambda r: int(r['tick']))
+        ticks  = [int(r['tick']) for r in rows_sorted]
+        trusts = [float(r['trust']) for r in rows_sorted]
+        label  = nid.replace('nation_', '')
+        ax1.plot(ticks, trusts, label=label, color=color, linewidth=1.8)
+    ax1.axhline(50, color='#aaa', linestyle='--', linewidth=0.8, alpha=0.5, label='Baseline (50)')
+    ax1.set_ylabel('Trust')
+    ax1.set_title('Trust Over Time', fontsize=9)
+    ax1.set_ylim(0, 100)
+    ax1.legend(fontsize=7, loc='lower right')
+    ax1.grid(True, alpha=0.3)
+
+    # ── Wealth panel ──────────────────────────────────────────────────────────
+    ax2 = axes[ax_idx]; ax_idx += 1
+    for (nid, rows), color in zip(sorted(by_nation.items()), nation_colors):
+        rows_sorted = sorted(rows, key=lambda r: int(r['tick']))
+        ticks  = [int(r['tick']) for r in rows_sorted]
+        wealth = [float(r['wealth_stock']) for r in rows_sorted]
+        label  = nid.replace('nation_', '')
+        ax2.plot(ticks, wealth, label=label, color=color, linewidth=1.8)
+    ax2.set_xlabel('Tick')
+    ax2.set_ylabel('Wealth stockpile')
+    ax2.set_title('Wealth Over Time (collateral deductions + tribute + fines)', fontsize=9)
+    ax2.legend(fontsize=7, loc='upper right')
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    path = os.path.join(output_dir, 'charts', 'treaty-status-over-time.png')
+    plt.savefig(path, dpi=100, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ {path}")
+
+
+# ── Chart 5: Trade flow over time ─────────────────────────────────────────────
+
+FLOW_STATUS_COLORS = {
+    'paid':     '#5bbcff',
+    'missed':   '#ffaa33',
+    'breached': '#ff4444',
+    'degraded': '#888888',
+    'pending':  '#333355',
+    'inactive': '#222233',
+}
+
+def chart_trade_flow_over_time(flow_rows, dipl_rows, output_dir):
+    if not flow_rows:
+        return
+
+    # Group by clause key: "treaty_id:clause_index (from→to resource amount)"
+    by_clause = defaultdict(list)
+    for row in flow_rows:
+        key = f"T#{row['treaty_id']} c{row['clause_index']} {row['from_nation'].replace('nation_','')[:6]}→{row['to_nation'].replace('nation_','')[:6]} {row['resource']}"
+        by_clause[key].append(row)
+
+    # Group nation wealth by nation_id.
+    by_nation = defaultdict(list)
+    for row in dipl_rows:
+        by_nation[row['nation_id']].append(row)
+
+    n_clauses = len(by_clause)
+    n_nations = len(by_nation)
+    if n_clauses == 0:
+        return
+
+    fig, axes = plt.subplots(2, 1, figsize=(10, 7))
+    fig.suptitle('Trade Flows Over Time', y=1.01)
+
+    # ── Flow status bar chart ─────────────────────────────────────────────────
+    ax0 = axes[0]
+    clause_keys = sorted(by_clause.keys())
+    clause_colors = cm.tab10(np.linspace(0, 1, max(n_clauses, 1)))
+
+    for y_idx, (ckey, rows) in enumerate([(k, by_clause[k]) for k in clause_keys]):
+        rows_sorted = sorted(rows, key=lambda r: int(r['tick']))
+        for row in rows_sorted:
+            tick = int(row['tick'])
+            status = row['flow_status']
+            if status in ('pending', 'inactive'):
+                continue
+            color = FLOW_STATUS_COLORS.get(status, '#444')
+            ax0.barh(y_idx, 1, left=tick - 0.5, height=0.6, color=color, alpha=0.85)
+
+    ax0.set_yticks(list(range(len(clause_keys))))
+    ax0.set_yticklabels([k for k in clause_keys], fontsize=7)
+    ax0.set_xlabel('Tick')
+    ax0.set_title('Trade Clause Flow Status per Tick', fontsize=9)
+
+    # Legend
+    from matplotlib.patches import Patch
+    legend_elements = [Patch(facecolor=c, label=s) for s, c in FLOW_STATUS_COLORS.items()
+                       if s not in ('pending', 'inactive')]
+    ax0.legend(handles=legend_elements, fontsize=7, loc='upper right')
+    ax0.grid(True, alpha=0.3, axis='x')
+
+    # ── Wealth over time ──────────────────────────────────────────────────────
+    ax1 = axes[1]
+    nation_colors = cm.tab10(np.linspace(0, 1, max(n_nations, 1)))
+    for (nid, rows), color in zip(sorted(by_nation.items()), nation_colors):
+        rows_sorted = sorted(rows, key=lambda r: int(r['tick']))
+        ticks  = [int(r['tick'])  for r in rows_sorted]
+        wealth = [float(r['wealth_stock']) for r in rows_sorted]
+        label  = nid.replace('nation_', '')
+        ax1.plot(ticks, wealth, label=label, color=color, linewidth=1.8)
+    ax1.set_xlabel('Tick')
+    ax1.set_ylabel('Wealth stockpile')
+    ax1.set_title('Nation Wealth (trade flows visible as divergence)', fontsize=9)
+    ax1.legend(fontsize=7, loc='upper right')
+    ax1.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    path = os.path.join(output_dir, 'charts', 'trade-flow-over-time.png')
+    plt.savefig(path, dpi=100, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ {path}")
+
 # ── Main ──────────────────────────────────────────────────────────────────────
+
+def load_objective_rows(treaty_rows, output_dir):
+    """
+    Build objective-clause rows from treaty-metrics.csv by reading the report.md
+    objective status timeline. Since objectives are stored in the report but not
+    in a separate CSV, we derive them from the treaty-metrics.csv by scanning
+    the events.csv for objective events, and reconstruct status transitions.
+    Simpler: just read from a dedicated objective-metrics.csv if it exists,
+    otherwise return empty.
+    """
+    path = os.path.join(output_dir, 'objective-metrics.csv')
+    if os.path.exists(path):
+        return load_csv(path)
+    return []
+
 
 def main():
     if len(sys.argv) < 2:
@@ -178,6 +432,10 @@ def main():
 
     terr_rows   = load_csv(os.path.join(output_dir, 'territory-metrics.csv'))
     nation_rows = load_csv(os.path.join(output_dir, 'nation-metrics.csv'))
+    treaty_rows = load_csv(os.path.join(output_dir, 'treaty-metrics.csv'))
+    dipl_rows   = load_csv(os.path.join(output_dir, 'nation-diplomacy.csv'))
+    flow_rows   = load_csv(os.path.join(output_dir, 'trade-flows.csv'))
+    obj_rows    = load_objective_rows(treaty_rows, output_dir)
 
     # Determine "interesting" territories: owned + unrest moved more than 2%.
     unrest_by_terr = defaultdict(list)
@@ -194,6 +452,10 @@ def main():
     for tid in interesting:
         chart_equilibrium_components(terr_rows, tid, output_dir)
     chart_nation_culture_drift(nation_rows, output_dir)
+    if treaty_rows:
+        chart_treaty_status_over_time(treaty_rows, dipl_rows, output_dir, obj_rows or None)
+    if flow_rows:
+        chart_trade_flow_over_time(flow_rows, dipl_rows, output_dir)
 
     print(f"\nCharts written to {charts_dir}/")
 

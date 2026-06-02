@@ -1,24 +1,15 @@
 import Fastify from 'fastify';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
-import { loadTerritoryDefs, BUILD_INDUSTRY, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, computeConquestShock, bfsDistance, CONQUEST_SHOCK_MIN, RECENT_ACQUISITION_WINDOW } from '@war/engine';
+import { loadTerritoryDefs, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, computeConquestShock, bfsDistance, CONQUEST_SHOCK_MIN, RECENT_ACQUISITION_WINDOW } from '@war/engine';
 import type { TerritoryDef, TerritoryState } from '@war/engine';
 import { prisma } from './db';
 import { ensureWorldInitialized } from './world';
 import { runTick, startScheduler } from './tick';
 import { ADMIN_KEY, DATA_FILE, PORT, SESSION_SECRET } from './config';
 import { authenticate } from './auth';
-import { currentPhase, getPhaseOverride, setPhaseOverride, mandateBudget, ACTION_COSTS, ACTION_PHASE, FORT_MANDATE_COSTS } from './phase';
-
-/** Mandate refunded when a pending construction is cancelled. Must stay in sync
- *  with the costs charged in the /api/action deferred paths below. */
-const PENDING_MANDATE_COST: Record<string, number> = {
-  road: ACTION_COSTS['build_road']!,
-  port: ACTION_COSTS['build_port']!,
-  fort_l1: FORT_MANDATE_COSTS[1],
-  fort_l2: FORT_MANDATE_COSTS[2],
-  fort_l3: FORT_MANDATE_COSTS[3],
-};
+import { currentPhase, getPhaseOverride, setPhaseOverride, mandateBudget, ACTION_COSTS, ACTION_PHASE } from './phase';
+import { actionRegistry } from './actions';
 
 const app = Fastify({ logger: true });
 
@@ -127,6 +118,9 @@ const start = async () => {
           pendingConstructionType: (row.pendingConstructionType ?? null) as TerritoryState['pendingConstructionType'],
           ownershipShock: row.ownershipShock,
           acquiredTick: row.acquiredTick ?? null,
+          localPopStock: row.localPopStock,
+          localIndStock: row.localIndStock,
+          localWltStock: row.localWltStock,
         },
       };
     }
@@ -179,6 +173,12 @@ const start = async () => {
         entry.constructionType = t.constructionType ?? null;
         entry.constructionTicksLeft = t.constructionTicksLeft ?? null;
         entry.pendingConstructionType = t.pendingConstructionType ?? null;
+        // Local stockpiles shown for own territories (trade source selection).
+        if (t.ownerId === nationId) {
+          entry.localPopStock = t.localPopStock;
+          entry.localIndStock = t.localIndStock;
+          entry.localWltStock = t.localWltStock;
+        }
 
         // Culture breakdown — only meaningful when territory has an owner.
         if (t.ownerId && nationCultures[t.ownerId]) {
@@ -237,29 +237,9 @@ const start = async () => {
     const body = request.body as { type?: string; payload?: unknown };
     const { type, payload } = body;
     if (!type) return reply.code(400).send({ error: 'Missing action type' });
-    // cancel_pending_construction is handled immediately — not via QueuedAction.
-    // It refunds the mandate + industry pre-paid at deferred-queue time.
-    if (type === 'cancel_pending_construction') {
-      const p = payload as { territoryId?: string };
-      if (!p?.territoryId) return reply.code(400).send({ error: 'Missing territoryId' });
-      const territory = await prisma.territoryState.findUnique({ where: { id: p.territoryId } });
-      if (!territory) return reply.code(404).send({ error: 'Territory not found' });
-      if (territory.ownerId !== nationId) return reply.code(403).send({ error: 'Not your territory' });
-      if (!territory.pendingConstructionType) return reply.code(400).send({ error: 'No pending construction to cancel' });
-      const pendingType = territory.pendingConstructionType;
-      const mandateRefund = PENDING_MANDATE_COST[pendingType] ?? 0;
-      const industryRefund = BUILD_INDUSTRY[pendingType] ?? 0;
-      await prisma.$transaction([
-        prisma.territoryState.update({ where: { id: p.territoryId }, data: { pendingConstructionType: null } }),
-        prisma.nation.update({ where: { id: nationId }, data: {
-          mandateUsed: { decrement: mandateRefund },
-          indStock: { increment: industryRefund },
-        }}),
-      ]);
-      return { ok: true };
-    }
 
-    if (!(type in ACTION_COSTS)) return reply.code(400).send({ error: `Unknown action type: ${type}` });
+    const handler = actionRegistry[type];
+    if (!handler) return reply.code(400).send({ error: `Unknown action type: ${type}` });
 
     const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
     if (!meta) return reply.code(503).send({ error: 'World not initialized' });
@@ -277,112 +257,31 @@ const start = async () => {
     if (!nation) return reply.code(404).send({ error: 'Nation not found' });
     const myBudget = mandateBudget(myDevCount, myFullCount);
 
-    // cost may be overridden below for build_fort (variable per level).
-    // Mandate check runs after type-specific blocks so the real cost is known.
-    let cost = ACTION_COSTS[type]!;
-    // finalPayload may be enriched below (e.g. build_fort adds targetLevel).
-    let finalPayload: object = payload as object;
+    const ctx = {
+      nationId,
+      payload,
+      prisma,
+      defById,
+      allDefs: defs,
+      nation: { id: nation.id, mandateUsed: nation.mandateUsed, indStock: nation.indStock, popStock: nation.popStock, wealthStock: nation.wealthStock },
+      myBudget,
+      currentTick: meta.tick,
+      currentPhase: currentPhase(),
+    };
 
-    // Each action type owns its full validity check: current DB state AND already-queued
-    // actions. The construction slot is strict and per-territory: while any build is
-    // in progress OR queued this tick, no other build of any type may be queued on
-    // that territory. Add a matching block for every new action type in Phase 4+.
-    if (type === 'build_road') {
-      const p = payload as { territoryId?: string };
-      if (!p?.territoryId) return reply.code(400).send({ error: 'Missing territoryId' });
-      const territory = await prisma.territoryState.findUnique({ where: { id: p.territoryId } });
-      if (!territory) return reply.code(404).send({ error: 'Territory not found' });
-      if (territory.ownerId !== nationId) return reply.code(403).send({ error: 'Not your territory' });
-      if (territory.hasRoad) return reply.code(400).send({ error: 'Territory already has a road' });
-      if (territory.pendingConstructionType !== null) return reply.code(400).send({ error: 'Next construction already queued' });
+    const result = await handler.validate(ctx);
 
-      if (territory.constructionType !== null) {
-        // DEFERRED PATH: queue road to fire when current construction finishes.
-        if (nation.mandateUsed + cost > myBudget) return reply.code(400).send({ error: 'Insufficient mandates' });
-        await prisma.$transaction([
-          prisma.territoryState.update({ where: { id: p.territoryId }, data: { pendingConstructionType: 'road' } }),
-          prisma.nation.update({ where: { id: nationId }, data: { mandateUsed: { increment: cost } } }),
-        ]);
-        return { ok: true };
-      }
+    if (result.ok === 'queued') return { ok: true };
 
-      const alreadyQueued = await prisma.queuedAction.findFirst({
-        where: { payload: { path: ['territoryId'], equals: p.territoryId } },
-      });
-      if (alreadyQueued) return reply.code(400).send({ error: 'A build is already queued for this territory this tick' });
-    }
+    if (result.ok === 'error') return reply.code(result.status).send({ error: result.reason });
 
-    if (type === 'build_port') {
-      const p = payload as { territoryId?: string };
-      if (!p?.territoryId) return reply.code(400).send({ error: 'Missing territoryId' });
-      const territory = await prisma.territoryState.findUnique({ where: { id: p.territoryId } });
-      if (!territory) return reply.code(404).send({ error: 'Territory not found' });
-      if (territory.ownerId !== nationId) return reply.code(403).send({ error: 'Not your territory' });
-      if (!defById.get(p.territoryId)?.isCoastal) return reply.code(400).send({ error: 'Territory is not coastal' });
-      if (territory.hasPort) return reply.code(400).send({ error: 'Territory already has a port' });
-      if (territory.pendingConstructionType !== null) return reply.code(400).send({ error: 'Next construction already queued' });
-      if (nation.indStock < BUILD_INDUSTRY['port']!) return reply.code(400).send({ error: 'Insufficient industry stockpile' });
-
-      if (territory.constructionType !== null) {
-        // DEFERRED PATH: queue port build to start when current construction finishes.
-        if (nation.mandateUsed + cost > myBudget) return reply.code(400).send({ error: 'Insufficient mandates' });
-        await prisma.$transaction([
-          prisma.territoryState.update({ where: { id: p.territoryId }, data: { pendingConstructionType: 'port' } }),
-          prisma.nation.update({ where: { id: nationId }, data: { mandateUsed: { increment: cost }, indStock: { decrement: BUILD_INDUSTRY['port']! } } }),
-        ]);
-        return { ok: true };
-      }
-
-      const alreadyQueued = await prisma.queuedAction.findFirst({
-        where: { payload: { path: ['territoryId'], equals: p.territoryId } },
-      });
-      if (alreadyQueued) return reply.code(400).send({ error: 'A build is already queued for this territory this tick' });
-    }
-
-    if (type === 'build_fort') {
-      const p = payload as { territoryId?: string };
-      if (!p?.territoryId) return reply.code(400).send({ error: 'Missing territoryId' });
-      const territory = await prisma.territoryState.findUnique({ where: { id: p.territoryId } });
-      if (!territory) return reply.code(404).send({ error: 'Territory not found' });
-      if (territory.ownerId !== nationId) return reply.code(403).send({ error: 'Not your territory' });
-      if (territory.fortificationLevel >= 3) return reply.code(400).send({ error: 'Fortification already at maximum level' });
-      if (territory.pendingConstructionType !== null) return reply.code(400).send({ error: 'Next construction already queued' });
-      const targetLevel = (territory.fortificationLevel + 1) as 1 | 2 | 3;
-      const constructionType = `fort_l${targetLevel}` as const;
-      if (nation.indStock < BUILD_INDUSTRY[constructionType]!) return reply.code(400).send({ error: 'Insufficient industry stockpile' });
-      cost = FORT_MANDATE_COSTS[targetLevel];
-      finalPayload = { territoryId: p.territoryId, targetLevel };
-
-      if (territory.constructionType !== null) {
-        // DEFERRED PATH: queue fort build to start when current construction finishes.
-        if (nation.mandateUsed + cost > myBudget) return reply.code(400).send({ error: 'Insufficient mandates' });
-        await prisma.$transaction([
-          prisma.territoryState.update({ where: { id: p.territoryId }, data: { pendingConstructionType: constructionType } }),
-          prisma.nation.update({ where: { id: nationId }, data: { mandateUsed: { increment: cost }, indStock: { decrement: BUILD_INDUSTRY[constructionType]! } } }),
-        ]);
-        return { ok: true };
-      }
-
-      const alreadyQueued = await prisma.queuedAction.findFirst({
-        where: { payload: { path: ['territoryId'], equals: p.territoryId } },
-      });
-      if (alreadyQueued) return reply.code(400).send({ error: 'A build is already queued for this territory this tick' });
-    }
-
+    // result.ok === 'ready' — normal path: mandate check then queue
+    const { cost, finalPayload } = result;
     if (nation.mandateUsed + cost > myBudget) {
       return reply.code(400).send({ error: 'Insufficient mandates' });
     }
 
-    await prisma.$transaction([
-      prisma.queuedAction.create({
-        data: { nationId, phase: currentPhase(), type, payload: finalPayload, tickQueued: meta.tick },
-      }),
-      prisma.nation.update({
-        where: { id: nationId },
-        data: { mandateUsed: { increment: cost } },
-      }),
-    ]);
-
+    await handler.queue(ctx, cost, finalPayload);
     return { ok: true };
   });
 
@@ -495,6 +394,9 @@ const start = async () => {
           pendingConstructionType: (row.pendingConstructionType ?? null) as TerritoryState['pendingConstructionType'],
           ownershipShock: row.ownershipShock,
           acquiredTick: row.acquiredTick ?? null,
+          localPopStock: row.localPopStock,
+          localIndStock: row.localIndStock,
+          localWltStock: row.localWltStock,
         },
       };
     }
@@ -644,6 +546,7 @@ const start = async () => {
               constructionTicksLeft: row.constructionTicksLeft ?? null,
               pendingConstructionType: (row.pendingConstructionType ?? null) as TerritoryState['pendingConstructionType'],
               ownershipShock: row.ownershipShock, acquiredTick: row.acquiredTick ?? null,
+              localPopStock: row.localPopStock, localIndStock: row.localIndStock, localWltStock: row.localWltStock,
             },
           };
         }
@@ -778,6 +681,299 @@ const start = async () => {
     }
     await prisma.territoryState.update({ where: { id }, data: { [trait]: value } });
     return { ok: true };
+  });
+
+  // ── Diplomacy API ──────────────────────────────────────────────────────────
+
+  // GET /api/diplomacy — returns the calling nation's diplomacy state:
+  // active treaties, incoming/outgoing proposals, their Trust, partner Trust values.
+  app.get('/api/diplomacy', async (request, reply) => {
+    const nationId = getSession(request);
+    if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const [
+      myNation,
+      activeTreaties,
+      incomingProposals,
+      outgoingProposals,
+      allNations,
+      incomingInstantTrades,
+      outgoingInstantTrades,
+    ] = await Promise.all([
+      prisma.nation.findUnique({ where: { id: nationId } }),
+      prisma.treaty.findMany({
+        where: { status: { in: ['active', 'degraded'] }, parties: { some: { nationId } } },
+        include: { parties: true, clauses: { include: { tradeRoute: true, objectiveClause: true } }, proposal: { select: { proposerId: true, targetId: true } } },
+      }),
+      prisma.proposal.findMany({
+        where: { targetId: nationId, status: 'pending' },
+        include: { clauses: true },
+      }),
+      prisma.proposal.findMany({
+        where: { proposerId: nationId, status: 'pending' },
+        include: { clauses: true },
+      }),
+      prisma.nation.findMany({ select: { id: true, name: true, trust: true } }),
+      prisma.instantTrade.findMany({ where: { targetNationId: nationId, status: 'pending' } }),
+      prisma.instantTrade.findMany({ where: { proposerNationId: nationId, status: 'pending' } }),
+    ]);
+
+    if (!myNation) return reply.code(404).send({ error: 'Nation not found' });
+
+    const nationNameMap = Object.fromEntries(allNations.map((n) => [n.id, n.name]));
+    const nationTrustMap = Object.fromEntries(allNations.map((n) => [n.id, n.trust]));
+
+    return {
+      myTrust: myNation.trust,
+      inactivityTier: myNation.inactivityTier,
+      treaties: activeTreaties.map((t) => ({
+        id: t.id,
+        status: t.status,
+        termTicks: t.termTicks,
+        tickStarted: t.tickStarted,
+        tickEnds: t.tickEnds,
+        totalCollateral: t.totalCollateral,
+        parties: t.parties.map((p) => ({
+          nationId: p.nationId,
+          nationName: nationNameMap[p.nationId] ?? p.nationId,
+          collateralDeposited: p.collateralDeposited,
+          escrowAmount: p.escrowAmount,
+          refundRemaining: p.refundRemaining,
+        })),
+        clauses: t.clauses.map((c) => ({
+          id: c.id,
+          clauseIndex: c.clauseIndex,
+          type: c.type,
+          collateral: c.collateral,
+          payload: c.payload,
+          clauseStatus: c.clauseStatus,
+          missedPayments: c.missedPayments,
+          tradeRoute: (c as any).tradeRoute ? {
+            path: (c as any).tradeRoute.path,
+            isSeaRoute: (c as any).tradeRoute.isSeaRoute,
+            pathStale: (c as any).tradeRoute.pathStale,
+            capacity: (c as any).tradeRoute.capacity,
+            friction: (c as any).tradeRoute.friction,
+          } : null,
+          objectiveClause: (c as any).objectiveClause ?? null,
+        })),
+        partnerTrust: t.parties
+          .filter((p) => p.nationId !== nationId)
+          .map((p) => ({ nationId: p.nationId, trust: nationTrustMap[p.nationId] ?? 50 })),
+      })),
+      incomingProposals: incomingProposals.map((p) => ({
+        id: p.id,
+        proposerId: p.proposerId,
+        proposerName: nationNameMap[p.proposerId] ?? p.proposerId,
+        proposerTrust: nationTrustMap[p.proposerId] ?? 50,
+        termTicks: p.termTicks,
+        proposerCollateral: p.proposerCollateral,
+        targetCollateral: p.targetCollateral,
+        tickProposed: p.tickProposed,
+        expiresAtTick: p.expiresAtTick,
+        clauses: p.clauses.map((c) => ({ type: c.type, collateral: c.collateral, payload: c.payload })),
+      })),
+      outgoingProposals: outgoingProposals.map((p) => ({
+        id: p.id,
+        targetId: p.targetId,
+        targetName: nationNameMap[p.targetId] ?? p.targetId,
+        termTicks: p.termTicks,
+        proposerCollateral: p.proposerCollateral,
+        targetCollateral: p.targetCollateral,
+        tickProposed: p.tickProposed,
+        expiresAtTick: p.expiresAtTick,
+        clauses: p.clauses.map((c) => ({ type: c.type, collateral: c.collateral, payload: c.payload })),
+      })),
+      nationTrust: Object.fromEntries(allNations.map((n) => [n.id, { name: n.name, trust: n.trust }])),
+      incomingInstantTrades: incomingInstantTrades.map((t) => ({
+        id: t.id,
+        proposerNationId: t.proposerNationId,
+        proposerName: allNations.find((n) => n.id === t.proposerNationId)?.name ?? t.proposerNationId,
+        resource: t.resource,
+        amount: t.amount,
+        sourceTerritoryId: t.sourceTerritoryId,
+        tickProposed: t.tickProposed,
+        expiresAtTick: t.expiresAtTick,
+      })),
+      outgoingInstantTrades: outgoingInstantTrades.map((t) => ({
+        id: t.id,
+        targetNationId: t.targetNationId,
+        targetName: allNations.find((n) => n.id === t.targetNationId)?.name ?? t.targetNationId,
+        resource: t.resource,
+        amount: t.amount,
+        sourceTerritoryId: t.sourceTerritoryId,
+        tickProposed: t.tickProposed,
+        expiresAtTick: t.expiresAtTick,
+      })),
+    };
+  });
+
+  // ── Admin diplomacy endpoints ──────────────────────────────────────────────
+
+  // GET /api/admin/diplomacy — full treaty + trade inspector (god's-eye view)
+  app.get('/api/admin/diplomacy', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const [treaties, proposals, nations, instantTrades, tradeRoutes] = await Promise.all([
+      prisma.treaty.findMany({ include: { parties: true, clauses: { include: { tradeRoute: true, objectiveClause: true } } } }),
+      prisma.proposal.findMany({ include: { clauses: true } }),
+      prisma.nation.findMany({ select: { id: true, name: true, trust: true, inactivityTier: true, lastBrokenPromiseTick: true } }),
+      prisma.instantTrade.findMany({ orderBy: { id: 'desc' }, take: 50 }),
+      prisma.tradeRoute.findMany({ include: { treatyClause: { select: { treatyId: true, type: true, clauseIndex: true } } } }),
+    ]);
+    return { treaties, proposals, nations, instantTrades, tradeRoutes };
+  });
+
+  // POST /api/admin/nation/:id/set-trust — force-set a nation's Trust
+  app.post('/api/admin/nation/:id/set-trust', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { value } = request.body as { value?: number };
+    if (typeof value !== 'number' || value < 0 || value > 100) {
+      return reply.code(400).send({ error: 'value must be 0–100' });
+    }
+    await prisma.nation.update({ where: { id }, data: { trust: value } });
+    return { ok: true };
+  });
+
+  // POST /api/admin/nation/:id/set-tier — force-set inactivity tier (for testing degradation)
+  app.post('/api/admin/nation/:id/set-tier', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { tier } = request.body as { tier?: string };
+    const validTiers = ['active', 'dormant', 'autopilot', 'abandoned'];
+    if (!tier || !validTiers.includes(tier)) {
+      return reply.code(400).send({ error: `tier must be one of: ${validTiers.join(', ')}` });
+    }
+
+    // When setting Dormant: trigger treaty degradation — escrow inactive party's collateral
+    // and start active partner's refund. Mirror of the design doc §8.5 mechanic.
+    if (tier === 'dormant') {
+      const nation = await prisma.nation.findUnique({ where: { id } });
+      if (!nation) return reply.code(404).send({ error: 'Nation not found' });
+      const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+      const currentTick = meta?.tick ?? 0;
+
+      const activeTreaties = await prisma.treaty.findMany({
+        where: { status: 'active', parties: { some: { nationId: id } } },
+        include: { parties: true },
+      });
+
+      for (const treaty of activeTreaties) {
+        const inactiveParty = treaty.parties.find((p) => p.nationId === id)!;
+        const activeParty   = treaty.parties.find((p) => p.nationId !== id)!;
+
+        // Move inactive party's collateral to escrow.
+        await prisma.treatyParty.update({
+          where: { id: inactiveParty.id },
+          data: { escrowAmount: inactiveParty.collateralDeposited, escrowStartTick: currentTick, collateralDeposited: 0 },
+        });
+
+        // Begin active partner's refund over DEGRADATION_REFUND_TICKS.
+        await prisma.treatyParty.update({
+          where: { id: activeParty.id },
+          data: { refundRemaining: activeParty.collateralDeposited, refundStartTick: currentTick },
+        });
+
+        // Degrade treaty status.
+        await prisma.treaty.update({ where: { id: treaty.id }, data: { status: 'degraded' } });
+
+        await prisma.eventLog.create({
+          data: {
+            tick: currentTick,
+            message: `${nation.name} went Dormant. Treaty #${treaty.id} degraded. Active partner's collateral refund started.`,
+          },
+        });
+      }
+    }
+
+    // If returning to active from dormant: auto-upgrade degraded treaties, apply escrow skim.
+    if (tier === 'active') {
+      const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+      const currentTick = meta?.tick ?? 0;
+      const { ESCROW_SKIM_RATE } = await import('@war/engine');
+
+      const degradedTreaties = await prisma.treaty.findMany({
+        where: { status: 'degraded', parties: { some: { nationId: id } } },
+        include: { parties: true },
+      });
+
+      for (const treaty of degradedTreaties) {
+        const returningParty = treaty.parties.find((p) => p.nationId === id)!;
+        const escrow = returningParty.escrowAmount;
+        const skim = escrow * ESCROW_SKIM_RATE;
+        const refund = escrow - skim;
+
+        if (refund > 0) {
+          await prisma.nation.update({ where: { id }, data: { wealthStock: { increment: refund } } });
+        }
+
+        await prisma.treatyParty.update({
+          where: { id: returningParty.id },
+          data: { escrowAmount: 0, escrowStartTick: null, collateralDeposited: refund },
+        });
+
+        await prisma.treaty.update({ where: { id: treaty.id }, data: { status: 'active' } });
+
+        await prisma.eventLog.create({
+          data: {
+            tick: currentTick,
+            message: `Nation returned from Dormant. Treaty #${treaty.id} upgraded. Escrow skim: ${skim.toFixed(2)} Wealth.`,
+          },
+        });
+      }
+    }
+
+    await prisma.nation.update({ where: { id }, data: { inactivityTier: tier } });
+    return { ok: true, tier };
+  });
+
+  // POST /api/admin/treaty/:id/force-break — admin force-breaks a treaty (no Trust penalty)
+  app.post('/api/admin/treaty/:id/force-break', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const treatyId = parseInt(id, 10);
+    if (isNaN(treatyId)) return reply.code(400).send({ error: 'Invalid treaty id' });
+    const treaty = await prisma.treaty.findUnique({ where: { id: treatyId } });
+    if (!treaty) return reply.code(404).send({ error: 'Treaty not found' });
+    await prisma.treaty.update({ where: { id: treatyId }, data: { status: 'broken' } });
+    return { ok: true };
+  });
+
+  // POST /api/admin/objective/:id/force-meet — force an objective clause to 'met' status
+  // Used for testing without building the real infrastructure.
+  // curl -X POST http://localhost:3001/api/admin/objective/1/force-meet -H "X-Admin-Key: dev-only-insecure-key"
+  app.post('/api/admin/objective/:id/force-meet', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const objId = parseInt(id, 10);
+    if (isNaN(objId)) return reply.code(400).send({ error: 'Invalid objective clause id' });
+    const obj = await prisma.objectiveClause.findUnique({ where: { id: objId } });
+    if (!obj) return reply.code(404).send({ error: 'Objective clause not found' });
+    if (obj.status !== 'pending') return reply.code(400).send({ error: `Objective clause is already ${obj.status}` });
+    await prisma.objectiveClause.update({ where: { id: objId }, data: { status: 'met' } });
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    await prisma.eventLog.create({
+      data: { tick: meta?.tick ?? 0, message: `[admin] Objective clause #${objId} (${obj.objectiveType}) force-set to met.` },
+    });
+    return { ok: true, id: objId, status: 'met' };
+  });
+
+  // POST /api/admin/objective/:id/force-fail — force an objective clause to 'failed' status
+  // curl -X POST http://localhost:3001/api/admin/objective/1/force-fail -H "X-Admin-Key: dev-only-insecure-key"
+  app.post('/api/admin/objective/:id/force-fail', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const objId = parseInt(id, 10);
+    if (isNaN(objId)) return reply.code(400).send({ error: 'Invalid objective clause id' });
+    const obj = await prisma.objectiveClause.findUnique({ where: { id: objId } });
+    if (!obj) return reply.code(404).send({ error: 'Objective clause not found' });
+    if (obj.status !== 'pending') return reply.code(400).send({ error: `Objective clause is already ${obj.status}` });
+    await prisma.objectiveClause.update({ where: { id: objId }, data: { status: 'failed' } });
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    await prisma.eventLog.create({
+      data: { tick: meta?.tick ?? 0, message: `[admin] Objective clause #${objId} (${obj.objectiveType}) force-set to failed.` },
+    });
+    return { ok: true, id: objId, status: 'failed' };
   });
 
   // ── Startup ────────────────────────────────────────────────────────────────

@@ -77,8 +77,55 @@ export function captureSnapshot(world: WorldState, tick: number, defs: Territory
     nations[nid] = { stockpiles: n.stockpiles, culture: cultures[nid] ?? null };
   }
 
+  // Diplomacy snapshot: treaty state + per-nation Trust/tier/wealth.
+  const diplomacy: TickSnapshot['diplomacy'] = {
+    nationState: Object.fromEntries(
+      Object.entries(world.nations).map(([nid, n]) => [nid, {
+        trust: n.trust,
+        inactivityTier: n.inactivityTier,
+        wealthStock: n.stockpiles.wealth,
+      }]),
+    ),
+    treaties: world.treaties.map((t) => ({
+      id: t.id,
+      status: t.status,
+      partyIds: t.partyIds,
+      clauses: t.clauses.map((c) => c.type),
+      termTicks: t.termTicks,
+      tickEnds: t.tickEnds,
+      totalCollateral: t.totalCollateral,
+      collateralByParty: { ...t.collateralByParty },
+      escrowAmountByParty: { ...t.escrowAmountByParty },
+      refundRemainingByParty: { ...t.refundRemainingByParty },
+      objectives: t.clauses
+        .filter((c) => c.type === 'objective' && c.objective)
+        .map((c) => ({
+          clauseIndex: c.clauseIndex,
+          objectiveType: c.objective!.objectiveType,
+          status: c.objective!.status,
+          deadlineTicks: c.objective!.deadlineTicks,
+          responsibleParty: c.objective!.responsibleParty,
+        })),
+      tradeClauses: t.clauses
+        .filter((c) => c.type === 'trade')
+        .map((c) => {
+          const p = c.payload as { resource?: string; amount?: number; fromNationId?: string; toNationId?: string; sourceTerritoryId?: string };
+          return {
+            clauseIndex: c.clauseIndex,
+            clauseStatus: c.clauseStatus,
+            missedPayments: c.missedPayments,
+            resource: p.resource ?? '',
+            amount: p.amount ?? 0,
+            fromNationId: p.fromNationId ?? '',
+            toNationId: p.toNationId ?? '',
+            sourceTerritoryId: p.sourceTerritoryId ?? '',
+          };
+        }),
+    })),
+  };
+
   // Events from this specific tick.
   const events = world.eventLog.filter((e) => e.tick === tick);
 
-  return { tick, territories, nations, events };
+  return { tick, territories, nations, diplomacy, events };
 }

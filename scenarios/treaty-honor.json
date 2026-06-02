@@ -1,0 +1,42 @@
+{
+  "name": "treaty-honor",
+  "description": "Costa Rica and Guatemala sign a 10-tick non_aggression + tribute treaty at T1. Expected: collateral deposited, tribute flows each tick, treaty expires at T11, collateral returned, both nations receive Trust bonuses scaled to the 10-tick duration.",
+  "ticks": 15,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50, "wealthStock": 30 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50, "wealthStock": 30 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_costa_rica", "nation_guatemala"],
+        "clauses": [
+          { "type": "non_aggression", "collateral": 5 },
+          {
+            "type": "tribute",
+            "collateral": 3,
+            "payload": { "fromNationId": "nation_guatemala", "toNationId": "nation_costa_rica", "amount": 3 }
+          }
+        ],
+        "termTicks": 10,
+        "collateralByParty": {
+          "nation_costa_rica": 5,
+          "nation_guatemala":  8
+        }
+      }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

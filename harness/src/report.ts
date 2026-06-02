@@ -94,13 +94,104 @@ export function generateReport(result: RunResult, outputDir: string): void {
     }
   }
 
+  // ── Diplomacy summary ──────────────────────────────────────────────────────
+  const hasDipl = snapshots.some((s) => s.diplomacy.treaties.length > 0);
+  if (hasDipl) {
+    lines.push('\n---\n\n## Diplomacy Summary\n');
+
+    // Trust per nation across key ticks.
+    const snapTicks2 = [0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20].filter((t) => t <= ticks);
+    lines.push('### Trust Over Time\n');
+    const nationIds = scenario.world.nations.map((n) => n.id);
+    lines.push('| Tick | ' + scenario.world.nations.map((n) => n.name).join(' | ') + ' |');
+    lines.push('|---' + scenario.world.nations.map(() => '|---').join('') + '|');
+    for (const t of snapTicks2) {
+      const snap = snapshots[t];
+      if (!snap) continue;
+      const vals = nationIds.map((id) => {
+        const ns = snap.diplomacy.nationState[id];
+        return ns ? ns.trust.toFixed(1) : '—';
+      });
+      lines.push(`| T${t} | ${vals.join(' | ')} |`);
+    }
+
+    // Wealth per nation (shows collateral deductions and tribute flows).
+    lines.push('\n### Wealth Over Time (shows collateral + tribute effects)\n');
+    lines.push('| Tick | ' + scenario.world.nations.map((n) => n.name).join(' | ') + ' |');
+    lines.push('|---' + scenario.world.nations.map(() => '|---').join('') + '|');
+    for (const t of snapTicks2) {
+      const snap = snapshots[t];
+      if (!snap) continue;
+      const vals = nationIds.map((id) => {
+        const ns = snap.diplomacy.nationState[id];
+        return ns ? ns.wealthStock.toFixed(1) : '—';
+      });
+      lines.push(`| T${t} | ${vals.join(' | ')} |`);
+    }
+
+    // Treaty status timeline.
+    lines.push('\n### Treaty Status Timeline\n');
+    // Collect all treaty IDs seen across the run.
+    const allTreatyIds = new Set<number>();
+    for (const snap of snapshots) for (const t of snap.diplomacy.treaties) allTreatyIds.add(t.id);
+    for (const tid of allTreatyIds) {
+      const firstSeen = snapshots.find((s) => s.diplomacy.treaties.some((t) => t.id === tid));
+      if (!firstSeen) continue;
+      const tDef = firstSeen.diplomacy.treaties.find((t) => t.id === tid)!;
+      lines.push(`**Treaty #${tid}** (${tDef.clauses.join(' + ')}, ${tDef.termTicks}-tick term, collateral ${tDef.totalCollateral})\n`);
+      lines.push('| Tick | Status | Escrow A | Escrow B | Refund A | Refund B |');
+      lines.push('|------|--------|----------|----------|----------|----------|');
+      const [partyA, partyB] = tDef.partyIds;
+      for (const t of snapTicks2) {
+        const snap = snapshots[t];
+        if (!snap) continue;
+        const st = snap.diplomacy.treaties.find((tx) => tx.id === tid);
+        if (!st) { lines.push(`| T${t} | — | — | — | — | — |`); continue; }
+        lines.push(`| T${t} | ${st.status} | ${(st.escrowAmountByParty[partyA!] ?? 0).toFixed(1)} | ${(st.escrowAmountByParty[partyB!] ?? 0).toFixed(1)} | ${(st.refundRemainingByParty[partyA!] ?? 0).toFixed(1)} | ${(st.refundRemainingByParty[partyB!] ?? 0).toFixed(1)} |`);
+      }
+      lines.push('');
+
+      // Objective clause status timeline (if any).
+      if (tDef.objectives && tDef.objectives.length > 0) {
+        lines.push('**Objective Clauses:**\n');
+        for (const obj of tDef.objectives) {
+          lines.push(`_Clause ${obj.clauseIndex}: ${obj.objectiveType} · responsible: ${obj.responsibleParty} · deadline +${obj.deadlineTicks}t_\n`);
+          lines.push('| Tick | Status |');
+          lines.push('|------|--------|');
+          for (const t of snapTicks2) {
+            const snap = snapshots[t];
+            if (!snap) continue;
+            const st = snap.diplomacy.treaties.find((tx) => tx.id === tid);
+            const objSnap = st?.objectives?.find((o) => o.clauseIndex === obj.clauseIndex);
+            lines.push(`| T${t} | ${objSnap?.status ?? '—'} |`);
+          }
+          lines.push('');
+        }
+      }
+    }
+  }
+
   // ── Chart list ─────────────────────────────────────────────────────────────
+  const hasTradeFlowsForChart = snapshots.some((s) =>
+    s.diplomacy.treaties.some((t) => t.tradeClauses && t.tradeClauses.length > 0),
+  );
+  const hasObjectiveClausesForChart = snapshots.some((s) =>
+    s.diplomacy.treaties.some((t) => t.objectives && t.objectives.length > 0),
+  );
+
   lines.push('\n---\n\n## Charts\n');
   lines.push('- `charts/unrest-over-time.png` — Unrest per territory over all ticks');
   for (const tid of interestingTerrs) {
     lines.push(`- \`charts/equilibrium-${tid}.png\` — Equilibrium component breakdown for ${tid}`);
   }
   lines.push('- `charts/nation-culture-drift.png` — Nation culture axis drift over time');
+  if (hasDipl) {
+    lines.push('- `charts/treaty-status-over-time.png` — Treaty status transitions + Trust + Wealth' +
+      (hasObjectiveClausesForChart ? ' + Objective status' : ''));
+  }
+  if (hasTradeFlowsForChart) {
+    lines.push('- `charts/trade-flow-over-time.png` — Per-tick trade flows (paid/missed/degraded) alongside nation Wealth stockpiles');
+  }
   lines.push('\n*Generated by the WAR simulation harness.*');
 
   writeFileSync(join(outputDir, 'report.md'), lines.join('\n') + '\n');
@@ -173,5 +264,114 @@ export function generateCSVs(result: RunResult, outputDir: string): void {
   }
   writeFileSync(join(outputDir, 'events.csv'), evtRows.join('\n') + '\n');
 
-  console.log('  ✓ territory-metrics.csv  nation-metrics.csv  events.csv');
+  // treaty-metrics.csv — one row per treaty per tick
+  const hasTreaties = snapshots.some((s) => s.diplomacy.treaties.length > 0);
+  if (hasTreaties) {
+    const tmHeader = 'tick,treaty_id,status,party_a,party_b,clauses,term_ticks,tick_ends,total_collateral,collateral_a,collateral_b,escrow_a,escrow_b,refund_a,refund_b';
+    const tmRows: string[] = [tmHeader];
+    for (const snap of snapshots) {
+      for (const t of snap.diplomacy.treaties) {
+        const [pA, pB] = t.partyIds;
+        tmRows.push([
+          snap.tick, t.id, t.status,
+          pA!, pB!,
+          `"${t.clauses.join('|')}"`,
+          t.termTicks, t.tickEnds, t.totalCollateral.toFixed(2),
+          (t.collateralByParty[pA!] ?? 0).toFixed(2),
+          (t.collateralByParty[pB!] ?? 0).toFixed(2),
+          (t.escrowAmountByParty[pA!] ?? 0).toFixed(2),
+          (t.escrowAmountByParty[pB!] ?? 0).toFixed(2),
+          (t.refundRemainingByParty[pA!] ?? 0).toFixed(2),
+          (t.refundRemainingByParty[pB!] ?? 0).toFixed(2),
+        ].join(','));
+      }
+      // Per-nation diplomacy state
+    }
+    writeFileSync(join(outputDir, 'treaty-metrics.csv'), tmRows.join('\n') + '\n');
+  }
+
+  // nation-diplomacy.csv — trust + wealth per nation per tick
+  const ndHeader = 'tick,nation_id,trust,inactivity_tier,wealth_stock';
+  const ndRows: string[] = [ndHeader];
+  for (const snap of snapshots) {
+    for (const [nid, ns] of Object.entries(snap.diplomacy.nationState)) {
+      ndRows.push([snap.tick, nid, ns.trust.toFixed(3), ns.inactivityTier, ns.wealthStock.toFixed(2)].join(','));
+    }
+  }
+  writeFileSync(join(outputDir, 'nation-diplomacy.csv'), ndRows.join('\n') + '\n');
+
+  // trade-flows.csv — per-tick per-clause flow status (only when trade clauses exist).
+  // Flow status per tick is inferred from consecutive missedPayments values:
+  //   missedPayments increased vs prev tick → missed this tick
+  //   missedPayments == 0 and was active → paid this tick
+  //   clauseStatus == 'degraded' or 'breached' → stopped
+  const hasTradeFlows = snapshots.some((s) =>
+    s.diplomacy.treaties.some((t) => t.tradeClauses && t.tradeClauses.length > 0),
+  );
+  if (hasTradeFlows) {
+    const tfHeader = 'tick,treaty_id,clause_index,resource,amount,from_nation,to_nation,flow_status,missed_payments,clause_status';
+    const tfRows: string[] = [tfHeader];
+    // Build prev-tick missedPayments map: "treatyId:clauseIndex" → missedPayments
+    const prevMissed = new Map<string, number>();
+
+    for (const snap of snapshots) {
+      for (const t of snap.diplomacy.treaties) {
+        for (const tc of (t.tradeClauses ?? [])) {
+          const key = `${t.id}:${tc.clauseIndex}`;
+          const prev = prevMissed.get(key) ?? 0;
+          let flowStatus: string;
+          if (tc.clauseStatus === 'degraded') {
+            flowStatus = 'degraded';
+          } else if (tc.clauseStatus === 'breached') {
+            flowStatus = 'breached';
+          } else if (snap.tick === 0) {
+            flowStatus = 'pending'; // T0 = pre-treaty
+          } else if (tc.missedPayments > prev) {
+            flowStatus = 'missed';
+          } else if (tc.clauseStatus === 'active') {
+            flowStatus = snap.tick > 0 ? 'paid' : 'pending';
+          } else {
+            flowStatus = 'inactive';
+          }
+          prevMissed.set(key, tc.missedPayments);
+          tfRows.push([
+            snap.tick, t.id, tc.clauseIndex,
+            tc.resource, tc.amount.toFixed(2),
+            tc.fromNationId, tc.toNationId,
+            flowStatus, tc.missedPayments, tc.clauseStatus,
+          ].join(','));
+        }
+      }
+    }
+    writeFileSync(join(outputDir, 'trade-flows.csv'), tfRows.join('\n') + '\n');
+  }
+
+  // objective-metrics.csv — per-tick per-objective-clause status (for objective-status chart).
+  const hasObjectiveClauses = snapshots.some((s) =>
+    s.diplomacy.treaties.some((t) => t.objectives && t.objectives.length > 0),
+  );
+  if (hasObjectiveClauses) {
+    const omHeader = 'tick,treaty_id,clause_index,objective_type,responsible_party,status,deadline_ticks';
+    const omRows: string[] = [omHeader];
+    for (const snap of snapshots) {
+      for (const t of snap.diplomacy.treaties) {
+        for (const obj of (t.objectives ?? [])) {
+          omRows.push([
+            snap.tick, t.id, obj.clauseIndex,
+            obj.objectiveType, obj.responsibleParty,
+            obj.status, obj.deadlineTicks,
+          ].join(','));
+        }
+      }
+    }
+    writeFileSync(join(outputDir, 'objective-metrics.csv'), omRows.join('\n') + '\n');
+  }
+
+  const extraCsvs = [
+    hasTreaties ? 'treaty-metrics.csv' : null,
+    'nation-diplomacy.csv',
+    hasTradeFlows ? 'trade-flows.csv' : null,
+    hasObjectiveClauses ? 'objective-metrics.csv' : null,
+  ].filter(Boolean).join('  ');
+  console.log(`  ✓ territory-metrics.csv  nation-metrics.csv  events.csv  ${extraCsvs}`);
 }

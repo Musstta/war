@@ -1,0 +1,50 @@
+{
+  "name": "treaty-break",
+  "description": "Same treaty as treaty-honor, but Guatemala voluntarily breaks at T5. Expected: breaker's Trust drops by 20, collateral transfers to Costa Rica, wronged party's Trust unchanged, low-Trust fines kick in for Guatemala if below 50.",
+  "ticks": 15,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50, "wealthStock": 30 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50, "wealthStock": 30 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_costa_rica", "nation_guatemala"],
+        "clauses": [
+          { "type": "non_aggression", "collateral": 5 },
+          {
+            "type": "tribute",
+            "collateral": 3,
+            "payload": { "fromNationId": "nation_guatemala", "toNationId": "nation_costa_rica", "amount": 3 }
+          }
+        ],
+        "termTicks": 10,
+        "collateralByParty": {
+          "nation_costa_rica": 5,
+          "nation_guatemala":  8
+        }
+      }
+    },
+    {
+      "tick": 5,
+      "type": "break_treaty",
+      "payload": {
+        "treatyId": 1,
+        "breakerNationId": "nation_guatemala"
+      }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

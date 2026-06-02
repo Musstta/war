@@ -1,0 +1,13 @@
+tick,treaty_id,clause_index,objective_type,responsible_party,status,deadline_ticks
+1,1,2,build_port,partyA,pending,8
+2,1,2,build_port,partyA,pending,8
+3,1,2,build_port,partyA,pending,8
+4,1,2,build_port,partyA,pending,8
+5,1,2,build_port,partyA,pending,8
+6,1,2,build_port,partyA,pending,8
+7,1,2,build_port,partyA,pending,8
+8,1,2,build_port,partyA,pending,8
+9,1,2,build_port,partyA,failed,8
+10,1,2,build_port,partyA,failed,8
+11,1,2,build_port,partyA,failed,8
+12,1,2,build_port,partyA,failed,8

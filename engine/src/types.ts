@@ -52,6 +52,8 @@ export interface UnrestCauses {
   recentConquestPressure: number;
   /** Stub — always 0 until troop mechanics exist. */
   militaryBonus: number;
+  /** Pressure from active treaty clauses that culturally clash with this territory's traits. */
+  treatyCulturalClash: number;
   /** Clamped sum [0, 1]. This is the target unrest asymptotes toward. */
   equilibrium: number;
 }
@@ -110,6 +112,14 @@ export interface TerritoryState {
   ownershipShock: number;
   /** World tick when this territory last changed owner. null = native (never conquered). */
   acquiredTick: number | null;
+  /**
+   * Per-territory local stockpiles. Fed by that territory's own production each tick.
+   * Trade flows (instant trades, treaty trade clauses) draw from these local stores.
+   * Surplus flows to the nation's general stockpile at end of tick.
+   */
+  localPopStock: number;
+  localIndStock: number;
+  localWltStock: number;
 }
 
 export interface Territory {
@@ -133,11 +143,151 @@ export interface Nation {
   prestige: number;
   /** The territory ID considered the nation's capital, for distance-from-capital unrest. */
   capitalTerritoryId: string | null;
+  /** 'active' | 'dormant' | 'autopilot' | 'abandoned'. Deferred to AI sub-phase. */
+  inactivityTier: string;
+  /** Tick of the last broken-promise event; gates passive Trust recovery. null = never broken. */
+  lastBrokenPromiseTick: number | null;
 }
 
 export interface EventLogEntry {
   tick: number;
   message: string;
+}
+
+// ── Diplomacy ─────────────────────────────────────────────────────────────────
+
+export type ClauseType = 'non_aggression' | 'tribute' | 'trade' | 'military_access' | 'defense_pact' | 'objective';
+
+/**
+ * V1 objective types.
+ * Functional: build_road_connection, build_port, maintain_peace.
+ * Stub (data-model present, engine inert): joint_invasion, attack_player.
+ */
+export type ObjectiveType =
+  | 'build_road_connection'
+  | 'build_port'
+  | 'maintain_peace'
+  | 'joint_invasion'   // [STUB] — activate when War sub-phase ships
+  | 'attack_player';   // [STUB] — activate when War sub-phase ships
+
+export type ObjectiveStatus = 'pending' | 'met' | 'failed' | 'waived';
+export type ResponsibleParty = 'partyA' | 'partyB' | 'both';
+
+export type TradeResource = 'population' | 'industry' | 'wealth';
+
+export interface TreatyClause {
+  id: number;
+  clauseIndex: number;
+  type: ClauseType;
+  collateral: number;
+  /** Clause-specific parameters.
+   *  tribute:   { amount, fromNationId, toNationId }
+   *  trade:     { resource, amount, fromNationId, toNationId, sourceTerritoryId }
+   *  objective: { objectiveType, targetNationId?, targetTerritoryId?, deadlineTicks,
+   *               responsibleParty, status } — see ObjectiveClause
+   */
+  payload: Record<string, unknown>;
+  /** 'active' | 'degraded' | 'breached' */
+  clauseStatus: string;
+  /** Consecutive ticks a trade clause payment was missed. Resets to 0 on success. */
+  missedPayments: number;
+  /** Present only when type === 'objective'. Null otherwise. */
+  objective: ObjectiveClause | null;
+}
+
+/**
+ * Structured data for an objective clause. Stored in the DB as its own table
+ * (one-to-one with TreatyClause where type === 'objective').
+ */
+export interface ObjectiveClause {
+  id: number;
+  treatyClauseId: number;
+  objectiveType: ObjectiveType;
+  /** Nation the objective targets (for attack_player, joint_invasion). */
+  targetNationId: string | null;
+  /** Territory the objective targets (for build_port, build_road_connection). */
+  targetTerritoryId: string | null;
+  /**
+   * Ticks from treaty signing by which the objective must be met.
+   * Absolute deadline = treaty.tickStarted + deadlineTicks.
+   */
+  deadlineTicks: number;
+  status: ObjectiveStatus;
+  responsibleParty: ResponsibleParty;
+}
+
+export interface Treaty {
+  id: number;
+  proposalId: number;
+  /** Nation IDs of the two parties. */
+  partyIds: [string, string];
+  clauses: TreatyClause[];
+  /** 'active' | 'degraded' | 'broken' | 'expired' */
+  status: string;
+  termTicks: number;
+  tickStarted: number;
+  tickEnds: number;
+  totalCollateral: number;
+  /** Collateral deposited by each party, keyed by nationId. */
+  collateralByParty: Record<string, number>;
+  /** Set when status = 'broken'. */
+  breakerNationId: string | null;
+  /** Active-partner refund state: amount still to be returned, keyed by nationId. */
+  refundRemainingByParty: Record<string, number>;
+  refundStartTickByParty: Record<string, number | null>;
+  /** Inactive-partner escrow state: amount in escrow, keyed by nationId. */
+  escrowAmountByParty: Record<string, number>;
+  escrowStartTickByParty: Record<string, number | null>;
+}
+
+export interface Proposal {
+  id: number;
+  proposerId: string;
+  targetId: string;
+  /** 'pending' | 'accepted' | 'declined' | 'expired' */
+  status: string;
+  termTicks: number;
+  clauses: TreatyClause[];
+  proposerCollateral: number;
+  targetCollateral: number;
+  tickProposed: number;
+  expiresAtTick: number;
+  parentProposalId: number | null;
+}
+
+// ── Trade ─────────────────────────────────────────────────────────────────────
+
+export type InstantTradeStatus = 'pending' | 'accepted' | 'declined' | 'expired';
+
+/** A pending instant trade offer. Resource pre-deducted from source territory at queue time. */
+export interface InstantTrade {
+  id: number;
+  proposerNationId: string;
+  targetNationId: string;
+  resource: TradeResource;
+  amount: number;
+  sourceTerritoryId: string;
+  status: InstantTradeStatus;
+  tickProposed: number;
+  expiresAtTick: number;
+}
+
+/** Route computed for a trade clause at treaty signing. Stored as a real object (design doc §14A.6). */
+export interface TradeRoute {
+  id: number;
+  treatyClauseId: number;
+  sourceTerritoryId: string;
+  destinationNationId: string;
+  /** Ordered territory IDs from source to destination. Empty array = sea route (no intermediate territories). */
+  path: string[];
+  pathComputedAtTick: number;
+  /** True when any territory on path changed owner since pathComputedAtTick. */
+  pathStale: boolean;
+  /** [PLACEHOLDER] Max flow per tick. null until capacity formula is specified. */
+  capacity: number | null;
+  /** [PLACEHOLDER] Fraction of flow lost in transit. null until friction formula is specified. */
+  friction: number | null;
+  isSeaRoute: boolean;
 }
 
 export interface WorldState {
@@ -146,6 +296,10 @@ export interface WorldState {
   territories: Record<string, Territory>;
   nations: Record<string, Nation>;
   eventLog: EventLogEntry[];
+  treaties: Treaty[];
+  proposals: Proposal[];
+  instantTrades: InstantTrade[];
+  tradeRoutes: TradeRoute[];
 }
 
 /** A player action queued during the Main Phase and resolved at tick time. */

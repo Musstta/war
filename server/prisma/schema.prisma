@@ -29,9 +29,16 @@ model Nation {
   mandateUsed        Int     @default(0)
   // Territory considered the nation's capital for distance-from-capital unrest.
   capitalTerritoryId String?
+  // Inactivity tier: 'active' | 'dormant' | 'autopilot' | 'abandoned'. Deferred to AI sub-phase.
+  inactivityTier     String  @default("active")
+  // Tick of the last broken-promise event, for passive Trust recovery gating.
+  lastBrokenPromiseTick Int?
 
-  territories TerritoryState[]
-  actions     QueuedAction[]
+  territories    TerritoryState[]
+  actions        QueuedAction[]
+  treatyParties  TreatyParty[]
+  proposalsSent  Proposal[] @relation("ProposalProposer")
+  proposalsReceived Proposal[] @relation("ProposalTarget")
 }
 
 // One row per territory. Territory static data (name, base production, geography,
@@ -68,6 +75,13 @@ model TerritoryState {
   ownershipShock Float   @default(0)
   // Tick when this territory last changed owner. null = native (never conquered).
   acquiredTick   Int?
+
+  // Per-territory local stockpiles. Fed by production each tick.
+  // Used as the draw source for trade flows and instant trades.
+  // Separate from the nation's general stockpile (which holds surplus).
+  localPopStock  Float @default(0)
+  localIndStock  Float @default(0)
+  localWltStock  Float @default(0)
 }
 
 // Actions queued during the Main or Preparation phase, resolved atomically at the
@@ -91,4 +105,149 @@ model EventLog {
   message String
 
   @@index([tick])
+}
+
+// ── Diplomacy ─────────────────────────────────────────────────────────────────
+
+// A Proposal is a take-it-or-leave-it treaty offer (v1). Stores the full proposed
+// clause set so the recipient can read exactly what they're accepting.
+// parentProposalId is null in v1 but reserved for future counter-offer chains
+// (design doc §8.3). status: 'pending' | 'accepted' | 'declined' | 'expired'
+model Proposal {
+  id                 Int      @id @default(autoincrement())
+  proposerId         String
+  proposer           Nation   @relation("ProposalProposer", fields: [proposerId], references: [id])
+  targetId           String
+  target             Nation   @relation("ProposalTarget", fields: [targetId], references: [id])
+  status             String   @default("pending") // 'pending' | 'accepted' | 'declined' | 'expired'
+  termTicks          Int
+  proposerCollateral Float    @default(0) // each party's share; pooled into Treaty on accept
+  targetCollateral   Float    @default(0)
+  tickProposed       Int
+  expiresAtTick      Int      // tickProposed + PROPOSAL_EXPIRY_TICKS
+  parentProposalId   Int?     // null in v1; reserved for counter-offer chains
+  treaty             Treaty?
+
+  clauses ProposalClause[]
+}
+
+// Each clause in a proposal. type: 'non_aggression' | 'tribute' | 'trade' | 'military_access'
+//   | 'defense_pact' | 'objective'
+// payload holds clause-specific params; for objective clauses the full ObjectiveClause
+// fields are stored here too (objectiveType, targetNationId, targetTerritoryId,
+// deadlineTicks, responsibleParty). status is always 'pending' at proposal time.
+model ProposalClause {
+  id         Int      @id @default(autoincrement())
+  proposalId Int
+  proposal   Proposal @relation(fields: [proposalId], references: [id])
+  type       String
+  collateral Float    @default(0) // [PLACEHOLDER] per-clause collateral
+  payload    Json     @default("{}")
+}
+
+// An active (or recently terminated) treaty. Created when a Proposal is accepted.
+// status: 'active' | 'degraded' | 'broken' | 'expired'
+// totalCollateral = sum of all per-clause collateral values (design doc §8.4).
+model Treaty {
+  id              Int      @id @default(autoincrement())
+  proposalId      Int      @unique
+  proposal        Proposal @relation(fields: [proposalId], references: [id])
+  status          String   @default("active")
+  termTicks       Int
+  tickStarted     Int
+  tickEnds        Int      // tickStarted + termTicks
+  totalCollateral Float    @default(0)
+  breakerNationId String?  // set when status = 'broken'
+
+  parties TreatyParty[]
+  clauses TreatyClause[]
+}
+
+// Per-party treaty record: each nation's collateral deposit + degradation escrow state.
+// refundRemaining / refundStartTick: active partner's collateral returned over 3 ticks.
+// escrowAmount / escrowStartTick: inactive player's collateral held until return.
+model TreatyParty {
+  id                  Int    @id @default(autoincrement())
+  treatyId            Int
+  treaty              Treaty @relation(fields: [treatyId], references: [id])
+  nationId            String
+  nation              Nation @relation(fields: [nationId], references: [id])
+  collateralDeposited Float  @default(0)
+  escrowAmount        Float  @default(0)
+  escrowStartTick     Int?
+  refundRemaining     Float  @default(0)
+  refundStartTick     Int?
+
+  @@unique([treatyId, nationId])
+}
+
+// Each clause in an active treaty (mirrors ProposalClause).
+// clauseIndex is stable across the treaty lifetime — used for per-clause degradation.
+// clauseStatus: 'active' | 'degraded' | 'breached'
+// missedPayments: consecutive ticks where a trade clause could not deduct from source territory.
+model TreatyClause {
+  id             Int    @id @default(autoincrement())
+  treatyId       Int
+  treaty         Treaty @relation(fields: [treatyId], references: [id])
+  clauseIndex    Int    @default(0)
+  type           String
+  collateral     Float  @default(0)
+  payload        Json   @default("{}")
+  clauseStatus   String @default("active") // 'active' | 'degraded' | 'breached'
+  missedPayments Int    @default(0)        // consecutive missed trade payments
+
+  tradeRoute      TradeRoute?
+  objectiveClause ObjectiveClause?
+}
+
+// Objective clause — one per TreatyClause where type === 'objective'.
+// objectiveType: 'build_road_connection' | 'build_port' | 'maintain_peace'
+//                | 'joint_invasion' [STUB] | 'attack_player' [STUB]
+// status: 'pending' | 'met' | 'failed' | 'waived'
+// responsibleParty: 'partyA' | 'partyB' | 'both'
+model ObjectiveClause {
+  id                Int          @id @default(autoincrement())
+  treatyClauseId    Int          @unique
+  treatyClause      TreatyClause @relation(fields: [treatyClauseId], references: [id])
+  objectiveType     String       // see ObjectiveType enum in engine
+  targetNationId    String?      // for attack_player, joint_invasion
+  targetTerritoryId String?      // for build_port, build_road_connection
+  deadlineTicks     Int          // ticks from treaty signing
+  status            String       @default("pending") // 'pending' | 'met' | 'failed' | 'waived'
+  responsibleParty  String       @default("partyA")  // 'partyA' | 'partyB' | 'both'
+}
+
+// ── Trade ─────────────────────────────────────────────────────────────────────
+
+// A pending instant trade offer (no term, no collateral).
+// status: 'pending' | 'accepted' | 'declined' | 'expired'
+// Resource pre-deducted from sourceTerritoryId's local stockpile at queue time; refunded on non-accept.
+model InstantTrade {
+  id                Int    @id @default(autoincrement())
+  proposerNationId  String
+  targetNationId    String
+  resource          String // 'population' | 'industry' | 'wealth'
+  amount            Float
+  sourceTerritoryId String
+  status            String @default("pending")
+  tickProposed      Int
+  expiresAtTick     Int    // tickProposed + 1 (expires after 1 tick if not accepted this tick)
+}
+
+// Route object for a trade clause (design doc §14A.6: store routes as real objects).
+// path is a JSON array of territory IDs from source to destination.
+// pathStale: true when any territory on the path changed owner since pathComputedAtTick.
+// capacity and friction are [PLACEHOLDER] — not yet computed.
+model TradeRoute {
+  id                   Int          @id @default(autoincrement())
+  treatyClauseId       Int          @unique
+  treatyClause         TreatyClause @relation(fields: [treatyClauseId], references: [id])
+  sourceTerritoryId    String
+  destinationNationId  String
+  path                 Json         @default("[]")  // territory ID array
+  pathComputedAtTick   Int
+  pathStale            Boolean      @default(false)
+  capacity             Float?       // [PLACEHOLDER] max flow per tick
+  friction             Float?       // [PLACEHOLDER] fraction lost in transit
+  isSeaRoute           Boolean      @default(false)
 }

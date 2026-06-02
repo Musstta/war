@@ -105,6 +105,59 @@ Observations from running the three seed scenarios (belize-neglect, belize-integ
 
 **Note:** The current `3 + developedCount + fullyFortifiedCount` formula is sublinear at large empire scale (adding one more developed territory always gives exactly +1). A sublinear curve or hard cap may be appropriate once nations can hold 10+ territories, to avoid the action space becoming overwhelming. Flag for harness tuning when territory counts grow past ~6.
 
+---
+
+## Diplomacy constants (Phase 4 Diplomacy — all [PLACEHOLDER])
+
+**Minimum treaty term:** `MIN_TREATY_TERM = 3` ticks. Prevents 1-tick Trust farming. May need raising once real play reveals how fast proposals cycle; 5–7 ticks might feel more meaningful. Revisit after first multi-player diplomacy session.
+
+**Trust scale and recovery:** Scale 0–100, baseline 50, passive recovery `TRUST_RECOVERY_PER_TICK = 0.5/tick` toward 50, suppressed for `TRUST_RECOVERY_COOLDOWN = 10` ticks after a break. Break penalty `TRUST_BREAK_PENALTY = 20`. Completion bonus `min(term×0.5, 15)`. These are guesses — the right numbers depend on how fast diplomacy turns over and how punishing break events feel in real play. The completion-bonus curve may need flattening (log rather than linear) so short treaties don't feel worthless.
+
+**Proposal expiry window:** `PROPOSAL_EXPIRY_TICKS = 5`. With daily ticks this is 5 real days — long enough for the recipient to log in. Shorten if proposals get ignored; lengthen if 5 days feels too urgent for the group's play pace.
+
+**Low-Trust fines:** `LOW_TRUST_FINE_PER_TREATY = 1 Wealth/tick` per active treaty when Trust < 50. At 1 Wealth/tick with placeholder stockpile rates, this is nearly invisible — probably needs to be 2–5 Wealth to bite. Tune once Wealth economy is better understood.
+
+**Escrow skim:** `ESCROW_SKIM_RATE = 5%` of escrowed amount on inactive player's return. Flat percentage ignores time-in-escrow; the design doc says "scaled with time." Keep flat for now; add time scaling once real absence data exists (e.g. 5% base + 1% per 3 ticks in escrow, capped at 25%).
+
+**Degradation refund duration:** `DEGRADATION_REFUND_TICKS = 3`. Active partner gets their collateral back over 3 ticks. Fast enough to not sting; slow enough to be noticeable. Adjust if it feels abrupt.
+
+**Cultural-clash unrest weights:** `non_aggression = 0.04, defense_pact = 0.03, trade/military_access = 0.03`. All are tiny relative to compatibility pressure (max 0.55) and conquest shock (up to 0.70). Intention: visible in the breakdown, not dominant. May need 2–3× multiplier to be felt. Add harness scenarios once multi-treaty play exists.
+
+**Multi-party treaties: deferred (unchanged).** v1 is strictly bilateral (two-nation only). Multi-party treaties (e.g. three-nation trade packs, coalition defense pacts) are a meaningful design addition but require rethinking the `partyIds: [string, string]` type and the collateral pooling model. Spec when Diplomacy has a real play history.
+
+---
+
+## Trade constants (Phase 4 Trade — all [PLACEHOLDER])
+
+**Consecutive-missed-payment breach threshold:** `TRADE_MISSED_PAYMENT_BREACH_THRESHOLD = 2`. Two consecutive ticks of insufficient resources triggers breach (Trust penalty + collateral). One missed tick is a warning; two is a consequence. Tune once real trade data exists — 2 may be too forgiving for large flows or too harsh for variance-prone small nations. Could become non-consecutive with a cooldown window.
+
+**Per-clause collateral proration on partial degradation:** When a single trade clause degrades (source territory changes owner) but other clauses stay active, current code marks only that clause's `clauseStatus = 'degraded'` and does not move collateral. The escrow/refund split for partial degradation is [OPEN]: prorate `treaty.totalCollateral` by clause count, move the degraded clause's share to escrow for the sender, start refund for receiver. Deferred until first real partial-degradation case — will need targeted changes to `saveWorldState` and the engine diplomacy section.
+
+**Sea-route capacity vs land-route:** `SEA_ROUTE_CAPACITY = null`, `LAND_ROUTE_CAPACITY = null`. Sea routes (port-to-port) should have materially higher capacity than land — rough starting point: sea = 2× base land. Validate against actual play. Pathfinder already distinguishes sea vs land and sets `isSeaRoute`; add capacity values to `acceptTreaty.ts` when formula is specified.
+
+**Capacity formula:** `null` on all TradeRoute objects (tagged `[PLACEHOLDER]` in schema). To be defined: `capacity = f(endpoint infrastructure + path length)`. Likely: `baseCapacity × (1 + portBonus) / (1 + distancePenalty)`. Store as `TradeRoute.capacity` in DB. Add computation to `acceptTreaty.ts` and re-pathfind when staleness flag fires.
+
+**Friction formula:** `null` on all TradeRoute objects (tagged `[PLACEHOLDER]` in schema). To be defined: fraction of flow lost in transit. Likely: `friction = distanceFactor × (1 - roadMitigation)`. Hostile/unintegrated intermediate territory raises friction. When implemented: receiver gets `amount × (1 - friction)`, sender pays full `amount`. Add to trade clause resolution loop in `resolveTick` when ready.
+
+## Missed-payment threshold and per-clause collateral proration
+
+**Missed-payment consecutive threshold (`TRADE_MISSED_PAYMENT_BREACH_THRESHOLD = 2`):** Two consecutive ticks of insufficient Wealth triggers breach. The `trade-missed-payment` harness scenario confirms this fires correctly (miss at T1, miss at T2, breach at T2). The threshold of 2 is the first value to revisit once real multi-session play data exists — it may be too forgiving for large flows or too harsh for nations with volatile production. The "consecutive" requirement (resets on success) means a single bad tick followed by a good tick is a warning, not a breach. Consider a non-consecutive window (e.g. 2 misses in any 5-tick window) once production variance is understood from actual play.
+
+**Per-clause collateral proration on partial degradation:** When a single trade clause degrades (source territory lost) but the treaty has other active clauses, the current code marks only that clause's `clauseStatus = 'degraded'` without moving collateral. The `trade-source-lost` scenario confirms this: no Trust hit, no collateral change, just a status flag. The escrow/refund split for partial degradation is [OPEN] — prorate `treaty.totalCollateral` by clause count, move the degraded clause's share to escrow for the sender, start refund for receiver. Deferred until first real partial-degradation case in actual play. Per-clause collateral proration is the second value to revisit with real play data.
+
+---
+
+## Objective clause stubs — joint_invasion and attack_player
+
+`joint_invasion` and `attack_player` objective clause types are **data-model present but engine-inert** (no per-tick evaluation fires). The `ObjectiveClause` row is created correctly at treaty acceptance and persists through the world load/save cycle, but the evaluation branch in `resolveTick` does nothing and the status stays `pending` until the deadline passes (at which point it fails the same as any other missed deadline).
+
+**Activate when War sub-phase ships:**
+- `joint_invasion`: both parties queue attack actions against `targetTerritoryId` in the same tick — check the action queue before resolving combat.
+- `attack_player`: responsible party must have an active declared war against `targetNationId` by the deadline — check `War` table (or equivalent) each tick.
+- `breachMaintainPeaceObjectives()` in `diplomacy.ts` is the pre-wired call site for the War sub-phase to invoke when an attack resolves.
+
+---
+
 ## Fast-forward vote (deferred feature)
 
 when all active players check "ready for next tick," the tick fires immediately instead of waiting for midnight. Preserves the persistent-world design as default but lets a synchronously-online group compress time. Build post-Phase 4, post-harness. Needs to handle: who counts as "active" for the vote, what happens to queued actions for absent-but-not-Dormant players, whether the vote requires unanimous or majority. Need to differentiate between if this is possible in prep or only main phase and what the difference is. Differences in phases at the moment are still unrealized, so defer until the full action set and phase structure are specced.

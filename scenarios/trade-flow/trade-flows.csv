@@ -1,0 +1,15 @@
+tick,treaty_id,clause_index,resource,amount,from_nation,to_nation,flow_status,missed_payments,clause_status
+1,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,paid,0,active
+2,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,paid,0,active
+3,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,paid,0,active
+4,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,paid,0,active
+5,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,paid,0,active
+6,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,missed,1,active
+7,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,paid,0,active
+8,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,missed,1,active
+9,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,paid,0,active
+10,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,missed,1,active
+11,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,paid,1,active
+12,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,paid,1,active
+13,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,paid,1,active
+14,1,1,wealth,5.00,nation_guatemala,nation_costa_rica,paid,1,active
