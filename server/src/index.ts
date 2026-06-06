@@ -528,17 +528,34 @@ const start = async () => {
     const key = (request.headers as Record<string, string>)['x-admin-key'];
     if (key !== ADMIN_KEY) return reply.code(401).send({ error: 'unauthorized' });
     await prisma.$transaction([
+      prisma.councilQueuedAction.deleteMany(),
+      prisma.warCouncil.deleteMany(),
       prisma.queuedAction.deleteMany(),
       prisma.eventLog.deleteMany(),
-      prisma.warCouncil.deleteMany(),
+      prisma.instantTrade.deleteMany(),
+      prisma.tradeRoute.deleteMany(),
+      prisma.objectiveClause.deleteMany(),
+      prisma.treatyClause.deleteMany(),
+      prisma.treatyParty.deleteMany(),
+      prisma.treatyHistory.deleteMany(),
+      prisma.treaty.deleteMany(),
+      prisma.proposalClause.deleteMany(),
+      prisma.proposal.deleteMany(),
+      prisma.war.deleteMany(),
+      prisma.embassy.deleteMany(),
       prisma.army.deleteMany(),
+      prisma.territoryModifier.deleteMany(),
+      prisma.borderSkirmish.deleteMany(),
       prisma.territoryClaim.deleteMany(),
+      prisma.federationMember.deleteMany(),
+      prisma.federation.deleteMany(),
+      prisma.prestigeHistory.deleteMany(),
       prisma.territoryState.deleteMany(),
       prisma.nation.deleteMany(),
       prisma.worldMeta.deleteMany(),
     ]);
     await ensureWorldInitialized(defs);
-    return { ok: true, message: 'World reset to tick 0 with Phase 3 nations.' };
+    return { ok: true, message: 'World reset to tick 0.' };
   });
 
   // ── Admin API via /api/admin/* (proxied through Vite /api prefix) ───────────
@@ -570,12 +587,30 @@ const start = async () => {
 
   app.post('/api/admin/reset-world', async (request, reply) => {
     if (!requireAdminKey(request, reply)) return;
+    // Delete leaf tables first, then parents, to satisfy FK constraints.
     await prisma.$transaction([
+      prisma.councilQueuedAction.deleteMany(),
+      prisma.warCouncil.deleteMany(),
       prisma.queuedAction.deleteMany(),
       prisma.eventLog.deleteMany(),
-      prisma.warCouncil.deleteMany(),
+      prisma.instantTrade.deleteMany(),
+      prisma.tradeRoute.deleteMany(),
+      prisma.objectiveClause.deleteMany(),
+      prisma.treatyClause.deleteMany(),
+      prisma.treatyParty.deleteMany(),
+      prisma.treatyHistory.deleteMany(),
+      prisma.treaty.deleteMany(),
+      prisma.proposalClause.deleteMany(),
+      prisma.proposal.deleteMany(),
+      prisma.war.deleteMany(),
+      prisma.embassy.deleteMany(),
       prisma.army.deleteMany(),
+      prisma.territoryModifier.deleteMany(),
+      prisma.borderSkirmish.deleteMany(),
       prisma.territoryClaim.deleteMany(),
+      prisma.federationMember.deleteMany(),
+      prisma.federation.deleteMany(),
+      prisma.prestigeHistory.deleteMany(),
       prisma.territoryState.deleteMany(),
       prisma.nation.deleteMany(),
       prisma.worldMeta.deleteMany(),
@@ -891,6 +926,47 @@ const start = async () => {
       finalTraits,
       seed,
     };
+  });
+
+  /**
+   * GET /api/admin/world-map
+   * Returns all territories with their derived traits, starting population,
+   * adjacency, and current ownership. Used to verify initialization correctness.
+   */
+  app.get('/api/admin/world-map', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const rows = await prisma.territoryState.findMany();
+    const rowById = new Map(rows.map((r) => [r.id, r]));
+
+    const territories = defs.map((def) => {
+      const row = rowById.get(def.id);
+      const seed = deterministicSeed(def.id);
+      const derived = deriveTerritoryTraits(def.culturalFamily, def.geography, seed);
+      const finalTraits = {
+        individualist: def.traitOverrides?.individualist ?? derived.traits.individualist,
+        progressive:   def.traitOverrides?.progressive   ?? derived.traits.progressive,
+        militaristic:  def.traitOverrides?.militaristic  ?? derived.traits.militaristic,
+        expansionist:  def.traitOverrides?.expansionist  ?? derived.traits.expansionist,
+      };
+      return {
+        id: def.id,
+        name: def.name,
+        culturalFamily: def.culturalFamily,
+        geography: def.geography,
+        isCoastal: def.isCoastal,
+        adjacentIds: def.adjacentIds,
+        seaAdjacentIds: def.seaAdjacentIds,
+        ownerId: row?.ownerId ?? null,
+        derivedTraits: finalTraits,
+        startingPopulation: derived.startingPopulation,
+        productionModifiers: derived.productionModifiers,
+        basePopulation: def.basePopulation,
+        baseIndustry: def.baseIndustry,
+        baseWealth: def.baseWealth,
+      };
+    });
+
+    return { count: territories.length, territories };
   });
 
   // ── Dev endpoints (session-gated to player1 / nation_costa_rica) ───────────

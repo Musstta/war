@@ -1,0 +1,845 @@
+[
+  {
+    "id": "usa_northeast",
+    "name": "Northeastern United States",
+    "culturalFamily": "european",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "canada_central",
+      "canada_east",
+      "usa_midwest",
+      "usa_south",
+      "usa_west"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    },
+    "traitOverrides": {
+      "individualist": 0.3,
+      "progressive": 0.3
+    }
+  },
+  {
+    "id": "usa_midwest",
+    "name": "Midwestern United States",
+    "culturalFamily": "european",
+    "geography": "inland",
+    "isCoastal": false,
+    "adjacentIds": [
+      "canada_central",
+      "canada_west",
+      "usa_northeast",
+      "usa_south",
+      "usa_west"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 8,
+    "baseIndustry": 5,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "usa_south",
+    "name": "Southern United States",
+    "culturalFamily": "european",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "mexico_norte",
+      "usa_midwest",
+      "usa_northeast",
+      "usa_west"
+    ],
+    "seaAdjacentIds": [
+      "caribbean_west"
+    ],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "usa_west",
+    "name": "Western United States",
+    "culturalFamily": "european",
+    "geography": "mountainous",
+    "isCoastal": false,
+    "adjacentIds": [
+      "canada_northwest",
+      "canada_west",
+      "mexico_norte",
+      "usa_midwest",
+      "usa_northeast",
+      "usa_south"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 6,
+    "baseIndustry": 6,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "canada_west",
+    "name": "Western Canada",
+    "culturalFamily": "european",
+    "geography": "mountainous",
+    "isCoastal": false,
+    "adjacentIds": [
+      "canada_central",
+      "canada_northwest",
+      "usa_midwest",
+      "usa_west"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 6,
+    "baseIndustry": 6,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "canada_central",
+    "name": "Central Canada",
+    "culturalFamily": "european",
+    "geography": "inland",
+    "isCoastal": false,
+    "adjacentIds": [
+      "canada_east",
+      "canada_northwest",
+      "canada_west",
+      "usa_midwest",
+      "usa_northeast"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 8,
+    "baseIndustry": 5,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "canada_east",
+    "name": "Eastern Canada",
+    "culturalFamily": "european",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "canada_central",
+      "usa_northeast"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "canada_northwest",
+    "name": "Northwestern Canada and Alaska",
+    "culturalFamily": "indigenous",
+    "geography": "inland",
+    "isCoastal": false,
+    "adjacentIds": [
+      "canada_central",
+      "canada_west",
+      "usa_west"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 8,
+    "baseIndustry": 5,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "mexico_norte",
+    "name": "Northern Mexico",
+    "culturalFamily": "latin",
+    "geography": "desert",
+    "isCoastal": false,
+    "adjacentIds": [
+      "mexico_centro",
+      "usa_south",
+      "usa_west"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 4,
+    "baseIndustry": 3,
+    "baseWealth": 4,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "mexico_centro",
+    "name": "Central Mexico",
+    "culturalFamily": "latin",
+    "geography": "mountainous",
+    "isCoastal": false,
+    "adjacentIds": [
+      "mexico_norte",
+      "mexico_sur"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 6,
+    "baseIndustry": 6,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "mexico_sur",
+    "name": "Southern Mexico",
+    "culturalFamily": "latin",
+    "geography": "forest",
+    "isCoastal": true,
+    "adjacentIds": [
+      "belize",
+      "guatemala",
+      "mexico_centro"
+    ],
+    "seaAdjacentIds": [
+      "caribbean_west"
+    ],
+    "basePopulation": 5,
+    "baseIndustry": 3,
+    "baseWealth": 4,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "belize",
+    "name": "Belize",
+    "culturalFamily": "latin",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "guatemala",
+      "mexico_sur"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "guatemala",
+    "name": "Guatemala",
+    "culturalFamily": "latin",
+    "geography": "mountainous",
+    "isCoastal": false,
+    "adjacentIds": [
+      "belize",
+      "el_salvador",
+      "honduras",
+      "mexico_sur"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 6,
+    "baseIndustry": 6,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "el_salvador",
+    "name": "El Salvador",
+    "culturalFamily": "latin",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "guatemala",
+      "honduras"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "honduras",
+    "name": "Honduras",
+    "culturalFamily": "latin",
+    "geography": "mountainous",
+    "isCoastal": false,
+    "adjacentIds": [
+      "el_salvador",
+      "guatemala",
+      "nicaragua"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 6,
+    "baseIndustry": 6,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "nicaragua",
+    "name": "Nicaragua",
+    "culturalFamily": "latin",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "costa_rica",
+      "honduras"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "costa_rica",
+    "name": "Costa Rica",
+    "culturalFamily": "latin",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "nicaragua",
+      "panama"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "panama",
+    "name": "Panam\u00e1",
+    "culturalFamily": "latin",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "colombia_andes",
+      "costa_rica"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "caribbean_west",
+    "name": "Western Caribbean",
+    "culturalFamily": "latin",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [],
+    "seaAdjacentIds": [
+      "caribbean_east",
+      "colombia_andes",
+      "mexico_sur",
+      "usa_south",
+      "venezuela"
+    ],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "caribbean_east",
+    "name": "Eastern Caribbean",
+    "culturalFamily": "latin",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [],
+    "seaAdjacentIds": [
+      "caribbean_west",
+      "guianas",
+      "venezuela"
+    ],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "colombia_andes",
+    "name": "Colombian Andes",
+    "culturalFamily": "latin",
+    "geography": "mountainous",
+    "isCoastal": true,
+    "adjacentIds": [
+      "colombia_orinoquia",
+      "ecuador",
+      "panama",
+      "peru_costa_sierra",
+      "venezuela"
+    ],
+    "seaAdjacentIds": [
+      "caribbean_west"
+    ],
+    "basePopulation": 6,
+    "baseIndustry": 6,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    },
+    "traitOverrides": {
+      "expansionist": 0.1
+    }
+  },
+  {
+    "id": "colombia_orinoquia",
+    "name": "Colombian Orinoqu\u00eda",
+    "culturalFamily": "latin",
+    "geography": "inland",
+    "isCoastal": false,
+    "adjacentIds": [
+      "brazil_amazonia",
+      "colombia_andes",
+      "peru_selva",
+      "venezuela"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 8,
+    "baseIndustry": 5,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "venezuela",
+    "name": "Venezuela",
+    "culturalFamily": "latin",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "brazil_amazonia",
+      "colombia_andes",
+      "colombia_orinoquia",
+      "guianas"
+    ],
+    "seaAdjacentIds": [
+      "caribbean_east",
+      "caribbean_west"
+    ],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "guianas",
+    "name": "The Guianas",
+    "culturalFamily": "african",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "brazil_amazonia",
+      "venezuela"
+    ],
+    "seaAdjacentIds": [
+      "brazil_nordeste",
+      "caribbean_east"
+    ],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "brazil_amazonia",
+    "name": "Brazilian Amazonia",
+    "culturalFamily": "latin",
+    "geography": "forest",
+    "isCoastal": false,
+    "adjacentIds": [
+      "bolivia",
+      "brazil_nordeste",
+      "brazil_sul",
+      "colombia_orinoquia",
+      "guianas",
+      "peru_selva",
+      "venezuela"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 5,
+    "baseIndustry": 3,
+    "baseWealth": 4,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "brazil_nordeste",
+    "name": "Brazilian Nordeste",
+    "culturalFamily": "african",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "brazil_amazonia",
+      "brazil_sul"
+    ],
+    "seaAdjacentIds": [
+      "guianas"
+    ],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "brazil_sul",
+    "name": "Southern Brazil",
+    "culturalFamily": "latin",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "argentina_pampa_norte",
+      "bolivia",
+      "brazil_amazonia",
+      "brazil_nordeste",
+      "paraguay",
+      "uruguay"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "ecuador",
+    "name": "Ecuador",
+    "culturalFamily": "latin",
+    "geography": "mountainous",
+    "isCoastal": false,
+    "adjacentIds": [
+      "colombia_andes",
+      "peru_costa_sierra",
+      "peru_selva"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 6,
+    "baseIndustry": 6,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "peru_costa_sierra",
+    "name": "Peruvian Coast and Highlands",
+    "culturalFamily": "latin",
+    "geography": "mountainous",
+    "isCoastal": false,
+    "adjacentIds": [
+      "bolivia",
+      "chile",
+      "colombia_andes",
+      "ecuador",
+      "peru_selva"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 6,
+    "baseIndustry": 6,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "peru_selva",
+    "name": "Peruvian Amazon",
+    "culturalFamily": "indigenous",
+    "geography": "forest",
+    "isCoastal": false,
+    "adjacentIds": [
+      "bolivia",
+      "brazil_amazonia",
+      "colombia_orinoquia",
+      "ecuador",
+      "peru_costa_sierra"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 5,
+    "baseIndustry": 3,
+    "baseWealth": 4,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "bolivia",
+    "name": "Bolivia",
+    "culturalFamily": "latin",
+    "geography": "mountainous",
+    "isCoastal": false,
+    "adjacentIds": [
+      "argentina_pampa_norte",
+      "brazil_amazonia",
+      "brazil_sul",
+      "chile",
+      "paraguay",
+      "peru_costa_sierra",
+      "peru_selva"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 6,
+    "baseIndustry": 6,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "paraguay",
+    "name": "Paraguay",
+    "culturalFamily": "latin",
+    "geography": "inland",
+    "isCoastal": false,
+    "adjacentIds": [
+      "argentina_pampa_norte",
+      "bolivia",
+      "brazil_sul"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 8,
+    "baseIndustry": 5,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "chile",
+    "name": "Chile",
+    "culturalFamily": "latin",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "argentina_pampa_norte",
+      "argentina_patagonia",
+      "bolivia",
+      "peru_costa_sierra"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "argentina_pampa_norte",
+    "name": "Argentine Pampa and North",
+    "culturalFamily": "latin",
+    "geography": "inland",
+    "isCoastal": false,
+    "adjacentIds": [
+      "argentina_patagonia",
+      "bolivia",
+      "brazil_sul",
+      "chile",
+      "paraguay",
+      "uruguay"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 8,
+    "baseIndustry": 5,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  },
+  {
+    "id": "argentina_patagonia",
+    "name": "Patagonia",
+    "culturalFamily": "european",
+    "geography": "inland",
+    "isCoastal": false,
+    "adjacentIds": [
+      "argentina_pampa_norte",
+      "chile"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 8,
+    "baseIndustry": 5,
+    "baseWealth": 5,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    },
+    "traitOverrides": {
+      "individualist": 0.25,
+      "expansionist": 0.35
+    }
+  },
+  {
+    "id": "uruguay",
+    "name": "Uruguay",
+    "culturalFamily": "latin",
+    "geography": "coastal",
+    "isCoastal": true,
+    "adjacentIds": [
+      "argentina_pampa_norte",
+      "brazil_sul"
+    ],
+    "seaAdjacentIds": [],
+    "basePopulation": 10,
+    "baseIndustry": 5,
+    "baseWealth": 8,
+    "valueTraits": {
+      "individualist": 0.0,
+      "progressive": 0.0,
+      "militaristic": 0.0,
+      "expansionist": 0.0
+    }
+  }
+]

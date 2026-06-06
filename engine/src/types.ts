@@ -101,6 +101,8 @@ export interface TerritoryDef {
   /** Starting value traits — copied into TerritoryState at world init so they can drift. */
   valueTraits: ValueTraits;
   adjacentIds: string[];
+  /** Territories reachable by sea lane (naval trade, amphibious movement). Empty array for landlocked territories. */
+  seaAdjacentIds: string[];
   /**
    * Optional hand-authored trait overrides. When present, skips deriveTerritoryTraits
    * and uses these values directly. Allows per-territory correction without changing

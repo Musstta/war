@@ -13,4 +13,4 @@ export const SESSION_SECRET =
 export const TICK_SCHEDULE = process.env.TICK_SCHEDULE ?? '0 0 * * *';
 
 export const DATA_FILE =
-  process.env.DATA_FILE ?? resolve(__dirname, '../../data/territories.seed.json');
+  process.env.DATA_FILE ?? resolve(__dirname, '../../engine/src/data/americas.json');

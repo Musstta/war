@@ -533,6 +533,30 @@ Response shape:
 
 ---
 
+## 18. Americas adjacency generation (Phase 7 content tooling)
+
+One-time script that downloads Natural Earth GeoJSON, merges territory polygons, auto-detects land adjacency, and writes `scripts/data/americas-adjacency.json`.
+
+```bash
+# Run from project root
+node scripts/generate-adjacency.mjs
+
+# Output: scripts/data/americas-adjacency.json
+```
+
+Re-run after editing `scripts/data/americas-territories.json` (e.g. adding a territory or changing `neFeatures`).
+
+NE GeoJSON files are cached in `scripts/.cache/` after the first download. Delete that directory to force a fresh download:
+
+```bash
+rm -rf scripts/.cache/
+node scripts/generate-adjacency.mjs
+```
+
+The script prints a spot-check for `costa_rica`, `brazil_amazonia`, and `caribbean_west` at the end. Adjacency for the 8 hand-placement territories (Brazil sub-regions, Peru sub-regions, Argentina sub-regions, `colombia_orinoquia`) is hard-coded in `HAND_PLACED` inside the script — edit that block if you need to adjust their neighbors.
+
+---
+
 ## Player credentials (dev)
 
 | Username | Password | Nation     |

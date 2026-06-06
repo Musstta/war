@@ -10,6 +10,10 @@
   "scripts": {
     "simulate": "tsx harness/index.ts",
     "scenario": "tsx harness/src/cli.ts",
-    "sweep":    "tsx harness/src/sweep.ts"
+    "sweep": "tsx harness/src/sweep.ts"
+  },
+  "devDependencies": {
+    "@turf/boolean-intersects": "^7.3.5",
+    "@turf/union": "^7.3.5"
   }
 }

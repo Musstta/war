@@ -1,0 +1,265 @@
+{
+  "adjacency": {
+    "argentina_pampa_norte": [
+      "argentina_patagonia",
+      "bolivia",
+      "brazil_sul",
+      "chile",
+      "paraguay",
+      "uruguay"
+    ],
+    "argentina_patagonia": [
+      "argentina_pampa_norte",
+      "chile"
+    ],
+    "belize": [
+      "guatemala",
+      "mexico_sur"
+    ],
+    "bolivia": [
+      "argentina_pampa_norte",
+      "brazil_amazonia",
+      "brazil_sul",
+      "chile",
+      "paraguay",
+      "peru_costa_sierra",
+      "peru_selva"
+    ],
+    "brazil_amazonia": [
+      "bolivia",
+      "brazil_nordeste",
+      "brazil_sul",
+      "colombia_orinoquia",
+      "guianas",
+      "peru_selva",
+      "venezuela"
+    ],
+    "brazil_nordeste": {
+      "land": [
+        "brazil_amazonia",
+        "brazil_sul"
+      ],
+      "sea": [
+        "guianas"
+      ]
+    },
+    "brazil_sul": [
+      "argentina_pampa_norte",
+      "bolivia",
+      "brazil_amazonia",
+      "brazil_nordeste",
+      "paraguay",
+      "uruguay"
+    ],
+    "canada_central": [
+      "canada_east",
+      "canada_northwest",
+      "canada_west",
+      "usa_midwest",
+      "usa_northeast"
+    ],
+    "canada_east": [
+      "canada_central",
+      "usa_northeast"
+    ],
+    "canada_northwest": [
+      "canada_central",
+      "canada_west",
+      "usa_west"
+    ],
+    "canada_west": [
+      "canada_central",
+      "canada_northwest",
+      "usa_midwest",
+      "usa_west"
+    ],
+    "caribbean_east": {
+      "land": [],
+      "sea": [
+        "caribbean_west",
+        "guianas",
+        "venezuela"
+      ]
+    },
+    "caribbean_west": {
+      "land": [],
+      "sea": [
+        "caribbean_east",
+        "colombia_andes",
+        "mexico_sur",
+        "usa_south",
+        "venezuela"
+      ]
+    },
+    "chile": [
+      "argentina_pampa_norte",
+      "argentina_patagonia",
+      "bolivia",
+      "peru_costa_sierra"
+    ],
+    "colombia_andes": {
+      "land": [
+        "colombia_orinoquia",
+        "ecuador",
+        "panama",
+        "peru_costa_sierra",
+        "venezuela"
+      ],
+      "sea": [
+        "caribbean_west"
+      ]
+    },
+    "colombia_orinoquia": [
+      "brazil_amazonia",
+      "colombia_andes",
+      "peru_selva",
+      "venezuela"
+    ],
+    "costa_rica": [
+      "nicaragua",
+      "panama"
+    ],
+    "ecuador": [
+      "colombia_andes",
+      "peru_costa_sierra",
+      "peru_selva"
+    ],
+    "el_salvador": [
+      "guatemala",
+      "honduras"
+    ],
+    "guatemala": [
+      "belize",
+      "el_salvador",
+      "honduras",
+      "mexico_sur"
+    ],
+    "guianas": {
+      "land": [
+        "brazil_amazonia",
+        "venezuela"
+      ],
+      "sea": [
+        "brazil_nordeste",
+        "caribbean_east"
+      ]
+    },
+    "honduras": [
+      "el_salvador",
+      "guatemala",
+      "nicaragua"
+    ],
+    "mexico_centro": [
+      "mexico_norte",
+      "mexico_sur"
+    ],
+    "mexico_norte": [
+      "mexico_centro",
+      "usa_south",
+      "usa_west"
+    ],
+    "mexico_sur": {
+      "land": [
+        "belize",
+        "guatemala",
+        "mexico_centro"
+      ],
+      "sea": [
+        "caribbean_west"
+      ]
+    },
+    "nicaragua": [
+      "costa_rica",
+      "honduras"
+    ],
+    "panama": [
+      "colombia_andes",
+      "costa_rica"
+    ],
+    "paraguay": [
+      "argentina_pampa_norte",
+      "bolivia",
+      "brazil_sul"
+    ],
+    "peru_costa_sierra": [
+      "bolivia",
+      "chile",
+      "colombia_andes",
+      "ecuador",
+      "peru_selva"
+    ],
+    "peru_selva": [
+      "bolivia",
+      "brazil_amazonia",
+      "colombia_orinoquia",
+      "ecuador",
+      "peru_costa_sierra"
+    ],
+    "uruguay": [
+      "argentina_pampa_norte",
+      "brazil_sul"
+    ],
+    "usa_midwest": [
+      "canada_central",
+      "canada_west",
+      "usa_northeast",
+      "usa_south",
+      "usa_west"
+    ],
+    "usa_northeast": [
+      "canada_central",
+      "canada_east",
+      "usa_midwest",
+      "usa_south",
+      "usa_west"
+    ],
+    "usa_south": {
+      "land": [
+        "mexico_norte",
+        "usa_midwest",
+        "usa_northeast",
+        "usa_west"
+      ],
+      "sea": [
+        "caribbean_west"
+      ]
+    },
+    "usa_west": [
+      "canada_northwest",
+      "canada_west",
+      "mexico_norte",
+      "usa_midwest",
+      "usa_northeast",
+      "usa_south"
+    ],
+    "venezuela": {
+      "land": [
+        "brazil_amazonia",
+        "colombia_andes",
+        "colombia_orinoquia",
+        "guianas"
+      ],
+      "sea": [
+        "caribbean_east",
+        "caribbean_west"
+      ]
+    }
+  },
+  "handPlacementRequired": [
+    "colombia_orinoquia",
+    "brazil_amazonia",
+    "brazil_nordeste",
+    "brazil_sul",
+    "peru_costa_sierra",
+    "peru_selva",
+    "argentina_pampa_norte",
+    "argentina_patagonia"
+  ],
+  "generatedAt": "2026-06-06T05:11:53.251Z",
+  "stats": {
+    "territoriesTotal": 36,
+    "territoriesWithGeometry": 28,
+    "territoriesHandPlaced": 8,
+    "autoAdjacencyPairs": 28
+  }
+}

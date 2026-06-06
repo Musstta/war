@@ -1,0 +1,281 @@
+{
+  "territories": [
+    {
+      "id": "usa_northeast",
+      "name": "Northeastern United States",
+      "neFeatures": ["Maine", "New Hampshire", "Vermont", "Massachusetts",
+                     "Rhode Island", "Connecticut", "New York", "New Jersey",
+                     "Pennsylvania", "Delaware", "Maryland", "West Virginia",
+                     "Virginia", "Washington D.C."],
+      "culturalFamily": "frontier",
+      "geographyType": "coastal"
+    },
+    {
+      "id": "usa_midwest",
+      "name": "Midwestern United States",
+      "neFeatures": ["Ohio", "Indiana", "Illinois", "Michigan", "Wisconsin",
+                     "Minnesota", "Iowa", "Missouri", "North Dakota",
+                     "South Dakota", "Nebraska", "Kansas"],
+      "culturalFamily": "frontier",
+      "geographyType": "plain"
+    },
+    {
+      "id": "usa_south",
+      "name": "Southern United States",
+      "neFeatures": ["North Carolina", "South Carolina", "Georgia", "Florida",
+                     "Kentucky", "Tennessee", "Alabama", "Mississippi",
+                     "Arkansas", "Louisiana", "Oklahoma", "Texas"],
+      "culturalFamily": "frontier",
+      "geographyType": "coastal"
+    },
+    {
+      "id": "usa_west",
+      "name": "Western United States",
+      "neFeatures": ["Montana", "Wyoming", "Colorado", "New Mexico", "Idaho",
+                     "Utah", "Arizona", "Nevada", "Washington", "Oregon",
+                     "California", "Hawaii"],
+      "culturalFamily": "frontier",
+      "geographyType": "mountainous"
+    },
+    {
+      "id": "canada_west",
+      "name": "Western Canada",
+      "neFeatures": ["British Columbia", "Alberta"],
+      "culturalFamily": "frontier",
+      "geographyType": "mountainous"
+    },
+    {
+      "id": "canada_central",
+      "name": "Central Canada",
+      "neFeatures": ["Saskatchewan", "Manitoba", "Ontario", "Quebec"],
+      "culturalFamily": "frontier",
+      "geographyType": "plain"
+    },
+    {
+      "id": "canada_east",
+      "name": "Eastern Canada",
+      "neFeatures": ["New Brunswick", "Nova Scotia", "Prince Edward Island",
+                     "Newfoundland and Labrador"],
+      "culturalFamily": "frontier",
+      "geographyType": "coastal"
+    },
+    {
+      "id": "canada_northwest",
+      "name": "Northwestern Canada and Alaska",
+      "neFeatures": ["Yukon", "Northwest Territories", "Nunavut", "Alaska"],
+      "culturalFamily": "indigenous",
+      "geographyType": "plain"
+    },
+    {
+      "id": "mexico_norte",
+      "name": "Northern Mexico",
+      "neFeatures": ["Baja California", "Baja California Sur", "Sonora",
+                     "Chihuahua", "Coahuila", "Nuevo León", "Tamaulipas",
+                     "Sinaloa", "Durango"],
+      "culturalFamily": "latin",
+      "geographyType": "desert"
+    },
+    {
+      "id": "mexico_centro",
+      "name": "Central Mexico",
+      "neFeatures": ["Nayarit", "Jalisco", "Aguascalientes", "Zacatecas",
+                     "San Luis Potosí", "Guanajuato", "Querétaro", "Hidalgo",
+                     "México", "Ciudad de México", "Morelos", "Tlaxcala",
+                     "Puebla", "Colima", "Michoacán"],
+      "culturalFamily": "latin",
+      "geographyType": "mountainous"
+    },
+    {
+      "id": "mexico_sur",
+      "name": "Southern Mexico",
+      "neFeatures": ["Guerrero", "Oaxaca", "Veracruz", "Tabasco",
+                     "Chiapas", "Campeche", "Yucatán", "Quintana Roo"],
+      "culturalFamily": "latin",
+      "geographyType": "forest"
+    },
+    {
+      "id": "belize",
+      "name": "Belize",
+      "neFeatures": ["Belize"],
+      "culturalFamily": "latin",
+      "geographyType": "coastal"
+    },
+    {
+      "id": "guatemala",
+      "name": "Guatemala",
+      "neFeatures": ["Guatemala"],
+      "culturalFamily": "latin",
+      "geographyType": "mountainous"
+    },
+    {
+      "id": "el_salvador",
+      "name": "El Salvador",
+      "neFeatures": ["El Salvador"],
+      "culturalFamily": "latin",
+      "geographyType": "coastal"
+    },
+    {
+      "id": "honduras",
+      "name": "Honduras",
+      "neFeatures": ["Honduras"],
+      "culturalFamily": "latin",
+      "geographyType": "mountainous"
+    },
+    {
+      "id": "nicaragua",
+      "name": "Nicaragua",
+      "neFeatures": ["Nicaragua"],
+      "culturalFamily": "latin",
+      "geographyType": "coastal"
+    },
+    {
+      "id": "costa_rica",
+      "name": "Costa Rica",
+      "neFeatures": ["Costa Rica"],
+      "culturalFamily": "latin",
+      "geographyType": "coastal"
+    },
+    {
+      "id": "panama",
+      "name": "Panamá",
+      "neFeatures": ["Panama"],
+      "culturalFamily": "latin",
+      "geographyType": "coastal"
+    },
+    {
+      "id": "caribbean_west",
+      "name": "Western Caribbean",
+      "neFeatures": ["Cuba", "Jamaica", "Haiti"],
+      "culturalFamily": "latin",
+      "geographyType": "island"
+    },
+    {
+      "id": "caribbean_east",
+      "name": "Eastern Caribbean",
+      "neFeatures": ["Dominican Republic", "Puerto Rico"],
+      "culturalFamily": "latin",
+      "geographyType": "island"
+    },
+    {
+      "id": "colombia_andes",
+      "name": "Colombian Andes",
+      "neFeatures": ["Colombia"],
+      "culturalFamily": "latin",
+      "geographyType": "mountainous",
+      "traitOverrides": { "expansionist": 0.1 }
+    },
+    {
+      "id": "colombia_orinoquia",
+      "name": "Colombian Orinoquía",
+      "neFeatures": [],
+      "culturalFamily": "latin",
+      "geographyType": "plain",
+      "note": "No direct NE feature — sub-region of Colombia. Hand-place adjacency."
+    },
+    {
+      "id": "venezuela",
+      "name": "Venezuela",
+      "neFeatures": ["Venezuela"],
+      "culturalFamily": "latin",
+      "geographyType": "coastal"
+    },
+    {
+      "id": "guianas",
+      "name": "The Guianas",
+      "neFeatures": ["Guyana", "Suriname", "French Guiana"],
+      "culturalFamily": "african",
+      "geographyType": "coastal"
+    },
+    {
+      "id": "brazil_amazonia",
+      "name": "Brazilian Amazonia",
+      "neFeatures": [],
+      "culturalFamily": "latin",
+      "geographyType": "forest",
+      "note": "Sub-region of Brazil — hand-place adjacency."
+    },
+    {
+      "id": "brazil_nordeste",
+      "name": "Brazilian Nordeste",
+      "neFeatures": [],
+      "culturalFamily": "african",
+      "geographyType": "coastal",
+      "note": "Sub-region of Brazil — hand-place adjacency."
+    },
+    {
+      "id": "brazil_sul",
+      "name": "Southern Brazil",
+      "neFeatures": [],
+      "culturalFamily": "latin",
+      "geographyType": "coastal",
+      "note": "Sub-region of Brazil — hand-place adjacency."
+    },
+    {
+      "id": "ecuador",
+      "name": "Ecuador",
+      "neFeatures": ["Ecuador"],
+      "culturalFamily": "latin",
+      "geographyType": "mountainous"
+    },
+    {
+      "id": "peru_costa_sierra",
+      "name": "Peruvian Coast and Highlands",
+      "neFeatures": [],
+      "culturalFamily": "latin",
+      "geographyType": "mountainous",
+      "note": "Western Peru — hand-place adjacency."
+    },
+    {
+      "id": "peru_selva",
+      "name": "Peruvian Amazon",
+      "neFeatures": [],
+      "culturalFamily": "indigenous",
+      "geographyType": "forest",
+      "note": "Eastern Peru — hand-place adjacency."
+    },
+    {
+      "id": "bolivia",
+      "name": "Bolivia",
+      "neFeatures": ["Bolivia"],
+      "culturalFamily": "latin",
+      "geographyType": "mountainous"
+    },
+    {
+      "id": "paraguay",
+      "name": "Paraguay",
+      "neFeatures": ["Paraguay"],
+      "culturalFamily": "latin",
+      "geographyType": "plain"
+    },
+    {
+      "id": "chile",
+      "name": "Chile",
+      "neFeatures": ["Chile"],
+      "culturalFamily": "latin",
+      "geographyType": "coastal"
+    },
+    {
+      "id": "argentina_pampa_norte",
+      "name": "Argentine Pampa and North",
+      "neFeatures": [],
+      "culturalFamily": "latin",
+      "geographyType": "plain",
+      "note": "Northern Argentina + Pampa — hand-place adjacency."
+    },
+    {
+      "id": "argentina_patagonia",
+      "name": "Patagonia",
+      "neFeatures": [],
+      "culturalFamily": "frontier",
+      "geographyType": "plain",
+      "note": "Southern Argentina — hand-place adjacency."
+    },
+    {
+      "id": "uruguay",
+      "name": "Uruguay",
+      "neFeatures": ["Uruguay"],
+      "culturalFamily": "latin",
+      "geographyType": "coastal"
+    }
+  ]
+}

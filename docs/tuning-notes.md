@@ -552,6 +552,8 @@ Minimum ticks between treaty signing and `transferAtTick`. Enforced at proposal 
 
 **Embassy stub:** `hasEmbassy` is always false in the current DB schema (new `TerritoryState` column defaults false). The territory cession code currently short-circuits this with `|| true` in the engine to allow testing without embassy construction. When embassy construction ships (Phase 8), remove the `|| true` override and the clause will naturally require an embassy. Tag in `tick.ts`: `[DEFERRED: remove '|| true' when embassy ships]`.
 
+Embassy cession check is stubbed — cessionTerr.state.hasEmbassy || true in the territory cession execution path means the embassy prerequisite is not enforced. The hasEmbassy field needs to be set by the embassy construction pipeline (Phase 6.5 Prompt 5 built embassy construction but the cession check wasn't wired to it). Fix before Phase 7 goes live: replace || true with a real lookup against the Embassy table for an active embassy owned by the receiving nation in the cession territory.
+
 ### §1.2 Population transfer
 
 **`POPULATION_TRANSFER_UNREST_SCALE = 0.15`** (culture.ts)
@@ -728,6 +730,26 @@ The base shock (0.50) is the `[PLACEHOLDER]` from war sub-phase. These multiplie
 Population level at which production multiplier is exactly 1.0. Formula: `popScale = territory.basePopulation / POPULATION_PRODUCTION_BASE`. A territory with population 100 produces 2× base; population 25 produces 0.5× base; population 50 produces 1.0× base.
 
 **population production scaling is linear — may need a sublinear curve at high population to prevent runaway production in dense territories.** At the current test map's population values (3–20 for Central American territories), all territories produce well below their nominal rates. For example, belize (population 3): `3/50 = 0.06×` base production — only 6% of stated base rates. This makes the `basePopulation`, `baseIndustry`, and `baseWealth` values in the territory seed file much less intuitive. Recommendation before first playtest: either raise POPULATION_PRODUCTION_BASE to match actual territory population range (e.g., 10 for the current Central America set), or reframe population values to represent "effective workforce units" at a consistent scale.
+
+---
+
+## Phase 7 territory trait overrides (v0.31)
+
+Two territories in `engine/src/data/americas.json` required `traitOverrides` after the derived-traits inspection. The `european` cultural family baseline starts at `individualist: -0.2` (Hofstede collective bias for European nations generally), which is geographically plausible for Western Europe but incorrect for settler-colonial Americas contexts.
+
+**`usa_northeast`** (`european` / `coastal`)
+- Derived without override: `individualist=-0.28, progressive=-0.03` — reads as mildly collectivist and near-neutral progressive.
+- Expected: lean individualist (Anglo-Protestant settler culture, early capitalist institutions) and progressive (historically reform-oriented region).
+- Override applied: `{ "individualist": 0.3, "progressive": 0.3 }`
+- Final traits: `individualist=+0.30, progressive=+0.30, militaristic=+0.02, expansionist=+0.41`
+
+**`argentina_patagonia`** (`european` / `inland`)
+- Derived without override: `individualist=-0.23, expansionist=+0.13` — collectivist lean, weak expansion.
+- Expected: frontier/ranching culture strongly individualist and expansionist (low population density, isolated self-reliance, historical land-expansion drives).
+- Override applied: `{ "individualist": 0.25, "expansionist": 0.35 }`
+- Final traits: `individualist=+0.25, progressive=-0.12, militaristic=-0.01, expansionist=+0.35`
+
+**When to review:** After the first playtest provides real data on nation cultural drift. If `european` family gets retuned with higher individualist baseline (e.g., +0.1), these overrides should be revisited — the offset may no longer be needed.
 
 ---
 

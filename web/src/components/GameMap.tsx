@@ -3,13 +3,23 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { WorldView, VisibilityTier } from '../api';
 
-// Fixed color per nation — matches INITIAL_NATIONS in server/src/world.ts
+// Fixed color per nation — matches INITIAL_NATIONS + INITIAL_AI_NATIONS in server/src/world.ts
 const NATION_COLORS: Record<string, string> = {
+  // Player nations
   nation_costa_rica: '#2196F3',
   nation_guatemala:  '#4CAF50',
   nation_honduras:   '#FF9800',
   nation_nicaragua:  '#9C27B0',
   nation_panama:     '#F44336',
+  // AI nations (Phase 7 Americas)
+  nation_north_atlantic: '#00BCD4',
+  nation_gran_norte:     '#8BC34A',
+  nation_sul_grande:     '#E91E63',
+  nation_nueva_granada:  '#FF5722',
+  nation_rio_de_plata:   '#3F51B5',
+  nation_antilles:       '#009688',
+  nation_dominion:       '#795548',
+  nation_llanos:         '#FFC107',
 };
 
 /** Desaturate a hex color for LightFog rendering. */
@@ -73,8 +83,8 @@ export function GameMap({ world, selectedId, onSelect }: Props) {
         },
         layers: [{ id: 'carto-tiles', type: 'raster', source: 'carto' }],
       },
-      center: [-86, 14.5],
-      zoom: 5.2,
+      center: [-75, 10],
+      zoom: 2.2,
     });
     mapRef.current = map;
 

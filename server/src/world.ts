@@ -717,16 +717,27 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
 }
 
 // ── First-run initialization ──────────────────────────────────────────────────
-// Phase 3: 5 player nations, each starting with 1 home territory.
-// Unclaimed at start: mexico_yucatan, belize, el_salvador.
-// To reset an existing world run POST /admin/reset-world (requires X-Admin-Key).
+// Phase 7: 5 player nations + 8 AI nations across the Americas.
+// All other territories start unclaimed. Reset via POST /admin/reset-world.
 
-const INITIAL_NATIONS = [
+const INITIAL_PLAYER_NATIONS = [
   { id: 'nation_costa_rica', name: 'Costa Rica',  isAI: false, armySize: 50, territories: ['costa_rica'] },
   { id: 'nation_guatemala',  name: 'Guatemala',   isAI: false, armySize: 50, territories: ['guatemala'] },
   { id: 'nation_honduras',   name: 'Honduras',    isAI: false, armySize: 50, territories: ['honduras'] },
   { id: 'nation_nicaragua',  name: 'Nicaragua',   isAI: false, armySize: 50, territories: ['nicaragua'] },
   { id: 'nation_panama',     name: 'Panamá',      isAI: false, armySize: 50, territories: ['panama'] },
+] as const;
+
+// AI nations spread geographically across the Americas — one per continent zone.
+const INITIAL_AI_NATIONS = [
+  { id: 'nation_north_atlantic', name: 'North Atlantic Republic', isAI: true, armySize: 50, territories: ['usa_northeast'] },
+  { id: 'nation_gran_norte',     name: 'Gran Norte',              isAI: true, armySize: 50, territories: ['mexico_norte'] },
+  { id: 'nation_sul_grande',     name: 'Sul Grande',              isAI: true, armySize: 50, territories: ['brazil_sul'] },
+  { id: 'nation_nueva_granada',  name: 'Nueva Granada',           isAI: true, armySize: 50, territories: ['colombia_andes'] },
+  { id: 'nation_rio_de_plata',   name: 'Río de la Plata',         isAI: true, armySize: 50, territories: ['argentina_pampa_norte'] },
+  { id: 'nation_antilles',       name: 'Antilles Confederation',  isAI: true, armySize: 50, territories: ['caribbean_west'] },
+  { id: 'nation_dominion',       name: 'The Dominion',            isAI: true, armySize: 50, territories: ['canada_central'] },
+  { id: 'nation_llanos',         name: 'República de los Llanos', isAI: true, armySize: 50, territories: ['venezuela'] },
 ] as const;
 
 export async function ensureWorldInitialized(defs: TerritoryDef[]): Promise<void> {
@@ -735,11 +746,13 @@ export async function ensureWorldInitialized(defs: TerritoryDef[]): Promise<void
 
   console.log('[world] First run — initializing world state...');
 
+  const allNations = [...INITIAL_PLAYER_NATIONS, ...INITIAL_AI_NATIONS];
+
   await prisma.$transaction(async (tx) => {
     await tx.worldMeta.create({ data: { id: 1, tick: 0, rngSeed: 42 } });
 
     const ownerOf = new Map<string, string>();
-    for (const n of INITIAL_NATIONS) {
+    for (const n of allNations) {
       await tx.nation.create({
         data: {
           id: n.id,
@@ -770,15 +783,6 @@ export async function ensureWorldInitialized(defs: TerritoryDef[]): Promise<void
         expansionist:  def.traitOverrides?.expansionist  ?? derived.traits.expansionist,
       };
 
-      // Apply population and production modifiers from the pipeline to the base rates.
-      // The def's basePopulation is set to the derived startingPopulation; production
-      // rates are stored as-is in the def (the multipliers are applied at init only,
-      // not stored separately — they bake into the DB via the territory seed data).
-      // NOTE: we write the derived traits to TerritoryState (mutable); the def's
-      // valueTraits (static) is updated in-place here for the server's runtime def map
-      // by calling this before the def map is built. At harness load time, buildWorldState
-      // uses def.valueTraits directly (pipeline does not run there — byte-identical).
-
       await tx.territoryState.create({
         data: {
           id: def.id,
@@ -791,8 +795,8 @@ export async function ensureWorldInitialized(defs: TerritoryDef[]): Promise<void
       });
     }
 
-    // Seed one Army per nation stationed at its capital. // migrated from armySize
-    for (const n of INITIAL_NATIONS) {
+    // Seed one Army per nation stationed at its capital.
+    for (const n of allNations) {
       await tx.army.create({
         data: {
           nationId: n.id,

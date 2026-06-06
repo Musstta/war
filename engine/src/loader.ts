@@ -9,15 +9,24 @@ import type {
 
 export function loadTerritoryDefs(filepath: string): TerritoryDef[] {
   const raw = readFileSync(filepath, 'utf-8');
-  const defs: TerritoryDef[] = JSON.parse(raw);
+  const parsed: unknown[] = JSON.parse(raw);
+
+  // Backfill seaAdjacentIds for data files that predate the field.
+  const defs: TerritoryDef[] = parsed.map((d: any) => ({
+    ...d,
+    seaAdjacentIds: d.seaAdjacentIds ?? [],
+  }));
 
   const ids = new Set(defs.map((d) => d.id));
   for (const def of defs) {
     for (const adjId of def.adjacentIds) {
       if (!ids.has(adjId)) {
-        throw new Error(
-          `Territory "${def.id}" references unknown adjacent id "${adjId}"`,
-        );
+        throw new Error(`Territory "${def.id}" references unknown adjacent id "${adjId}"`);
+      }
+    }
+    for (const adjId of def.seaAdjacentIds) {
+      if (!ids.has(adjId)) {
+        throw new Error(`Territory "${def.id}" references unknown sea-adjacent id "${adjId}"`);
       }
     }
   }
