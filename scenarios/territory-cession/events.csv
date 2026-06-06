@@ -1,0 +1,10 @@
+tick,message
+1,"Nicaragua has become insolvent (wealth -2.1)."
+2,"Costa Rica began embassy construction in Panama. [3 ticks]"
+3,"Territory cession for Panama delayed — no embassy present (grace tick 0/3). [PLACEHOLDER: CESSION_EMBASSY_GRACE_TICKS]"
+3,"Territory cession for Honduras delayed — no embassy present (grace tick 0/3). [PLACEHOLDER: CESSION_EMBASSY_GRACE_TICKS]"
+4,"Embassy of Costa Rica in Panama is now active. Visibility and compatibility effects begin."
+4,"Territory cession executed: Panama transferred from Panamá to Costa Rica."
+4,"Territory cession for Honduras delayed — no embassy present (grace tick 1/3). [PLACEHOLDER: CESSION_EMBASSY_GRACE_TICKS]"
+5,"Territory cession for Honduras delayed — no embassy present (grace tick 2/3). [PLACEHOLDER: CESSION_EMBASSY_GRACE_TICKS]"
+6,"Territory cession breached: Guatemala failed to establish embassy in Honduras within 3 ticks. [PLACEHOLDER: CESSION_EMBASSY_GRACE_TICKS]"

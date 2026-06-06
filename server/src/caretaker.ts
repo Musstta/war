@@ -237,7 +237,10 @@ async function tryDefense(
   budget: number,
   mandateUsed: number,
 ): Promise<number> {
-  // Find any occupied territory belonging to this nation (under siege by enemy).
+  const MOVE_COST = 1; // [PLACEHOLDER] matches ACTION_COSTS['move_army']
+  if (mandateUsed + MOVE_COST > budget) return 0;
+
+  // Find any owned territories currently under siege by an enemy.
   const activeWars = await tx.war.findMany({
     where: {
       status: { in: ['active', 'peace_negotiation'] },
@@ -246,57 +249,78 @@ async function tryDefense(
   });
 
   const ownedIds = new Set(ownedTerritories.map((t) => t.id));
-  let spent = 0;
+  let siegedTerritoryId: string | null = null;
 
   for (const war of activeWars) {
-    if (mandateUsed + spent >= budget) break;
-    const occupied = (war.occupiedTerritories as Array<{ territoryId: string; occupyingNationId: string }>) ?? [];
-
-    // Find territories owned by this nation that are under siege by the enemy.
     const enemyId = war.attackerId === nationId ? war.defenderId : war.attackerId;
-    const underSiege = occupied.filter(
+    const occupied = (war.occupiedTerritories as Array<{ territoryId: string; occupyingNationId: string }>) ?? [];
+    const underSiege = occupied.find(
       (o) => ownedIds.has(o.territoryId) && o.occupyingNationId === enemyId,
     );
-    if (underSiege.length === 0) continue;
+    if (underSiege) { siegedTerritoryId = underSiege.territoryId; break; }
+  }
+  if (!siegedTerritoryId) return 0;
 
-    // Queue an attack against the enemy's nearest owned territory (adjacent to ours).
-    const enemyTerritories = await tx.territoryState.findMany({ where: { ownerId: enemyId } });
-    const enemyIds = new Set(enemyTerritories.map((t) => t.id));
+  // Find the largest available (non-besieging) army for this nation.
+  const armies = await tx.army.findMany({ where: { nationId, status: { not: 'besieging' } } });
+  if (armies.length === 0) return 0;
+  const army = armies.reduce((best, a) => (a.size > best.size ? a : best));
 
-    // Find an enemy territory adjacent to one of our territories.
-    let targetId: string | null = null;
-    outer: for (const ours of ownedTerritories) {
-      const def = defById.get(ours.id);
-      if (!def) continue;
-      for (const adjId of def.adjacentIds) {
-        if (enemyIds.has(adjId)) { targetId = adjId; break outer; }
+  // Already at or adjacent to the besieged territory?
+  if (army.territoryId === siegedTerritoryId) return 0;
+
+  // BFS: find the next step toward the besieged territory.
+  const nextStep = bfsNextStep(defById, army.territoryId, siegedTerritoryId);
+  if (!nextStep) return 0;
+
+  // Check not already queued a move for this army.
+  const alreadyQueued = await tx.queuedAction.findFirst({
+    where: { nationId, type: 'move_army', payload: { path: ['armyId'], equals: army.id } },
+  });
+  if (alreadyQueued) return 0;
+
+  await tx.queuedAction.create({
+    data: {
+      nationId,
+      phase: 'main',
+      type: 'move_army',
+      payload: { armyId: army.id, toTerritoryId: nextStep, caretaker: true } as Prisma.InputJsonValue,
+      tickQueued: tick,
+    },
+  });
+  await tx.nation.update({ where: { id: nationId }, data: { mandateUsed: { increment: MOVE_COST } } });
+  return MOVE_COST;
+}
+
+/** BFS to find the territory adjacent to `from` that is one step closer to `to`. */
+function bfsNextStep(
+  defById: Map<string, TerritoryDef>,
+  from: string,
+  to: string,
+): string | null {
+  if (from === to) return null;
+  // BFS from `to` backwards — gives distance-from-destination for every reachable node.
+  const dist = new Map<string, number>();
+  const queue: string[] = [to];
+  dist.set(to, 0);
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    const curDist = dist.get(cur)!;
+    for (const adj of defById.get(cur)?.adjacentIds ?? []) {
+      if (!dist.has(adj)) {
+        dist.set(adj, curDist + 1);
+        queue.push(adj);
       }
     }
-    if (!targetId) continue;
-
-    // Check already queued.
-    const already = await tx.queuedAction.findFirst({
-      where: { nationId, type: 'attack_territory', payload: { path: ['targetTerritoryId'], equals: targetId } },
-    });
-    if (already) continue;
-
-    const ATTACK_COST = 2;
-    if (mandateUsed + spent + ATTACK_COST > budget) break;
-
-    await tx.queuedAction.create({
-      data: {
-        nationId,
-        phase: 'main',
-        type: 'attack_territory',
-        payload: { targetTerritoryId: targetId, caretaker: true } as Prisma.InputJsonValue,
-        tickQueued: tick,
-      },
-    });
-    await tx.nation.update({ where: { id: nationId }, data: { mandateUsed: { increment: ATTACK_COST } } });
-    spent += ATTACK_COST;
   }
-
-  return spent;
+  // From `from`, pick the adjacent territory with the smallest distance to `to`.
+  let best: string | null = null;
+  let bestDist = Infinity;
+  for (const adj of defById.get(from)?.adjacentIds ?? []) {
+    const d = dist.get(adj) ?? Infinity;
+    if (d < bestDist) { bestDist = d; best = adj; }
+  }
+  return best;
 }
 
 // ── Roads ─────────────────────────────────────────────────────────────────────
@@ -516,7 +540,12 @@ async function runFragmentation(
         inactivityTier: 'active',
         activityTier: 'active',
         doctrineBlend: doctrine as unknown as Prisma.InputJsonValue,
+        foundedAtTick: currentTick,
       },
+    });
+    // Seed army for the new AI nation. // migrated from armySize
+    await tx.army.create({
+      data: { nationId: newNationId, territoryId: terr.id, size: 10, status: 'stationed' },
     });
     await tx.territoryState.update({ where: { id: terr.id }, data: { ownerId: newNationId } });
   }

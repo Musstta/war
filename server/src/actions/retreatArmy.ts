@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { ActionContext, ActionHandler, ValidateResult } from './types';
+import { mirrorMilitaryAction } from '../council';
 import { ACTION_COSTS } from '../phase';
 
 const COST = ACTION_COSTS['retreat_army']!; // 0 — retreat is free
@@ -44,6 +45,8 @@ export const retreatArmyHandler: ActionHandler = {
         },
       });
       // Retreat costs 0 Mandate — no mandateUsed increment.
+      // Mirror into war council for allied visibility (territory being retreated from).
+      await mirrorMilitaryAction(tx, ctx.nationId, 'retreat_army', p.fromTerritoryId ?? null, ctx.currentTick);
     });
   },
 };

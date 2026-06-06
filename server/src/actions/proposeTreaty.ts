@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { ActionContext, ActionHandler, ValidateResult } from './types';
-import { MIN_TREATY_TERM, PROPOSAL_EXPIRY_TICKS } from '@war/engine';
+import { MIN_TREATY_TERM, PROPOSAL_EXPIRY_TICKS, CESSION_MIN_FUTURE_TICKS, MAINTAIN_PEACE_MAX_CONSECUTIVE, MAINTAIN_PEACE_CONSECUTIVE_WINDOW } from '@war/engine';
 import { ACTION_COSTS } from '../phase';
 
 const COST = ACTION_COSTS['propose_treaty']!;
@@ -19,7 +19,13 @@ interface ProposeTreatyPayload {
   targetCollateral?: number;
 }
 
-const VALID_CLAUSE_TYPES = new Set(['non_aggression', 'tribute', 'trade', 'military_access', 'defense_pact', 'objective']);
+const VALID_CLAUSE_TYPES = new Set([
+  'non_aggression', 'tribute', 'trade', 'military_access', 'defense_pact', 'objective',
+  'territory_cession',   // §1.5
+  'army_lending',        // §1.1
+  'population_transfer', // §1.2
+  'outpost',             // §1.11
+]);
 
 const VALID_OBJECTIVE_TYPES = new Set([
   'build_road_connection', 'build_port', 'maintain_peace',
@@ -55,6 +61,60 @@ export const proposeTreatyHandler: ActionHandler = {
           return { ok: 'error', status: 400, reason: `objective clause requires responsibleParty: partyA | partyB | both` };
         }
       }
+      if (c.type === 'territory_cession') {
+        // §1.5 — validate transferAtTick is sufficiently in the future.
+        const cp = c.payload as Record<string, unknown>;
+        if (!cp?.territoryId || typeof cp.territoryId !== 'string') {
+          return { ok: 'error', status: 400, reason: `territory_cession clause requires territoryId` };
+        }
+        if (!cp?.fromNationId || !cp?.toNationId) {
+          return { ok: 'error', status: 400, reason: `territory_cession clause requires fromNationId and toNationId` };
+        }
+        if (typeof cp.transferAtTick !== 'number') {
+          return { ok: 'error', status: 400, reason: `territory_cession clause requires transferAtTick (absolute tick)` };
+        }
+        // Validate transferAtTick is at least CESSION_MIN_FUTURE_TICKS in the future.
+        const currentTickVal = ctx.currentTick;
+        if (cp.transferAtTick < currentTickVal + CESSION_MIN_FUTURE_TICKS) {
+          return { ok: 'error', status: 400, reason: `territory_cession transferAtTick must be at least ${CESSION_MIN_FUTURE_TICKS} ticks from now [PLACEHOLDER: CESSION_MIN_FUTURE_TICKS]` };
+        }
+      }
+      if (c.type === 'army_lending') {
+        const ap = c.payload as Record<string, unknown>;
+        if (!ap?.deliveryTerritoryId || !ap?.returnTerritoryId) {
+          return { ok: 'error', status: 400, reason: `army_lending clause requires deliveryTerritoryId and returnTerritoryId` };
+        }
+        if (typeof ap.armySize !== 'number' || ap.armySize < 1) {
+          return { ok: 'error', status: 400, reason: `army_lending clause requires armySize >= 1` };
+        }
+        if (typeof ap.loanDurationTicks !== 'number' || ap.loanDurationTicks < 1) {
+          return { ok: 'error', status: 400, reason: `army_lending clause requires loanDurationTicks >= 1` };
+        }
+      }
+      if (c.type === 'population_transfer') {
+        const pp = c.payload as Record<string, unknown>;
+        if (!pp?.fromNationId || !pp?.toNationId) {
+          return { ok: 'error', status: 400, reason: `population_transfer clause requires fromNationId and toNationId` };
+        }
+        if (typeof pp.amount !== 'number' || pp.amount <= 0) {
+          return { ok: 'error', status: 400, reason: `population_transfer clause requires amount > 0` };
+        }
+        if (typeof pp.transferAtTick !== 'number') {
+          return { ok: 'error', status: 400, reason: `population_transfer clause requires transferAtTick (absolute tick)` };
+        }
+      }
+      if (c.type === 'outpost') {
+        const op = c.payload as Record<string, unknown>;
+        if (!op?.targetTerritoryId || typeof op.targetTerritoryId !== 'string') {
+          return { ok: 'error', status: 400, reason: `outpost clause requires targetTerritoryId` };
+        }
+        if (!op?.grantedToNationId || typeof op.grantedToNationId !== 'string') {
+          return { ok: 'error', status: 400, reason: `outpost clause requires grantedToNationId` };
+        }
+        if (op.type !== 'sentry' && op.type !== 'outpost') {
+          return { ok: 'error', status: 400, reason: `outpost clause type must be 'sentry' or 'outpost'` };
+        }
+      }
     }
 
     // Target nation must exist.
@@ -72,6 +132,30 @@ export const proposeTreatyHandler: ActionHandler = {
       },
     });
     if (existing) return { ok: 'error', status: 400, reason: 'A pending proposal already exists between these nations' };
+
+    // §1.9 maintain_peace consecutive limit: at most MAINTAIN_PEACE_MAX_CONSECUTIVE
+    // maintain_peace treaties between the same pair within MAINTAIN_PEACE_CONSECUTIVE_WINDOW ticks.
+    const hasMaintainPeace = p.clauses!.some(
+      (c) => c.type === 'objective' && (c.payload as Record<string, unknown>)?.objectiveType === 'maintain_peace',
+    );
+    if (hasMaintainPeace) {
+      const windowStart = ctx.currentTick - MAINTAIN_PEACE_CONSECUTIVE_WINDOW;
+      const [idA, idB] = [ctx.nationId, p.targetNationId].sort();
+      const recentCount = await (ctx.prisma as any).treatyHistory?.count?.({
+        where: {
+          nationAId: idA,
+          nationBId: idB,
+          clauseType: 'maintain_peace',
+          signedAtTick: { gte: windowStart },
+        },
+      }) ?? 0;
+      if (recentCount >= MAINTAIN_PEACE_MAX_CONSECUTIVE) {
+        return {
+          ok: 'error', status: 400,
+          reason: `Cannot propose maintain_peace: ${recentCount} treaties already signed within the last ${MAINTAIN_PEACE_CONSECUTIVE_WINDOW} ticks [MAINTAIN_PEACE_MAX_CONSECUTIVE=${MAINTAIN_PEACE_MAX_CONSECUTIVE}]`,
+        };
+      }
+    }
 
     return { ok: 'ready', cost: COST, finalPayload: p as object };
   },

@@ -1,4 +1,10 @@
 tick,message
-5,"Trade clause degraded: treaty #1 clause 1 — guatemala no longer owned by sender."
-7,"Guatemala has become insolvent (wealth -2.5)."
+1,"Nicaragua has become insolvent (wealth -2.1)."
+1,"Panamá has become insolvent (wealth -1.9)."
+3,"Trade clause missed_payment: treaty #1 clause 1 — insufficient wealth (have 2.8, need 5)."
+4,"Trade clause missed_payment: treaty #1 clause 1 — insufficient wealth (have 1.7, need 5)."
+4,"Trade clause breached: treaty #1 clause 1 — 2 consecutive missed payments. Trust penalty applied."
+4,"Guatemala has become insolvent (wealth -0.4)."
+8,"Honduras has become insolvent (wealth -0.1)."
 12,"Treaty #1 between Costa Rica and Guatemala has completed its term. Both parties gain Trust."
+14,"Costa Rica has become insolvent (wealth -0.2)."

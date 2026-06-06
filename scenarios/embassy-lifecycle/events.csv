@@ -1,0 +1,8 @@
+tick,message
+1,"Nicaragua has become insolvent (wealth -2.1)."
+1,"Honduras has become insolvent (wealth -2.0)."
+1,"Guatemala has become insolvent (wealth -1.1)."
+1,"Panamá has become insolvent (wealth -1.9)."
+2,"Costa Rica began embassy construction in Nicaragua. [3 ticks]"
+4,"Embassy of Costa Rica in Nicaragua is now active. Visibility and compatibility effects begin."
+7,"Nicaragua expelled the embassy of Costa Rica from Nicaragua. Trust −10 applied to both nations. [PLACEHOLDER: EMBASSY_EXPEL_TRUST_PENALTY]"

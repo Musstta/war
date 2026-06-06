@@ -99,6 +99,12 @@ Scenario files are JSON in `scenarios/`. All fields:
 | `build_road` | Engine (via resolveTick) | `{ territoryId }` |
 | `build_port` | Engine (via resolveTick) | `{ territoryId }` |
 | `build_fort` | Engine (via resolveTick) | `{ territoryId }` — targetLevel auto-derived |
+| `propose_embassy` | Harness (before tick) | `{ ownerNationId, hostTerritoryId }` — injects embassy with status `proposed` and auto-assigned id 9000+N |
+| `build_embassy` | Engine (via resolveTick) | `{ nationId, embassyId }` — advances embassy to `under_construction` |
+| `expel_embassy` | Engine (via resolveTick) | `{ nationId, embassyId }` — host nation expels; sets status `expelled` |
+| `set_trade_route` | Harness (before tick) | `{ id?, treatyClauseId?, sourceTerritoryId, destinationNationId, path: string[], isSeaRoute? }` — injects a TradeRoute into world.tradeRoutes |
+| `assert_visibility` | Harness (post-tick assertion) | `{ observerNationId, territoryId, expectedTier: 0\|1\|2 }` |
+| `assert_equilibrium_component` | Harness (post-tick assertion) | `{ territoryId, component: string, expectedPresent: boolean }` |
 
 `assign_territory` computes compat-scaled conquest shock automatically (same formula as the live server). A low-compat conquest starts with higher shock than a compatible one.
 
@@ -111,6 +117,15 @@ Scenario files are JSON in `scenarios/`. All fields:
 `propose_peace` is a harness-side mutation that sets `war.pendingPeaceDeal` and transitions `war.status` to `peace_negotiation` before the tick fires. Pair it with `accept_peace` at the same tick to execute the deal in that tick's peace resolution block.
 
 `attack_territory` and `accept_peace` are engine pass-throughs. Unlike `build_road`, they require an explicit `nationId` in the payload because the engine cannot derive the acting nation from the target territory.
+
+`propose_embassy` uses the harness "direct state injection" pattern — it inserts an embassy row directly into `world.embassies` (status `proposed`, `constructionTicksLeft=0`) without going through the engine action queue. Auto-assigns id `9000 + embassies.length + 1` so harness-created embassies never collide with server-assigned ids.
+
+`set_trade_route` injects a `TradeRoute` directly into `world.tradeRoutes`. The harness normally has `tradeRoutes = []` (the server populates these from the DB at treaty signing); this action is the only way to test `tradeStability` equilibrium components in a scenario. `treatyClauseId` is optional and defaults to 0. `id` defaults to `9000 + tradeRoutes.length + 1`.
+
+`assert_visibility` and `assert_equilibrium_component` are post-tick assertions that run after each tick completes. Failures are collected in `RunResult.assertionErrors` and cause a non-zero exit code.
+
+- `assert_visibility`: calls `computeVisibility` with the full post-tick world state (including active embassies) for the given observer nation, then compares `actualTier` against `expectedTier`. Tier values: `0` = TrueFog, `1` = LightFog, `2` = Clear.
+- `assert_equilibrium_component`: reads `territory.state.lastEquilibriumCauses` (written by the engine each tick) and checks whether the named component is non-zero. Use `expectedPresent: true` to assert the component is active, `false` to assert it is absent. Component names match `UnrestCauses` fields (e.g. `tradeStability`, `isolationistEntanglement`, `expansionistStagnation`).
 
 `set_nation_tier` to `'dormant'` triggers treaty degradation: inactive party's collateral moves to escrow, active partner's collateral begins a 3-tick refund. Setting back to `'active'` upgrades degraded treaties and applies the escrow skim (`ESCROW_SKIM_RATE = 5%`). No Trust change in either direction.
 
@@ -313,3 +328,13 @@ To test a specific mechanism in isolation, use `territoryOverrides` to set a ter
 |---|---|---|
 | `ai-expansionist.json` | AI nation owns `mexico_yucatan`, doctrine `{ expansionist: 0.55, ... }`, two unclaimed neighbors (`belize`); 15 ticks | AI claims `belize` at T1 (expand_claim scores 0.63); subsequent ticks show non-aggression proposals to human neighbors? Army upkeep deducted each tick? |
 | `ai-merchant.json` | AI nation owns `panama` (adjacent to Costa Rica), doctrine `{ merchant: 0.60, ... }`; `autoAcceptTreaties: true`; 15 ticks | AI proposes trade treaty with Costa Rica at T1 (`propose_trade` scores 0.46); auto-accepted at T2; trade flows (3 Wealth/tick) visible in `trade-flows.csv` T2–T11? Treaty expires naturally at T11? |
+
+### Embassy, trade stability, visibility & cultural constraints (Phase 6.5 validation)
+
+| Scenario | Description | Key question |
+|---|---|---|
+| `trade-integration.json` | Costa Rica + Guatemala sign 20-tick trade treaty at T1. `set_trade_route` seeds a route `[guatemala→honduras→nicaragua→costa_rica]`. 12 ticks. | `tradeStability` component appears as non-zero on `costa_rica` (receiver path) at T5 and T12? |
+| `cultural-constraints.json` | Nicaragua (expansionist=−0.7) signs 4 non-aggression treaties at T1 (above `ISOLATIONIST_TREATY_THRESHOLD=3`). Guatemala (expansionist=0.7) holds no territory gains. 13 ticks. | `isolationistEntanglement` present on `nicaragua` at T8? `expansionistStagnation` present on `guatemala` at T12 (stagnation fires when `world.tick > EXPANSIONIST_GROWTH_WINDOW=10`, i.e. pre-tick value 11 inside tick iteration 12)? |
+| `movement-travel.json` | Nation A (el_salvador) moves army toward mexico_yucatan. 2-hop path: el_salvador→guatemala (mountainous, 1.5 ticks per-leg→ceil=2) + guatemala→mexico_yucatan (coastal, 1 tick). 6 ticks. | `mexico_yucatan` = TrueFog at T2 (army still at el_salvador, non-adjacent)? Clear at T4 (army arrived at mexico_yucatan after first leg completes at T3, second at T4)? |
+| `embassy-lifecycle.json` | Costa Rica proposes embassy in nicaragua at T1 (status=proposed). Builds at T2 (under_construction, 3 ticks left). Active at T5. Nicaragua expels at T7 (status=expelled). 10 ticks. | `nicaragua` = Clear for Costa Rica observer at T5 (active embassy → embassy grant)? = LightFog at T8 (expelled, no army, adjacent territory)? |
+| `territory-cession.json` | Treaty 1: Costa Rica receives panama via cession (transferAtTick=3); CR has active embassy at T5 → cession succeeds. Treaty 2: Guatemala receives honduras via cession (transferAtTick=3); no embassy → grace period expires after 3 ticks → clause breaches. 12 ticks. | Cession with embassy executes cleanly (ownership transferred, no breach event)? Cession without embassy produces a breach event after `CESSION_EMBASSY_GRACE_TICKS=3`? |

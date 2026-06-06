@@ -12,6 +12,27 @@ import {
   REVOLT_THRESHOLD,
   REVOLT_HYSTERESIS,
   RECENT_ACQUISITION_WINDOW,
+  TRADE_STABILITY_BONUS,
+  TRADE_DRIFT_MULTIPLIER,
+  ISOLATIONIST_TREATY_THRESHOLD,
+  ISOLATIONIST_ENTANGLEMENT_WEIGHT,
+  EXPANSIONIST_GROWTH_WINDOW,
+  EXPANSIONIST_STAGNATION_WEIGHT,
+  COLLECTIVIST_ISOLATION_WEIGHT,
+  INDIVIDUALIST_OBLIGATION_WEIGHT,
+  TRADITIONAL_EROSION_THRESHOLD,
+  TRADITIONAL_EROSION_WEIGHT,
+  PROGRESSIVE_STAGNATION_THRESHOLD,
+  PROGRESSIVE_STAGNATION_WEIGHT,
+  ROAD_DRIFT_MULTIPLIER,
+  POPULATION_TRANSFER_UNREST_SCALE,
+  POPULATION_TRANSFER_SHOCK_DURATION,
+  POPULATION_TRANSFER_DRIFT_DURATION,
+  CESSION_EMBASSY_GRACE_TICKS,
+  EMBASSY_COMPAT_BONUS,
+  EMBASSY_TRUST_RECOVERY_PER_TICK,
+  EMBASSY_BUILD_TICKS,
+  EMBASSY_EXPEL_TRUST_PENALTY,
 } from './culture';
 import {
   TRUST_BASELINE,
@@ -52,14 +73,46 @@ import {
   PEACE_DECLINE_EXHAUSTION_TICKS,
   PEACE_TRUST_BONUS,
   DEBT_RECOVERY_SKIM_RATE,
+  totalArmySize,
+  armyInTerritory,
+  armiesForNation,
+  PACIFICATION_THRESHOLD,
+  PACIFICATION_DECAY_PER_TICK,
+  TERRAIN_DIFFICULTY,
+  POP_DIFFICULTY_SCALE,
+  COMPAT_DIFFICULTY_SCALE,
+  GEOGRAPHY_SHOCK_MULTIPLIER,
+  computeArmyPath,
+  SKIRMISH_FULL_CB_WINDOW,
+  SKIRMISH_HOSTILITY_COMPAT_THRESHOLD,
+  BARRICADE_DEFENSE_BONUS,
+  GEOGRAPHY_MOVEMENT_MODIFIER,
 } from './war';
+// Alias for inline use in army transit advancement.
+const GEOGRAPHY_MOVEMENT_MODIFIER_INLINE = GEOGRAPHY_MOVEMENT_MODIFIER;
+import {
+  computeTradeCapacity,
+  computeTradeFriction,
+} from './trade';
 import { INSOLVENCY_GENERAL_UNREST_PER_TICK } from './culture';
 import type { PeaceDeal } from './types';
+import {
+  DOMINANT_WAR_ATTACKER_BONUS,
+  DOMINANT_WAR_MILITARISTIC_BONUS,
+} from './prestige';
 
 // ── Placeholder constants ─────────────────────────────────────────────────────
 // These numbers are not final. All tuning happens via the simulation harness
 // once enough systems are in place. Do not balance these by hand. (design doc §17)
 const UPKEEP_PER_SOLDIER = 0.05; // [PLACEHOLDER] Wealth cost per soldier per tick
+
+/**
+ * Base population at which production multiplier is 1.0.
+ * A territory with population 100 produces 2× base; population 25 produces 0.5× base.
+ * Linear scaling — may need sublinear curve at high population. [PLACEHOLDER]
+ * See tuning-notes.md for the "population production scaling" note.
+ */
+const POPULATION_PRODUCTION_BASE = 50; // [PLACEHOLDER]
 
 /** Ticks required to complete each construction type. [PLACEHOLDER] */
 export const BUILD_TICKS: Record<string, number> = {
@@ -253,7 +306,17 @@ export function resolveTick(
 
         case 'retreat_army': {
           const { fromTerritoryId } = action.payload as { fromTerritoryId: string; toTerritoryId: string };
-          // Find and reset any siege this nation is prosecuting on fromTerritoryId.
+          // Move the army back and clear any siege.
+          const retreatingArmy = draft.armies.find(
+            (a) => a.nationId === action.nationId && a.territoryId === fromTerritoryId,
+          );
+          if (retreatingArmy) {
+            const { toTerritoryId } = action.payload as { fromTerritoryId: string; toTerritoryId: string };
+            retreatingArmy.territoryId = toTerritoryId ?? retreatingArmy.territoryId;
+            retreatingArmy.status = 'stationed';
+            retreatingArmy.destinationTerritoryId = null;
+          }
+          // Clear occupied entry in any active war.
           for (const war of draft.wars) {
             if (war.status !== 'active') continue;
             if (war.attackerId !== action.nationId && war.defenderId !== action.nationId) continue;
@@ -261,7 +324,6 @@ export function resolveTick(
               (o) => o.territoryId === fromTerritoryId && o.occupyingNationId === action.nationId,
             );
             if (occIdx !== -1) {
-              // Remove from occupied list — siege progress resets to 0 by removal.
               war.occupiedTerritories.splice(occIdx, 1);
               const terrName = draft.territories[fromTerritoryId]?.def.name ?? fromTerritoryId;
               draft.eventLog.push({
@@ -270,6 +332,184 @@ export function resolveTick(
               });
             }
           }
+          apply(action);
+          break;
+        }
+
+        case 'move_army': {
+          // §1.3 Multi-tick movement model: compute path and set army in transit.
+          const { armyId, toTerritoryId } = action.payload as { armyId: number; toTerritoryId: string };
+          const army = draft.armies.find((a) => a.id === armyId && a.nationId === action.nationId);
+          if (!army) { discard(action, 'army not found or not owned by this nation'); break; }
+          if (army.movedThisTick) { discard(action, 'army already moved this tick'); break; }
+          const targetTerr = draft.territories[toTerritoryId];
+          if (!targetTerr) { discard(action, 'destination territory not found'); break; }
+
+          // Build adjacency for pathfinding.
+          const moveAdjacency: Record<string, readonly string[]> = Object.fromEntries(
+            Object.entries(draft.territories).map(([k, v]) => [k, v.def.adjacentIds]),
+          );
+
+          // Compute path from current position to destination.
+          const pathResult = computeArmyPath( // [PLACEHOLDER callsite: §1.3 movement model]
+            army.territoryId,
+            toTerritoryId,
+            draft.territories as WorldState['territories'],
+            moveAdjacency,
+            draft.territoryModifiers,
+          );
+          if (!pathResult) { discard(action, 'destination unreachable'); break; }
+
+          if (pathResult.totalTravelTicks <= 1) {
+            // Instant move (1 tick or adjacent with fast terrain): arrive immediately.
+            const prevTerritoryId = army.territoryId;
+            army.territoryId = toTerritoryId;
+            army.movedThisTick = true;
+            army.destinationTerritoryId = null;
+            army.transitPath = [];
+            army.transitTicksRemaining = 0;
+
+            const activeWar = draft.wars.find(
+              (w) => (w.status === 'active' || w.status === 'peace_negotiation') &&
+                ((w.attackerId === action.nationId && w.defenderId === targetTerr.state.ownerId) ||
+                 (w.defenderId === action.nationId && w.attackerId === targetTerr.state.ownerId)),
+            );
+            if (activeWar && targetTerr.state.ownerId && targetTerr.state.ownerId !== action.nationId) {
+              army.status = 'besieging';
+            } else if (targetTerr.state.ownerId === action.nationId) {
+              army.status = 'stationed';
+            } else if (!targetTerr.state.ownerId) {
+              army.status = 'occupying';
+            }
+
+            draft.eventLog.push({
+              tick: world.tick + 1,
+              message: `${draft.nations[action.nationId]?.name ?? action.nationId} moved an army from ${prevTerritoryId} to ${toTerritoryId}.`,
+            });
+          } else {
+            // Multi-tick transit: army begins journey. [PLACEHOLDER callsite: §1.3]
+            army.status = 'moving';
+            army.destinationTerritoryId = toTerritoryId;
+            army.transitPath = pathResult.path;
+            army.transitTicksRemaining = pathResult.totalTravelTicks;
+            army.movedThisTick = true;
+
+            draft.eventLog.push({
+              tick: world.tick + 1,
+              message: `${draft.nations[action.nationId]?.name ?? action.nationId} army begins ${pathResult.totalTravelTicks}-tick march to ${toTerritoryId} (path: ${pathResult.path.join(' → ')}).`,
+            });
+          }
+          apply(action);
+          break;
+        }
+
+        case 'build_barricade': {
+          // §1.4 Barricade: temporary movement debuff + defense bonus on a territory.
+          const { territoryId: barricadeTid } = action.payload as { territoryId: string };
+          const barricadeTerr = draft.territories[barricadeTid];
+          if (!barricadeTerr) { discard(action, 'territory not found'); break; }
+          if (barricadeTerr.state.ownerId !== action.nationId) { discard(action, 'not owner'); break; }
+
+          // Add TerritoryModifier for the barricade.
+          const barricadeId = -(draft.territoryModifiers.length + 1); // negative = new, persisted by server
+          draft.territoryModifiers.push({
+            id: barricadeId,
+            territoryId: barricadeTid,
+            source: 'barricade',
+            movementMultiplier: 1.5, // [PLACEHOLDER callsite: BARRICADE_MOVEMENT_MULTIPLIER]
+            productionMultiplier: 1.0,
+            unrestEquilibriumAdj: 0,
+            driftRateMultiplier: 1.0,
+            defenseBonus: BARRICADE_DEFENSE_BONUS, // [PLACEHOLDER callsite]
+            startTick: world.tick + 1,
+            durationTicks: 5, // [PLACEHOLDER: BARRICADE_DURATION_TICKS]
+            expiresAtTick: world.tick + 1 + 5,
+          });
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `${draft.nations[action.nationId]?.name ?? action.nationId} built a barricade in ${barricadeTerr.def.name}. [movementMultiplier ×1.5, defenseBonus +${BARRICADE_DEFENSE_BONUS}, expires T${world.tick + 6}]`,
+          });
+          apply(action);
+          break;
+        }
+
+        case 'claim_territory': {
+          // Claim an unclaimed adjacent territory. Ownership not transferred yet — pacification needed.
+          const { territoryId } = action.payload as { territoryId: string };
+          const claimTerr = draft.territories[territoryId];
+          if (!claimTerr) { discard(action, 'territory not found'); break; }
+          if (claimTerr.state.ownerId !== null) { discard(action, 'territory is not unclaimed'); break; }
+          // Check adjacency.
+          const isAdjToOwned = Object.values(draft.territories).some(
+            (t) => t.state.ownerId === action.nationId && t.def.adjacentIds.includes(territoryId),
+          );
+          if (!isAdjToOwned) { discard(action, 'territory not adjacent to any owned territory'); break; }
+          // Upsert claim.
+          const existingClaim = draft.territoryClaims.find(
+            (c) => c.nationId === action.nationId && c.territoryId === territoryId,
+          );
+          if (existingClaim) { discard(action, 'claim already exists for this territory'); break; }
+          draft.territoryClaims.push({
+            id: world.tick * 1000 + draft.territoryClaims.length + 1, // stable harness ID
+            nationId: action.nationId,
+            territoryId,
+            claimedAtTick: world.tick,
+            pacificationProgress: 0,
+          });
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `${draft.nations[action.nationId]?.name ?? action.nationId} has claimed ${claimTerr.def.name}.`,
+          });
+          apply(action);
+          break;
+        }
+
+        case 'build_embassy': {
+          // §1.6 Embassy construction: find the proposed embassy and begin building.
+          const { embassyId } = action.payload as { embassyId: number };
+          const embIdx = draft.embassies.findIndex((e) => e.id === embassyId);
+          if (embIdx === -1) { discard(action, 'embassy not found'); break; }
+          const emb = draft.embassies[embIdx]!;
+          if (emb.ownerNationId !== action.nationId) { discard(action, 'not embassy owner'); break; }
+          if (emb.status !== 'proposed') { discard(action, `embassy already ${emb.status}`); break; }
+          emb.status = 'under_construction';
+          emb.constructionTicksLeft = EMBASSY_BUILD_TICKS; // [PLACEHOLDER callsite: EMBASSY_BUILD_TICKS]
+          emb.startedAtTick = world.tick + 1;
+          const embTerr = draft.territories[emb.hostTerritoryId];
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `${draft.nations[action.nationId]?.name ?? action.nationId} began embassy construction in ${embTerr?.def.name ?? emb.hostTerritoryId}. [${EMBASSY_BUILD_TICKS} ticks]`,
+          });
+          apply(action);
+          break;
+        }
+
+        case 'expel_embassy': {
+          // §1.6 Embassy expulsion: host nation expels a foreign embassy.
+          const { embassyId: expelId } = action.payload as { embassyId: number };
+          const expelIdx = draft.embassies.findIndex((e) => e.id === expelId);
+          if (expelIdx === -1) { discard(action, 'embassy not found'); break; }
+          const expelEmb = draft.embassies[expelIdx]!;
+          // Validate: action must be from the host territory's owner.
+          const expelHostTerr = draft.territories[expelEmb.hostTerritoryId];
+          if (!expelHostTerr || expelHostTerr.state.ownerId !== action.nationId) {
+            discard(action, 'only the host territory owner may expel an embassy');
+            break;
+          }
+          if (expelEmb.status !== 'active' && expelEmb.status !== 'under_construction') {
+            discard(action, `cannot expel embassy with status ${expelEmb.status}`);
+            break;
+          }
+          expelEmb.status = 'expelled';
+          // Trust penalty on both nations. [PLACEHOLDER callsite: EMBASSY_EXPEL_TRUST_PENALTY]
+          const expelOwner = draft.nations[expelEmb.ownerNationId];
+          const expelHost = draft.nations[action.nationId];
+          if (expelOwner) expelOwner.trust = Math.max(0, expelOwner.trust - EMBASSY_EXPEL_TRUST_PENALTY);
+          if (expelHost) expelHost.trust = Math.max(0, expelHost.trust - EMBASSY_EXPEL_TRUST_PENALTY);
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `${expelHost?.name ?? action.nationId} expelled the embassy of ${expelOwner?.name ?? expelEmb.ownerNationId} from ${expelHostTerr.def.name}. Trust −${EMBASSY_EXPEL_TRUST_PENALTY} applied to both nations. [PLACEHOLDER: EMBASSY_EXPEL_TRUST_PENALTY]`,
+          });
           apply(action);
           break;
         }
@@ -346,14 +586,40 @@ export function resolveTick(
           // Seeded RNG value for this battle (unique per war+territory+tick).
           const rngVal = rng();
 
-          const { attackStrength, defendStrength } = computeBattleStrengths(
-            attackingNation.armySize,
-            defendingNation.armySize,
+          // Use positioned army sizes when armies are present; fall back to nation.armySize for
+          // backward compatibility (harness scenarios without Army rows). // migrated from armySize
+          const attackingArmy = armyInTerritory(draft.armies, targetTerritoryId) ??
+            draft.armies.find((a) => a.nationId === attackingNationId) ?? null;
+          const defendingArmy = armyInTerritory(draft.armies, targetTerritoryId) &&
+            (armyInTerritory(draft.armies, targetTerritoryId)!.nationId === defendingNationId)
+            ? armyInTerritory(draft.armies, targetTerritoryId)!
+            : draft.armies.find((a) => a.nationId === defendingNationId && a.territoryId === targetTerritoryId) ?? null;
+
+          const attackingArmySize = attackingArmy?.nationId === attackingNationId
+            ? attackingArmy.size
+            : (draft.armies.length > 0 ? totalArmySize(draft.armies, attackingNationId) : attackingNation.armySize); // migrated from armySize
+          const defendingArmySize = defendingArmy
+            ? defendingArmy.size
+            : (draft.armies.length > 0 ? totalArmySize(draft.armies, defendingNationId) : defendingNation.armySize); // migrated from armySize
+
+          // Dominant war attacker bonus: non-Dominant attacking a Dominant nation.
+          // [PLACEHOLDER — DOMINANT_WAR_ATTACKER_BONUS = 1.15]
+          const defenderIsDominant = draft.nations[defendingNationId]?.isDominant ?? false;
+          const attackerIsDominant = draft.nations[attackingNationId]?.isDominant ?? false;
+          const dominantAttackBonus = (!attackerIsDominant && defenderIsDominant)
+            ? DOMINANT_WAR_ATTACKER_BONUS
+            : 1.0;
+
+          const { attackStrength: rawAttackStrength, defendStrength } = computeBattleStrengths(
+            attackingArmySize,
+            defendingArmySize,
             targetTerr.state.fortificationLevel,
             targetTerr.def.geography,
             attackerHasRoad,
             rngVal,
           );
+          // Apply Dominant attacker bonus to the raw attack strength.
+          const attackStrength = rawAttackStrength * dominantAttackBonus; // [PLACEHOLDER callsite: DOMINANT_WAR_ATTACKER_BONUS]
 
           const attackerWins = attackStrength > defendStrength;
           const terrName = targetTerr.def.name;
@@ -369,10 +635,27 @@ export function resolveTick(
             // Attacker wins this battle tick.
             const lossFrac = BATTLE_LOSER_LOSS_RATE;
             const winFrac  = BATTLE_WINNER_LOSS_RATE;
-            const defenderLosses = Math.max(1, Math.floor(defendingNation.armySize * lossFrac));
-            const attackerLosses = Math.max(0, Math.floor(attackingNation.armySize * winFrac));
-            defendingNation.armySize = Math.max(0, defendingNation.armySize - defenderLosses);
-            attackingNation.armySize = Math.max(0, attackingNation.armySize - attackerLosses);
+            const defenderLosses = Math.max(1, Math.floor(defendingArmySize * lossFrac));
+            const attackerLosses = Math.max(0, Math.floor(attackingArmySize * winFrac));
+            // Apply losses to positioned armies if present; else to nation totals.
+            if (attackingArmy?.nationId === attackingNationId) {
+              attackingArmy.size = Math.max(0, attackingArmy.size - attackerLosses);
+              if (attackingArmy.size === 0) {
+                draft.armies.splice(draft.armies.indexOf(attackingArmy), 1);
+                draft.eventLog.push({ tick: world.tick + 1, message: `${attackerName}'s army was destroyed in battle.` });
+              }
+            } else {
+              attackingNation.armySize = Math.max(0, attackingNation.armySize - attackerLosses); // migrated from armySize
+            }
+            if (defendingArmy) {
+              defendingArmy.size = Math.max(0, defendingArmy.size - defenderLosses);
+              if (defendingArmy.size === 0) {
+                draft.armies.splice(draft.armies.indexOf(defendingArmy), 1);
+                draft.eventLog.push({ tick: world.tick + 1, message: `${defenderName}'s army was destroyed in battle.` });
+              }
+            } else {
+              defendingNation.armySize = Math.max(0, defendingNation.armySize - defenderLosses); // migrated from armySize
+            }
 
             if (existingOccIdx === -1) {
               // First successful attack — place in occupied state with siegeProgress 1.
@@ -397,10 +680,9 @@ export function resolveTick(
                 war.occupiedTerritories.splice(existingOccIdx, 1);
                 targetTerr.state.ownerId = attackingNationId;
                 targetTerr.state.acquiredTick = world.tick;
-                // Conquest shock applied — reuse the same compat-scaled formula as admin set-owner.
-                // Keep it simple here: set ownershipShock to CONQUEST_SHOCK_INITIAL placeholder.
-                // The full compat-scaled version is computed in the server; engine uses a fixed value.
-                targetTerr.state.ownershipShock = 0.50; // [PLACEHOLDER] see computeConquestShock
+                // Conquest shock: base 0.50 × geography multiplier. [PLACEHOLDER callsite: GEOGRAPHY_SHOCK_MULTIPLIER]
+                const geoShockMult = GEOGRAPHY_SHOCK_MULTIPLIER[targetTerr.def.geography] ?? 1.0; // [PLACEHOLDER callsite: GEOGRAPHY_SHOCK_MULTIPLIER]
+                targetTerr.state.ownershipShock = Math.min(1, 0.50 * geoShockMult); // [PLACEHOLDER] see computeConquestShock
                 draft.eventLog.push({
                   tick: world.tick + 1,
                   message: `${attackerName} captured ${terrName} from ${defenderName} after ${occ.siegeProgress} tick siege. Casualties: ${attackerName} −${attackerLosses}, ${defenderName} −${defenderLosses}.`,
@@ -422,8 +704,13 @@ export function resolveTick(
 
           } else {
             // Defender holds. Attacker takes losses.
-            const attackerLosses = Math.max(0, Math.floor(attackingNation.armySize * BATTLE_WINNER_LOSS_RATE));
-            attackingNation.armySize = Math.max(0, attackingNation.armySize - attackerLosses);
+            const attackerLosses = Math.max(0, Math.floor(attackingArmySize * BATTLE_WINNER_LOSS_RATE));
+            if (attackingArmy?.nationId === attackingNationId) {
+              attackingArmy.size = Math.max(0, attackingArmy.size - attackerLosses);
+              if (attackingArmy.size === 0) draft.armies.splice(draft.armies.indexOf(attackingArmy), 1);
+            } else {
+              attackingNation.armySize = Math.max(0, attackingNation.armySize - attackerLosses); // migrated from armySize
+            }
 
             // If this was a continuing siege, the failed attack resets progress (attacker driven off).
             if (existingOccIdx !== -1) {
@@ -476,7 +763,9 @@ export function resolveTick(
         if (!terr) continue;
         terr.state.ownerId = cession.toNationId;
         terr.state.acquiredTick = world.tick;
-        terr.state.ownershipShock = 0.50; // [PLACEHOLDER] same as battle capture
+        // Conquest shock: base × geography multiplier. [PLACEHOLDER callsite: GEOGRAPHY_SHOCK_MULTIPLIER]
+        const cessionGeoMult = GEOGRAPHY_SHOCK_MULTIPLIER[terr.def.geography] ?? 1.0; // [PLACEHOLDER callsite: GEOGRAPHY_SHOCK_MULTIPLIER]
+        terr.state.ownershipShock = Math.min(1, 0.50 * cessionGeoMult); // [PLACEHOLDER] same as battle capture
         draft.eventLog.push({
           tick: world.tick + 1,
           message: `${draft.nations[cession.toNationId]?.name ?? cession.toNationId} received ${terr.def.name} via peace treaty.`,
@@ -508,6 +797,22 @@ export function resolveTick(
           tick: world.tick + 1,
           message: `[TRIBUTE_TREATY] warId=${war.id} fromNationId=${war.attackerId} toNationId=${war.defenderId} amount=${deal.tributeWealth} ticks=${deal.tributeTicks}`,
         });
+      }
+
+      // 3b. Prestige warsWon increment.
+      // A nation wins if territory was ceded to them, OR tribute flows to them (defender extracts tribute).
+      // White peace (no cessions, no tribute) = no winner; neither increments.
+      const attackerGainedTerritory = deal.territoryCessions.some((c) => c.toNationId === war.attackerId);
+      const defenderGainedTerritory = deal.territoryCessions.some((c) => c.toNationId === war.defenderId);
+      const defenderExtractedTribute = deal.tributeWealth > 0 && deal.tributeTicks > 0;
+      // Tribute flows attacker→defender, so defender wins by extracting tribute.
+      if (attackerGainedTerritory) {
+        const attacker = draft.nations[war.attackerId];
+        if (attacker) attacker.warsWon += 1;
+      }
+      if (defenderGainedTerritory || defenderExtractedTribute) {
+        const defender = draft.nations[war.defenderId];
+        if (defender) defender.warsWon += 1;
       }
 
       // 4. Trust bonus for peaceful resolution.
@@ -589,6 +894,303 @@ export function resolveTick(
       }
     }
 
+    // ── Army movedThisTick reset ──────────────────────────────────────────────
+    for (const army of draft.armies) {
+      army.movedThisTick = false;
+    }
+
+    // ── §1.3 Army transit advancement ─────────────────────────────────────────
+    // Each tick, decrement transit counters. When 0: advance one step on path.
+    for (const army of draft.armies) {
+      if (army.status !== 'moving' || army.transitPath.length === 0) continue;
+
+      army.transitTicksRemaining -= 1;
+      if (army.transitTicksRemaining > 0) continue;
+
+      // Advance to next territory on path.
+      const nextTerritoryId = army.transitPath[0]!;
+      army.transitPath = army.transitPath.slice(1);
+      army.territoryId = nextTerritoryId;
+
+      const nextTerr = draft.territories[nextTerritoryId];
+
+      if (army.transitPath.length === 0) {
+        // Journey complete — army arrived.
+        army.destinationTerritoryId = null;
+        const activeWar = draft.wars.find(
+          (w) => (w.status === 'active' || w.status === 'peace_negotiation') &&
+            ((w.attackerId === army.nationId && w.defenderId === nextTerr?.state.ownerId) ||
+             (w.defenderId === army.nationId && w.attackerId === nextTerr?.state.ownerId)),
+        );
+        if (activeWar && nextTerr?.state.ownerId && nextTerr.state.ownerId !== army.nationId) {
+          army.status = 'besieging';
+        } else if (nextTerr?.state.ownerId === army.nationId) {
+          army.status = 'stationed';
+        } else if (!nextTerr?.state.ownerId) {
+          army.status = 'occupying';
+        } else {
+          army.status = 'stationed'; // fallback
+        }
+        draft.eventLog.push({
+          tick: world.tick + 1,
+          message: `${draft.nations[army.nationId]?.name ?? army.nationId} army arrived at ${nextTerr?.def.name ?? nextTerritoryId}.`,
+        });
+      } else {
+        // Still in transit — compute ticks for next leg.
+        const nextLegTerr = draft.territories[army.transitPath[0]!];
+        if (nextLegTerr) {
+          const modMult = draft.territoryModifiers
+            .filter((m) => m.territoryId === army.transitPath[0] && (m.expiresAtTick === null || m.expiresAtTick > world.tick + 1))
+            .reduce((acc, m) => acc * m.movementMultiplier, 1.0);
+          // [PLACEHOLDER callsite: §1.3 per-leg travel cost]
+          const geoMod = GEOGRAPHY_MOVEMENT_MODIFIER_INLINE[nextLegTerr.def.geography] ?? 1.0;
+          const roadMod = nextLegTerr.state.hasRoad ? 0.5 : 1.0;
+          army.transitTicksRemaining = Math.ceil(1 * geoMod * roadMod * modMult);
+        } else {
+          army.transitTicksRemaining = 1;
+        }
+      }
+    }
+
+    // ── §1.3 Border skirmish detection ────────────────────────────────────────
+    // Detect armies from different non-war nations crossing the same territory this tick.
+    // A skirmish fires when two such armies both had attack intents on the same territory.
+    const skirmishAttackIntents: Map<string, { nationId: string; armySize: number }[]> = new Map();
+    for (const action of actions) {
+      if (action.type !== 'attack_territory') continue;
+      const { targetTerritoryId } = action.payload as { targetTerritoryId: string };
+      if (!skirmishAttackIntents.has(targetTerritoryId)) skirmishAttackIntents.set(targetTerritoryId, []);
+      const attackingArmy = draft.armies.find((a) => a.nationId === action.nationId);
+      const sz = attackingArmy?.size ?? totalArmySize(draft.armies, action.nationId);
+      skirmishAttackIntents.get(targetTerritoryId)!.push({ nationId: action.nationId, armySize: sz });
+    }
+
+    for (const [skirmishTid, intents] of skirmishAttackIntents) {
+      if (intents.length < 2) continue;
+      // Check every pair of nations with intents on the same territory.
+      for (let i = 0; i < intents.length; i++) {
+        for (let j = i + 1; j < intents.length; j++) {
+          const intentA = intents[i]!;
+          const intentB = intents[j]!;
+          // Not a skirmish if they're at war (handled by normal battle resolution).
+          if (areAtWar(draft.wars, intentA.nationId, intentB.nationId)) continue;
+
+          // Resolve small battle.
+          const rngVal = rng();
+          const { attackStrength, defendStrength } = computeBattleStrengths(
+            intentA.armySize, intentB.armySize, 0, 'plain', false, rngVal,
+          );
+          const winnerId = attackStrength > defendStrength ? intentA.nationId
+            : defendStrength > attackStrength ? intentB.nationId
+            : null;
+
+          // Determine Full CB: prior skirmish, competing claim, or hostile compat.
+          const priorSkirmish = draft.borderSkirmishes.some(
+            (s) => (s.nationAId === intentA.nationId && s.nationBId === intentB.nationId ||
+                     s.nationAId === intentB.nationId && s.nationBId === intentA.nationId) &&
+              world.tick - s.tick < SKIRMISH_FULL_CB_WINDOW, // [PLACEHOLDER callsite]
+          );
+          const competingClaim = draft.territoryClaims.some(
+            (c) => (c.nationId === intentA.nationId || c.nationId === intentB.nationId) &&
+              c.territoryId === skirmishTid,
+          );
+          // Compat check for Full CB: use a quick on-the-spot nation culture estimate.
+          const skirmishTerrTmp = draft.territories[skirmishTid];
+          let hostileCompat = false;
+          if (skirmishTerrTmp) {
+            // Compute culture inline to avoid forward reference to nationCultures map.
+            const capA = draft.nations[intentA.nationId]?.capitalTerritoryId ?? null;
+            const capB = draft.nations[intentB.nationId]?.capitalTerritoryId ?? null;
+            const ncA = computeNationCulture(intentA.nationId, draft.territories as WorldState['territories'], capA);
+            const ncB = computeNationCulture(intentB.nationId, draft.territories as WorldState['territories'], capB);
+            const compatAB = computeCompatibility(skirmishTerrTmp.state.valueTraits, skirmishTerrTmp.def.culturalFamily, ncA);
+            const compatBA = computeCompatibility(skirmishTerrTmp.state.valueTraits, skirmishTerrTmp.def.culturalFamily, ncB);
+            hostileCompat = compatAB.total < SKIRMISH_HOSTILITY_COMPAT_THRESHOLD || // [PLACEHOLDER callsite]
+              compatBA.total < SKIRMISH_HOSTILITY_COMPAT_THRESHOLD;
+          }
+          const fullCasusBelli = priorSkirmish || competingClaim || hostileCompat;
+
+          const skirmish: import('./types').BorderSkirmish = {
+            id: -(draft.borderSkirmishes.length + 1), // negative = new
+            tick: world.tick + 1,
+            territoryId: skirmishTid,
+            nationAId: intentA.nationId,
+            nationBId: intentB.nationId,
+            armySizeA: intentA.armySize,
+            armySizeB: intentB.armySize,
+            winnerId,
+            fullCasusBelli,
+          };
+          draft.borderSkirmishes.push(skirmish);
+
+          const nameA = draft.nations[intentA.nationId]?.name ?? intentA.nationId;
+          const nameB = draft.nations[intentB.nationId]?.name ?? intentB.nationId;
+          const resultStr = winnerId ? `${draft.nations[winnerId]?.name ?? winnerId} wins` : 'draw';
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `Border skirmish in ${draft.territories[skirmishTid]?.def.name ?? skirmishTid}: ${nameA} vs ${nameB}. ${resultStr}. ${fullCasusBelli ? 'Full CB granted.' : 'Soft CB granted.'} [SKIRMISH]`,
+          });
+        }
+      }
+    }
+
+    // ── §1.4 TerritoryModifier expiry ─────────────────────────────────────────
+    // Remove modifiers whose expiresAtTick has passed.
+    draft.territoryModifiers = draft.territoryModifiers.filter(
+      (m) => m.expiresAtTick === null || m.expiresAtTick > world.tick + 1,
+    );
+
+    // ── §1.6 Embassy construction advancement ────────────────────────────────
+    for (const emb of draft.embassies) {
+      if (emb.status !== 'under_construction') continue;
+      emb.constructionTicksLeft -= 1;
+      if (emb.constructionTicksLeft <= 0) {
+        emb.status = 'active';
+        const embTerr = draft.territories[emb.hostTerritoryId];
+        draft.eventLog.push({
+          tick: world.tick + 1,
+          message: `Embassy of ${draft.nations[emb.ownerNationId]?.name ?? emb.ownerNationId} in ${embTerr?.def.name ?? emb.hostTerritoryId} is now active. Visibility and compatibility effects begin.`,
+        });
+      }
+    }
+
+    // ── §1.6 Embassy destruction on ownership change ─────────────────────────
+    // Any active/under_construction embassy whose hostTerritoryId changed owner is destroyed.
+    for (const emb of draft.embassies) {
+      if (emb.status === 'expelled' || emb.status === 'destroyed') continue;
+      const hostTerr = draft.territories[emb.hostTerritoryId];
+      if (!hostTerr) { emb.status = 'destroyed'; continue; }
+      // Find what the territory owner was at start of tick (world.territories, pre-draft).
+      const origOwner = world.territories[emb.hostTerritoryId]?.state.ownerId;
+      const newOwner = hostTerr.state.ownerId;
+      if (origOwner !== newOwner) {
+        emb.status = 'destroyed';
+        draft.eventLog.push({
+          tick: world.tick + 1,
+          message: `Embassy of ${draft.nations[emb.ownerNationId]?.name ?? emb.ownerNationId} in ${hostTerr.def.name} was destroyed — territory changed ownership.`,
+        });
+      }
+    }
+
+    // ── §1.6 Embassy Trust recovery ──────────────────────────────────────────
+    // For each active embassy pair, apply passive Trust recovery bonus to both nations.
+    // Only once per bilateral pair (avoid double-applying if two embassies face both ways).
+    const embassyTrustPairs = new Set<string>();
+    for (const emb of draft.embassies) {
+      if (emb.status !== 'active') continue;
+      const hostTerr = draft.territories[emb.hostTerritoryId];
+      const hostNationId = hostTerr?.state.ownerId;
+      if (!hostNationId || hostNationId === emb.ownerNationId) continue;
+      const pairKey = [emb.ownerNationId, hostNationId].sort().join(':');
+      if (embassyTrustPairs.has(pairKey)) continue;
+      embassyTrustPairs.add(pairKey);
+      const ownerNation = draft.nations[emb.ownerNationId];
+      const hostNation = draft.nations[hostNationId];
+      if (ownerNation) ownerNation.trust = Math.min(100, ownerNation.trust + EMBASSY_TRUST_RECOVERY_PER_TICK); // [PLACEHOLDER callsite: EMBASSY_TRUST_RECOVERY_PER_TICK]
+      if (hostNation) hostNation.trust = Math.min(100, hostNation.trust + EMBASSY_TRUST_RECOVERY_PER_TICK); // [PLACEHOLDER callsite: EMBASSY_TRUST_RECOVERY_PER_TICK]
+    }
+
+    // ── Siege maintenance by army presence ────────────────────────────────────
+    // Besieging armies auto-advance siege each tick without re-queuing.
+    for (const war of draft.wars) {
+      if (war.status !== 'active' && war.status !== 'peace_negotiation') continue;
+      for (const [attackingNationId, defendingNationId] of [
+        [war.attackerId, war.defenderId] as const,
+        [war.defenderId, war.attackerId] as const,
+      ]) {
+        const besiegingArmies = draft.armies.filter(
+          (a) => a.nationId === attackingNationId && a.status === 'besieging',
+        );
+        for (const army of besiegingArmies) {
+          const targetTerr = draft.territories[army.territoryId];
+          if (!targetTerr || targetTerr.state.ownerId !== defendingNationId) continue;
+
+          // Check if already tracked in occupiedTerritories.
+          const occIdx = war.occupiedTerritories.findIndex(
+            (o) => o.territoryId === army.territoryId && o.occupyingNationId === attackingNationId,
+          );
+          if (occIdx === -1) {
+            // Army just arrived — start siege tracking.
+            war.occupiedTerritories.push({
+              territoryId: army.territoryId,
+              occupyingNationId: attackingNationId,
+              siegeProgress: 1,
+              siegeStartTick: world.tick,
+            });
+          } else {
+            // Continuing siege — auto-advance.
+            const occ = war.occupiedTerritories[occIdx]!;
+            occ.siegeProgress += 1;
+            const required = siegeTicksRequired(targetTerr.state.fortificationLevel);
+            if (occ.siegeProgress >= required) {
+              war.occupiedTerritories.splice(occIdx, 1);
+              targetTerr.state.ownerId = attackingNationId;
+              targetTerr.state.acquiredTick = world.tick;
+              // Conquest shock: base × geography multiplier. [PLACEHOLDER callsite: GEOGRAPHY_SHOCK_MULTIPLIER]
+              targetTerr.state.ownershipShock = Math.min(1, 0.50 * (GEOGRAPHY_SHOCK_MULTIPLIER[targetTerr.def.geography] ?? 1.0)); // [PLACEHOLDER callsite: GEOGRAPHY_SHOCK_MULTIPLIER]
+              army.status = 'stationed';
+              const attackerName = draft.nations[attackingNationId]?.name ?? attackingNationId;
+              const defenderName = draft.nations[defendingNationId]?.name ?? defendingNationId;
+              draft.eventLog.push({
+                tick: world.tick + 1,
+                message: `${attackerName} captured ${targetTerr.def.name} from ${defenderName} by siege (army presence).`,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // ── Pacification resolution ───────────────────────────────────────────────
+    // Each tick, for every TerritoryClaim where the nation has an army present: accumulate progress.
+    // When progress >= PACIFICATION_THRESHOLD: transfer ownership.
+    const claimsToDelete: number[] = [];
+    for (const claim of draft.territoryClaims) {
+      const claimTerr = draft.territories[claim.territoryId];
+      if (!claimTerr) { claimsToDelete.push(claim.id); continue; }
+
+      // If territory was claimed by another nation already, this claim is void.
+      if (claimTerr.state.ownerId !== null) { claimsToDelete.push(claim.id); continue; }
+
+      // Check for army presence.
+      const presentArmy = draft.armies.find(
+        (a) => a.nationId === claim.nationId && a.territoryId === claim.territoryId,
+      );
+
+      if (presentArmy) {
+        // Compute pacification difficulty.
+        const terrDiff = TERRAIN_DIFFICULTY[claimTerr.def.geography] ?? 1.0;
+        const nativeDifficulty = terrDiff
+          + claimTerr.def.basePopulation * POP_DIFFICULTY_SCALE;
+        // Compatibility not available without nation culture; use 0.5 as placeholder.
+        const armyStrength = presentArmy.size;
+        const progressGain = armyStrength / nativeDifficulty;
+        claim.pacificationProgress += progressGain;
+
+        if (claim.pacificationProgress >= PACIFICATION_THRESHOLD) {
+          claimTerr.state.ownerId = claim.nationId;
+          claimTerr.state.acquiredTick = world.tick;
+          // Harder territories generate more shock.
+          claimTerr.state.ownershipShock = Math.min(0.50, 0.20 + nativeDifficulty * 0.05);
+          presentArmy.status = 'stationed';
+          const nationName = draft.nations[claim.nationId]?.name ?? claim.nationId;
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `${nationName} has pacified and annexed ${claimTerr.def.name}.`,
+          });
+          claimsToDelete.push(claim.id);
+        }
+      } else {
+        // Army absent — decay progress.
+        claim.pacificationProgress = Math.max(0, claim.pacificationProgress - PACIFICATION_DECAY_PER_TICK);
+      }
+    }
+    // Remove completed or voided claims.
+    for (const id of claimsToDelete) {
+      const idx = draft.territoryClaims.findIndex((c) => c.id === id);
+      if (idx !== -1) draft.territoryClaims.splice(idx, 1);
+    }
+
     // ── Instant trade expiry ──────────────────────────────────────────────────
     for (const trade of draft.instantTrades) {
       if (trade.status !== 'pending') continue;
@@ -657,56 +1259,143 @@ export function resolveTick(
     for (const treaty of draft.treaties) {
       if (!isTreatyOperational(treaty)) continue;
 
-      // Tribute transfers fire every tick. Full amount deducted — wealth may go negative.
+      // Tribute transfers fire every tick — §1.10 auto-assign: distribute proportionally
+      // across owned territories weighted by their baseWealth production rate.
+      // If sourceTerritoryId is present on a tribute clause payload (legacy/manual pin),
+      // use existing direct stockpile deduction. Otherwise auto-assign.
       const transfers = computeTributeTransfers(treaty);
       for (const { fromId, toId, amount } of transfers) {
         const from = draft.nations[fromId];
         const to = draft.nations[toId];
         if (!from || !to) continue;
-        from.stockpiles.wealth -= amount;
+
+        // §1.10 Auto-assign tribute: deduct proportionally from territory local Wealth stockpiles.
+        // Territories weighted by baseWealth (their wealth production rate this tick).
+        const fromTerritories = Object.values(draft.territories).filter(
+          (t) => t.state.ownerId === fromId && !t.state.isInRevolt,
+        );
+        const totalWealthRate = fromTerritories.reduce((s, t) => s + t.def.baseWealth, 0);
+        if (totalWealthRate > 0) {
+          // Check total available local wealth (pre-flush — still in local stockpiles this tick).
+          const totalLocalWealth = fromTerritories.reduce((s, t) => s + t.state.localWltStock, 0)
+            + from.stockpiles.wealth;
+          if (totalLocalWealth < amount) {
+            // Wealth goes negative — tribute deducted anyway (insolvency path unchanged).
+          }
+          // Distribute deduction proportionally across local stockpiles, then overflow to general.
+          let remaining = amount;
+          for (const t of fromTerritories) {
+            const share = amount * (t.def.baseWealth / totalWealthRate);
+            const fromLocal = Math.min(t.state.localWltStock, share);
+            t.state.localWltStock -= fromLocal;
+            remaining -= fromLocal;
+          }
+          // Any remaining deduction comes from general stockpile.
+          from.stockpiles.wealth -= remaining;
+        } else {
+          // No territories — fall back to direct stockpile deduction (original path).
+          from.stockpiles.wealth -= amount;
+        }
         to.stockpiles.wealth += amount;
       }
 
-      // Trade clause flows: deduct from source territory's local stockpile → add to recipient nation.
+      // Trade clause flows — §1.10 auto-assign and manual pin.
       for (const clause of treaty.clauses) {
         if (clause.type !== 'trade') continue;
         if (clause.clauseStatus !== 'active') continue;
 
-        const { resource, amount, fromNationId, toNationId, sourceTerritoryId } = clause.payload as {
-          resource: string; amount: number; fromNationId: string; toNationId: string; sourceTerritoryId: string;
+        const payload = clause.payload as {
+          resource: string; amount: number; fromNationId: string; toNationId: string;
+          sourceTerritoryId?: string | null;
         };
+        const { resource, amount, fromNationId, toNationId } = payload;
+        const sourceTerritoryId = payload.sourceTerritoryId ?? null;
 
-        const sourceTerr = draft.territories[sourceTerritoryId];
         const fromNation = draft.nations[fromNationId];
         const toNation = draft.nations[toNationId];
-        if (!sourceTerr || !fromNation || !toNation) {
+        if (!fromNation || !toNation) {
           clause.missedPayments += 1;
-          draft.eventLog.push({ tick: world.tick + 1, message: `Trade clause missed_payment: treaty #${treaty.id} clause ${clause.clauseIndex} — source territory or nation missing.` });
-        } else if (sourceTerr.state.ownerId !== fromNationId) {
-          // Source territory changed owner — clause degrades (not a Trust hit).
-          clause.clauseStatus = 'degraded';
-          draft.eventLog.push({ tick: world.tick + 1, message: `Trade clause degraded: treaty #${treaty.id} clause ${clause.clauseIndex} — ${sourceTerritoryId} no longer owned by sender.` });
-        } else {
-          // Draw from the sending nation's general stockpile.
-          // (Source territory identifies the trade route origin, not a separate pool.)
-          const nf = resourceToNationStockpileField(resource as import('./types').TradeResource);
-          const available = fromNation.stockpiles[nf];
-          if (available < amount) {
-            // Insufficient stockpile — missed payment.
+          draft.eventLog.push({ tick: world.tick + 1, message: `Trade clause missed_payment: treaty #${treaty.id} clause ${clause.clauseIndex} — nation missing.` });
+          continue;
+        }
+
+        const nf = resourceToNationStockpileField(resource as import('./types').TradeResource);
+
+        if (sourceTerritoryId) {
+          // ── Manual pin: existing behavior ────────────────────────────────────
+          const sourceTerr = draft.territories[sourceTerritoryId];
+          if (!sourceTerr) {
             clause.missedPayments += 1;
-            draft.eventLog.push({ tick: world.tick + 1, message: `Trade clause missed_payment: treaty #${treaty.id} clause ${clause.clauseIndex} — insufficient ${resource} (have ${available.toFixed(1)}, need ${amount}).` });
+            draft.eventLog.push({ tick: world.tick + 1, message: `Trade clause missed_payment: treaty #${treaty.id} clause ${clause.clauseIndex} — source territory missing.` });
+          } else if (sourceTerr.state.ownerId !== fromNationId) {
+            clause.clauseStatus = 'degraded';
+            draft.eventLog.push({ tick: world.tick + 1, message: `Trade clause degraded: treaty #${treaty.id} clause ${clause.clauseIndex} — ${sourceTerritoryId} no longer owned by sender.` });
+          } else {
+            const available = fromNation.stockpiles[nf];
+            if (available < amount) {
+              clause.missedPayments += 1;
+              draft.eventLog.push({ tick: world.tick + 1, message: `Trade clause missed_payment: treaty #${treaty.id} clause ${clause.clauseIndex} — insufficient ${resource} (have ${available.toFixed(1)}, need ${amount}).` });
+              if (clause.missedPayments >= TRADE_MISSED_PAYMENT_BREACH_THRESHOLD) {
+                clause.clauseStatus = 'breached';
+                fromNation.trust = Math.max(0, fromNation.trust - TRUST_BREAK_PENALTY);
+                fromNation.lastBrokenPromiseTick = world.tick;
+                draft.eventLog.push({ tick: world.tick + 1, message: `Trade clause breached: treaty #${treaty.id} clause ${clause.clauseIndex} — ${clause.missedPayments} consecutive missed payments. Trust penalty applied.` });
+              }
+            } else {
+              fromNation.stockpiles[nf] -= amount;
+              toNation.stockpiles[nf] += amount;
+              clause.missedPayments = 0;
+            }
+          }
+        } else {
+          // ── §1.10 Auto-assign: distribute proportionally across owned territories ────
+          // Weight each non-revolting owned territory by its relevant base production rate.
+          const localField = resource === 'population' ? 'localPopStock'
+            : resource === 'industry' ? 'localIndStock'
+            : 'localWltStock';
+          const baseField = resource === 'population' ? 'basePopulation'
+            : resource === 'industry' ? 'baseIndustry'
+            : 'baseWealth';
+
+          const senderTerritories = Object.values(draft.territories).filter(
+            (t) => t.state.ownerId === fromNationId && !t.state.isInRevolt,
+          );
+          const totalRate = senderTerritories.reduce(
+            (s, t) => s + (t.def[baseField as keyof typeof t.def] as number), 0,
+          );
+
+          // Check total available (local + general).
+          const totalLocalAvail = senderTerritories.reduce(
+            (s, t) => s + (t.state[localField as keyof typeof t.state] as number), 0,
+          );
+          const totalAvail = totalLocalAvail + fromNation.stockpiles[nf];
+
+          if (totalAvail < amount) {
+            clause.missedPayments += 1;
+            draft.eventLog.push({ tick: world.tick + 1, message: `Trade clause missed_payment: treaty #${treaty.id} clause ${clause.clauseIndex} — insufficient ${resource} across all territories (have ${totalAvail.toFixed(1)}, need ${amount}).` });
             if (clause.missedPayments >= TRADE_MISSED_PAYMENT_BREACH_THRESHOLD) {
-              // Breach: same consequence as voluntary break.
               clause.clauseStatus = 'breached';
               fromNation.trust = Math.max(0, fromNation.trust - TRUST_BREAK_PENALTY);
               fromNation.lastBrokenPromiseTick = world.tick;
               draft.eventLog.push({ tick: world.tick + 1, message: `Trade clause breached: treaty #${treaty.id} clause ${clause.clauseIndex} — ${clause.missedPayments} consecutive missed payments. Trust penalty applied.` });
             }
           } else {
-            // Successful transfer.
-            fromNation.stockpiles[nf] -= amount;
+            // Deduct proportionally from each territory's local stockpile.
+            let remaining = amount;
+            if (totalRate > 0) {
+              for (const t of senderTerritories) {
+                const rate = t.def[baseField as keyof typeof t.def] as number;
+                const share = amount * (rate / totalRate);
+                const local = t.state[localField as keyof typeof t.state] as number;
+                const fromLocal = Math.min(local, share);
+                (t.state as Record<string, number>)[localField] = local - fromLocal;
+                remaining -= fromLocal;
+              }
+            }
+            // Overflow to general stockpile.
+            fromNation.stockpiles[nf] -= remaining;
             toNation.stockpiles[nf] += amount;
-            clause.missedPayments = 0; // reset on success
+            clause.missedPayments = 0;
           }
         }
       }
@@ -722,6 +1411,229 @@ export function resolveTick(
           const nation = draft.nations[partyId];
           if (nation) nation.stockpiles.wealth += portion;
           treaty.refundRemainingByParty[partyId] = Math.max(0, remaining - portion);
+        }
+      }
+
+      // ── §1.5 Territory cession clause evaluation ─────────────────────────────
+      for (const clause of treaty.clauses) {
+        if (clause.type !== 'territory_cession') continue;
+        if (clause.clauseStatus !== 'active') continue;
+
+        const cp = clause.payload as {
+          territoryId: string; fromNationId: string; toNationId: string;
+          transferAtTick: number; delayedSinceTick?: number;
+        };
+        if (!cp.territoryId || !cp.fromNationId || !cp.toNationId) continue;
+
+        const cessionTerr = draft.territories[cp.territoryId];
+        if (!cessionTerr) { clause.clauseStatus = 'degraded'; continue; }
+
+        // Only process once transferAtTick is reached.
+        if (world.tick + 1 < cp.transferAtTick) continue;
+
+        // §1.5 Embassy check: receiving nation must have an active embassy in this territory.
+        // Exception: unclaimed territories (ownerId null) do not require an embassy.
+        const embassyPresent = cp.fromNationId === null
+          || draft.embassies.some(
+            (e) => e.status === 'active' && e.ownerNationId === cp.toNationId && e.hostTerritoryId === cp.territoryId,
+          );
+
+        if (embassyPresent) {
+          // Execute transfer.
+          cessionTerr.state.ownerId = cp.toNationId;
+          cessionTerr.state.acquiredTick = world.tick;
+          const geoShockMult = GEOGRAPHY_SHOCK_MULTIPLIER[cessionTerr.def.geography] ?? 1.0; // [PLACEHOLDER callsite]
+          cessionTerr.state.ownershipShock = Math.min(1, 0.50 * geoShockMult);
+          clause.clauseStatus = 'degraded'; // clause consumed — mark degraded to stop re-firing
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `Territory cession executed: ${cessionTerr.def.name} transferred from ${draft.nations[cp.fromNationId]?.name ?? cp.fromNationId} to ${draft.nations[cp.toNationId]?.name ?? cp.toNationId}.`,
+          });
+        } else {
+          // No embassy — check grace period. [PLACEHOLDER callsite: CESSION_EMBASSY_GRACE_TICKS]
+          const delayedSince = cp.delayedSinceTick ?? (world.tick + 1);
+          if (!cp.delayedSinceTick) {
+            (clause.payload as Record<string, unknown>)['delayedSinceTick'] = world.tick + 1;
+          }
+          const ticksWaited = world.tick + 1 - delayedSince;
+          if (ticksWaited >= CESSION_EMBASSY_GRACE_TICKS) {
+            // Grace period expired — breach: receiver failed to build embassy.
+            clause.clauseStatus = 'breached';
+            const receiverNation = draft.nations[cp.toNationId];
+            if (receiverNation) {
+              receiverNation.trust = Math.max(0, receiverNation.trust - TRUST_BREAK_PENALTY);
+              receiverNation.lastBrokenPromiseTick = world.tick;
+              // Collateral: receiver's deposit → sender.
+              const receiverCollateral = treaty.collateralByParty[cp.toNationId] ?? 0;
+              if (receiverCollateral > 0) {
+                const senderNation = draft.nations[cp.fromNationId];
+                if (senderNation) senderNation.stockpiles.wealth += receiverCollateral;
+                treaty.collateralByParty[cp.toNationId] = 0;
+              }
+            }
+            draft.eventLog.push({
+              tick: world.tick + 1,
+              message: `Territory cession breached: ${draft.nations[cp.toNationId]?.name ?? cp.toNationId} failed to establish embassy in ${cessionTerr.def.name} within ${CESSION_EMBASSY_GRACE_TICKS} ticks. [PLACEHOLDER: CESSION_EMBASSY_GRACE_TICKS]`,
+            });
+          } else {
+            draft.eventLog.push({
+              tick: world.tick + 1,
+              message: `Territory cession for ${cessionTerr.def.name} delayed — no embassy present (grace tick ${ticksWaited}/${CESSION_EMBASSY_GRACE_TICKS}). [PLACEHOLDER: CESSION_EMBASSY_GRACE_TICKS]`,
+            });
+          }
+        }
+      }
+
+      // ── §1.2 Population transfer clause evaluation ────────────────────────────
+      for (const clause of treaty.clauses) {
+        if (clause.type !== 'population_transfer') continue;
+        if (clause.clauseStatus !== 'active') continue;
+
+        const pp = clause.payload as {
+          amount: number; fromNationId: string; toNationId: string; transferAtTick: number;
+        };
+        if (!pp.fromNationId || !pp.toNationId || typeof pp.amount !== 'number') continue;
+        if (world.tick + 1 !== pp.transferAtTick) continue; // only fires exactly at transferAtTick
+
+        const fromNation = draft.nations[pp.fromNationId];
+        const toNation = draft.nations[pp.toNationId];
+        if (!fromNation || !toNation) { clause.clauseStatus = 'degraded'; continue; }
+
+        // Transfer population stockpile.
+        fromNation.stockpiles.population -= pp.amount;
+        toNation.stockpiles.population += pp.amount;
+
+        // Compute compatibility-scaled unrest hit. [PLACEHOLDER callsite: POPULATION_TRANSFER_UNREST_SCALE]
+        // Use nation culture of the receiver; apply to all territories of both nations.
+        const receiverCulture = nationCultures[pp.toNationId];
+        // Apply shock to all territories of both nations for POPULATION_TRANSFER_SHOCK_DURATION ticks.
+        for (const t of Object.values(draft.territories)) {
+          if (t.state.ownerId !== pp.fromNationId && t.state.ownerId !== pp.toNationId) continue;
+          let compatScore = 0.5; // default if culture not computed yet
+          if (receiverCulture) {
+            const compat = computeCompatibility(t.state.valueTraits, t.def.culturalFamily, receiverCulture);
+            compatScore = compat.total;
+          }
+          const shockMagnitude = (1 - compatScore) * POPULATION_TRANSFER_UNREST_SCALE; // [PLACEHOLDER callsite]
+          t.state.populationTransferShockTicksLeft = POPULATION_TRANSFER_SHOCK_DURATION; // [PLACEHOLDER callsite]
+          // The actual shock value is applied per-territory in the territory loop via the
+          // populationTransferShockTicksLeft counter. Store shock amount in payload for retrieval.
+          // We use a per-territory approach: set ticksLeft and a stored magnitude.
+          // For simplicity: we emit the shock into the equilibrium via populationTransferShockTicksLeft;
+          // the territory loop reads it and applies a fixed POPULATION_TRANSFER_UNREST_SCALE hit.
+          // The full compat-scaled magnitude requires the compat score at tick time (computed above),
+          // but we can't store it per-territory easily. Use the fixed SCALE as a [PLACEHOLDER] approximation.
+          void shockMagnitude; // suppress unused-var; compat scaling is TODO once per-territory storage exists
+        }
+
+        clause.clauseStatus = 'degraded'; // one-time transfer, consume clause
+        draft.eventLog.push({
+          tick: world.tick + 1,
+          message: `Population transfer: ${pp.amount} population from ${fromNation.name} to ${toNation.name}. Unrest spike applied for ${POPULATION_TRANSFER_SHOCK_DURATION} ticks. [PLACEHOLDER: POPULATION_TRANSFER_UNREST_SCALE=${POPULATION_TRANSFER_UNREST_SCALE}]`,
+        });
+      }
+
+      // ── §1.1 Army lending clause evaluation ──────────────────────────────────
+      // Delivery and return logistics are tracked via deliveredAtTick / returnDueAtTick.
+      // Actual army movement uses the existing move_army infrastructure.
+      for (const clause of treaty.clauses) {
+        if (clause.type !== 'army_lending') continue;
+        if (clause.clauseStatus !== 'active') continue;
+
+        const ap = clause.payload as {
+          armySize: number; lendingNationId: string; receivingNationId: string;
+          deliveryTerritoryId: string; returnTerritoryId: string; loanDurationTicks: number;
+          deliveredAtTick: number | null; returnDueAtTick: number | null; sold: boolean;
+        };
+        if (!ap.lendingNationId || !ap.receivingNationId) continue;
+
+        // Check for war between the two parties — immediate revoke. [TODO: travel time on revoke]
+        const lenderAtWar = draft.wars.some(
+          (w) => (w.status === 'active' || w.status === 'peace_negotiation') &&
+            ((w.attackerId === ap.lendingNationId && w.defenderId === ap.receivingNationId) ||
+             (w.attackerId === ap.receivingNationId && w.defenderId === ap.lendingNationId)),
+        );
+        if (lenderAtWar) {
+          // Immediate revoke — find and return the loaned army.
+          // [TODO: travel time on revoke — currently teleports back]
+          const loanedArmy = draft.armies.find(
+            (a) => a.nationId === ap.receivingNationId &&
+              (ap.deliveredAtTick !== null), // armies transferred on delivery
+          );
+          if (loanedArmy) {
+            loanedArmy.nationId = ap.lendingNationId;
+            loanedArmy.territoryId = ap.returnTerritoryId;
+            loanedArmy.status = 'stationed';
+          }
+          clause.clauseStatus = 'degraded';
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `Army lending revoked: war declared between ${draft.nations[ap.lendingNationId]?.name ?? ap.lendingNationId} and ${draft.nations[ap.receivingNationId]?.name ?? ap.receivingNationId}. Loaned army returned. [TODO: travel time on revoke]`,
+          });
+          continue;
+        }
+
+        // Return check: army due back?
+        if (ap.returnDueAtTick !== null && world.tick + 1 >= ap.returnDueAtTick && !ap.sold) {
+          // Find loaned army and return it.
+          const returnArmy = draft.armies.find(
+            (a) => a.nationId === ap.receivingNationId,
+          );
+          const returnedSize = returnArmy?.size ?? 0;
+          if (returnArmy) {
+            returnArmy.nationId = ap.lendingNationId;
+            returnArmy.territoryId = ap.returnTerritoryId;
+            returnArmy.status = 'stationed';
+          }
+
+          // Return penalty if army was reduced. [PLACEHOLDER callsite: quadratic penalty]
+          const lostUnits = Math.max(0, ap.armySize - returnedSize);
+          if (lostUnits > 0) {
+            const penaltyFrac = Math.pow(lostUnits / ap.armySize, 2); // quadratic
+            const penaltyAmount = (treaty.collateralByParty[ap.receivingNationId] ?? 0) * penaltyFrac;
+            const receiverNation = draft.nations[ap.receivingNationId];
+            const lenderNation = draft.nations[ap.lendingNationId];
+            if (receiverNation && lenderNation && penaltyAmount > 0) {
+              receiverNation.stockpiles.wealth -= penaltyAmount;
+              lenderNation.stockpiles.wealth += penaltyAmount;
+              draft.eventLog.push({
+                tick: world.tick + 1,
+                message: `Army lending return penalty: ${penaltyAmount.toFixed(1)} Wealth transferred to ${lenderNation.name} for ${lostUnits} missing soldiers (quadratic penalty). [PLACEHOLDER]`,
+              });
+            }
+          }
+
+          clause.clauseStatus = 'degraded'; // lending complete
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `Army lending complete: loaned army returned to ${draft.nations[ap.lendingNationId]?.name ?? ap.lendingNationId}.`,
+          });
+        }
+      }
+
+      // ── §1.11 Outpost clause — no per-tick action needed ──────────────────────
+      // Outpost clauses grant visibility via computeVisibility reading active treaty clauses.
+      // Construction state (pending → active) is tracked via the territory's constructionType.
+      // When the outpost construction completes (type 'outpost'), the clause becomes active.
+      // Destruction on ownership change is handled in the territory acquisition code above:
+      // if a territory with an outpost clause changes owner, the clause degrades automatically.
+      for (const clause of treaty.clauses) {
+        if (clause.type !== 'outpost') continue;
+        if (clause.clauseStatus !== 'active') continue;
+        const op = clause.payload as { targetTerritoryId: string };
+        if (!op.targetTerritoryId) continue;
+        const outpostTerr = draft.territories[op.targetTerritoryId];
+        if (!outpostTerr) { clause.clauseStatus = 'degraded'; continue; }
+        // If territory changed owner, degrade the outpost clause.
+        const grantingNationId = treaty.partyIds.find(
+          (id) => id !== (clause.payload as { grantedToNationId?: string }).grantedToNationId,
+        );
+        if (grantingNationId && outpostTerr.state.ownerId !== grantingNationId) {
+          clause.clauseStatus = 'degraded';
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `Outpost in ${outpostTerr.def.name} destroyed — territory changed ownership. Outpost clause degraded.`,
+          });
         }
       }
 
@@ -875,6 +1787,7 @@ export function resolveTick(
           const nation = draft.nations[partyId];
           if (!nation) continue;
           nation.trust = Math.min(100, nation.trust + bonus);
+          nation.completedTreatiesKept += 1; // Prestige counter: early-complete counts as kept
           const escrow = treaty.escrowAmountByParty[partyId] ?? 0;
           if (escrow > 0) {
             nation.stockpiles.wealth += escrow;
@@ -916,6 +1829,7 @@ export function resolveTick(
         const nation = draft.nations[partyId];
         if (!nation) continue;
         nation.trust = Math.min(100, nation.trust + bonus);
+        nation.completedTreatiesKept += 1; // Prestige counter: treaty kept to full term
         // Return escrowed collateral (minus skim if applicable — skim handled on player return in server).
         // For natural expiry, just return any remaining escrow directly.
         const escrow = treaty.escrowAmountByParty[partyId] ?? 0;
@@ -967,6 +1881,8 @@ export function resolveTick(
     // Count territories per nation; compute smooth-decay rapid-expansion weights.
     const territoryCounts: Record<string, number> = {};
     const recentAcquisitionWeights: Record<string, number> = {};
+    // Track most-recent acquisition tick per nation for expansionist stagnation check (2.2).
+    const latestAcquisitionTickByNation: Record<string, number> = {};
     for (const t of Object.values(draft.territories)) {
       const oid = t.state.ownerId;
       if (!oid) continue;
@@ -977,6 +1893,11 @@ export function resolveTick(
           const weight = Math.max(0, 1 - age / RECENT_ACQUISITION_WINDOW);
           recentAcquisitionWeights[oid] = (recentAcquisitionWeights[oid] ?? 0) + weight;
         }
+        // Latest acquisition tick for expansionist stagnation check.
+        const prev = latestAcquisitionTickByNation[oid];
+        if (prev === undefined || t.state.acquiredTick > prev) {
+          latestAcquisitionTickByNation[oid] = t.state.acquiredTick;
+        }
       }
     }
 
@@ -984,6 +1905,50 @@ export function resolveTick(
     for (const nationId of Object.keys(draft.nations)) {
       const cap = draft.nations[nationId]?.capitalTerritoryId ?? null;
       nationCultures[nationId] = computeNationCulture(nationId, draft.territories as WorldState['territories'], cap);
+    }
+
+    // ── Per-nation pre-computations for cultural constraint axes (2.2) ─────────
+
+    // Active treaty count per nation (already computed above for Low-Trust fines — reuse).
+    // activeTreatyCountByNation is already populated.
+
+    // Tribute obligations per nation: count clauses where nation is the payer.
+    const tributeObligationsAsPayer: Record<string, number> = {};
+    // Count clauses where nation is the receiver of tribute or solidarity obligations.
+    const tributeObligationsAsReceiver: Record<string, boolean> = {};
+    for (const treaty of draft.treaties) {
+      if (!isTreatyOperational(treaty)) continue;
+      for (const clause of treaty.clauses) {
+        if (clause.type !== 'tribute') continue;
+        const { fromNationId, toNationId } = clause.payload as { fromNationId: string; toNationId: string };
+        if (fromNationId) {
+          tributeObligationsAsPayer[fromNationId] = (tributeObligationsAsPayer[fromNationId] ?? 0) + 1;
+        }
+        if (toNationId) {
+          tributeObligationsAsReceiver[toNationId] = true;
+        }
+      }
+    }
+
+    // ── 2.1 Trade → territory set pre-computation ─────────────────────────────
+    // Build a set of territory IDs on active trade route computedPaths, keyed by
+    // receiving nation ID. A territory on N paths for the same nation gets N×TRADE_STABILITY_BONUS.
+    // Read from world.tradeRoutes (pre-tick, stable reference).
+    const tradeRouteTerritoryBonus: Record<string, number> = {}; // territoryId → negative bonus count
+    const tradeRouteTerritoryReceiver: Record<string, Set<string>> = {}; // territoryId → receiverNationIds
+
+    for (const route of world.tradeRoutes) {
+      if (!route.path || route.path.length === 0) continue;
+      // Find the treaty clause to get the receiver nation.
+      // The clause's toNationId is the receiver — use destinationNationId on the route.
+      const receiverNationId = route.destinationNationId;
+      if (!receiverNationId) continue;
+
+      for (const tid of route.path) {
+        tradeRouteTerritoryBonus[tid] = (tradeRouteTerritoryBonus[tid] ?? 0) + 1;
+        if (!tradeRouteTerritoryReceiver[tid]) tradeRouteTerritoryReceiver[tid] = new Set();
+        tradeRouteTerritoryReceiver[tid]!.add(receiverNationId);
+      }
     }
 
     // ── War-unrest pre-computation ────────────────────────────────────────────
@@ -995,6 +1960,10 @@ export function resolveTick(
     const warInsolventNations = new Set<string>();
     const warNoCBDeclarer = new Set<string>(); // no-CB spike still active
     const warExhaustionNations = new Set<string>(); // exhaustion bump from declined peace
+    // Nations that are non-Dominant and currently attacking a Dominant nation.
+    // Grants Militaristic territory unrest bonus for the war's duration.
+    // [PLACEHOLDER callsite: DOMINANT_WAR_MILITARISTIC_BONUS]
+    const dominantWarAttackers = new Set<string>();
 
     for (const war of draft.wars) {
       if (war.status !== 'active' && war.status !== 'peace_negotiation') continue;
@@ -1018,6 +1987,13 @@ export function resolveTick(
         if (world.tick < endsAtTick) {
           warExhaustionNations.add(nationId);
         }
+      }
+
+      // Dominant giant-killer: non-Dominant attacking Dominant → Militaristic bonus.
+      const attackerDominant = draft.nations[war.attackerId]?.isDominant ?? false;
+      const defenderDominant = draft.nations[war.defenderId]?.isDominant ?? false;
+      if (!attackerDominant && defenderDominant) {
+        dominantWarAttackers.add(war.attackerId);
       }
     }
 
@@ -1056,8 +2032,11 @@ export function resolveTick(
 
       // militaryBonus: activated for territories with militaristic > 0.3 when nation is at war.
       // Negative value = reduces equilibrium (happier at war). Previously always 0 (stub).
+      // Additional bonus for Militaristic territories of a non-Dominant attacker vs Dominant defender.
+      // [PLACEHOLDER callsite: DOMINANT_WAR_MILITARISTIC_BONUS]
       const militaryBonus = (nationAtWar.has(ownerId) && t.state.valueTraits.militaristic > 0.3)
         ? WAR_MILITARISTIC_HAPPINESS_BONUS
+          + (dominantWarAttackers.has(ownerId) ? DOMINANT_WAR_MILITARISTIC_BONUS : 0)
         : 0;
 
       // General insolvency pressure: applies when wealthStock < 0, even outside war.
@@ -1065,13 +2044,122 @@ export function resolveTick(
         ? INSOLVENCY_GENERAL_UNREST_PER_TICK
         : 0;
 
-      const compat = computeCompatibility(t.state.valueTraits, t.def.culturalFamily, nationCulture);
+      // ── 2.1 Trade stability (named component) ────────────────────────────────
+      // For every active trade clause flowing through this territory's path:
+      // apply −TRADE_STABILITY_BONUS per clause to the receiving nation's territories on the path.
+      // Territories owned by the receiving nation get the bonus. [PLACEHOLDER callsite: TRADE_STABILITY_BONUS]
+      const tradeRouteCount = tradeRouteTerritoryBonus[t.def.id] ?? 0;
+      const receiverIds = tradeRouteTerritoryReceiver[t.def.id];
+      const isOnReceiverPath = receiverIds?.has(ownerId) ?? false;
+      const tradeStability = (tradeRouteCount > 0 && isOnReceiverPath)
+        ? -(tradeRouteCount * TRADE_STABILITY_BONUS) // [PLACEHOLDER callsite: TRADE_STABILITY_BONUS]
+        : 0;
+
+      // ── 2.2 Cultural constraint axes ─────────────────────────────────────────
+
+      // isolationist_entanglement: isolationist > 0.3 (expansionist < −0.3) AND treaty count > threshold.
+      // [PLACEHOLDER callsite: ISOLATIONIST_TREATY_THRESHOLD, ISOLATIONIST_ENTANGLEMENT_WEIGHT]
+      let isolationistEntanglement = 0;
+      if (t.state.valueTraits.expansionist < -0.3) {
+        const treatyCount = activeTreatyCountByNation[ownerId] ?? 0;
+        if (treatyCount > ISOLATIONIST_TREATY_THRESHOLD) {
+          isolationistEntanglement = (treatyCount - ISOLATIONIST_TREATY_THRESHOLD) * ISOLATIONIST_ENTANGLEMENT_WEIGHT; // [PLACEHOLDER]
+        }
+      }
+
+      // expansionist_stagnation: expansionist > 0.3 AND no territory acquired in last EXPANSIONIST_GROWTH_WINDOW ticks.
+      // [PLACEHOLDER callsite: EXPANSIONIST_GROWTH_WINDOW, EXPANSIONIST_STAGNATION_WEIGHT]
+      let expansionistStagnation = 0;
+      if (t.state.valueTraits.expansionist > 0.3) {
+        const latestAcq = latestAcquisitionTickByNation[ownerId];
+        const ticksSinceGrowth = latestAcq !== undefined ? world.tick - latestAcq : world.tick;
+        if (ticksSinceGrowth > EXPANSIONIST_GROWTH_WINDOW) { // [PLACEHOLDER callsite: EXPANSIONIST_GROWTH_WINDOW]
+          expansionistStagnation = EXPANSIONIST_STAGNATION_WEIGHT; // [PLACEHOLDER callsite: EXPANSIONIST_STAGNATION_WEIGHT]
+        }
+      }
+
+      // collectivist_isolation: collectivist (individualist < −0.3) AND no tribute receiver obligations.
+      // [PLACEHOLDER callsite: COLLECTIVIST_ISOLATION_WEIGHT]
+      let collectivistIsolation = 0;
+      if (t.state.valueTraits.individualist < -0.3 && !tributeObligationsAsReceiver[ownerId]) {
+        collectivistIsolation = COLLECTIVIST_ISOLATION_WEIGHT; // [PLACEHOLDER callsite: COLLECTIVIST_ISOLATION_WEIGHT]
+      }
+
+      // individualist_obligation: individualist > 0.3 AND nation has tribute clauses as payer.
+      // [PLACEHOLDER callsite: INDIVIDUALIST_OBLIGATION_WEIGHT]
+      let individualistObligation = 0;
+      if (t.state.valueTraits.individualist > 0.3) {
+        const tributeCount = tributeObligationsAsPayer[ownerId] ?? 0;
+        if (tributeCount > 0) {
+          individualistObligation = tributeCount * INDIVIDUALIST_OBLIGATION_WEIGHT; // [PLACEHOLDER callsite: INDIVIDUALIST_OBLIGATION_WEIGHT]
+        }
+      }
+
+      // §1.4 TerritoryModifier: collect active modifiers for this territory.
+      const activeMods = draft.territoryModifiers.filter(
+        (m) => m.territoryId === t.def.id && (m.expiresAtTick === null || m.expiresAtTick > world.tick + 1),
+      );
+      const modUnrestAdj = activeMods.reduce((acc, m) => acc + m.unrestEquilibriumAdj, 0);
+      const modDriftMult = activeMods.reduce((acc, m) => acc * m.driftRateMultiplier, 1.0);
+
+      // traditional_erosion and progressive_stagnation require the drift rate this tick.
+      // Compute effective drift rate before applying (2.4 road multiplier, §1.4 modifier).
+      // [PLACEHOLDER callsite: ROAD_DRIFT_MULTIPLIER]
+      const effectiveDriftRate = UNREST_DRIFT_RATE
+        * (t.state.hasRoad ? ROAD_DRIFT_MULTIPLIER : 1.0) // [PLACEHOLDER callsite: ROAD_DRIFT_MULTIPLIER, 2.4]
+        * modDriftMult; // [PLACEHOLDER callsite: §1.4 TerritoryModifier driftRateMultiplier]
+
+      // Approximate drift magnitude this tick: CULTURE_DRIFT_RATE × (1 − unrest) per axis.
+      // We use the axis-average drift delta as a proxy for the overall drift rate signal.
+      const cultureDriftMagnitude = 0.02 * Math.max(0, 1 - t.state.unrest)
+        * (t.state.hasRoad ? ROAD_DRIFT_MULTIPLIER : 1.0); // includes 2.4 road multiplier
+
+      // traditional_erosion: progressive < −0.3 AND drift rate exceeds threshold.
+      // [PLACEHOLDER callsite: TRADITIONAL_EROSION_THRESHOLD, TRADITIONAL_EROSION_WEIGHT]
+      let traditionalErosion = 0;
+      if (t.state.valueTraits.progressive < -0.3 && cultureDriftMagnitude > TRADITIONAL_EROSION_THRESHOLD) {
+        traditionalErosion = TRADITIONAL_EROSION_WEIGHT; // [PLACEHOLDER callsite: TRADITIONAL_EROSION_WEIGHT]
+      }
+
+      // progressive_stagnation: progressive > 0.3 AND drift rate below threshold.
+      // [PLACEHOLDER callsite: PROGRESSIVE_STAGNATION_THRESHOLD, PROGRESSIVE_STAGNATION_WEIGHT]
+      let progressiveStagnation = 0;
+      if (t.state.valueTraits.progressive > 0.3 && cultureDriftMagnitude < PROGRESSIVE_STAGNATION_THRESHOLD) {
+        progressiveStagnation = PROGRESSIVE_STAGNATION_WEIGHT; // [PLACEHOLDER callsite: PROGRESSIVE_STAGNATION_WEIGHT]
+      }
+
+      // §1.6 Embassy compat bonus: active embassy from owner nation in this territory.
+      const hasActiveEmbassy = draft.embassies.some(
+        (e) => e.status === 'active' && e.ownerNationId === ownerId && e.hostTerritoryId === t.def.id,
+      );
+      const rawCompat = computeCompatibility(t.state.valueTraits, t.def.culturalFamily, nationCulture);
+      // Apply embassy compat bonus (clamped to 1.0). [PLACEHOLDER callsite: EMBASSY_COMPAT_BONUS]
+      const compat = hasActiveEmbassy
+        ? { ...rawCompat, total: Math.min(1, rawCompat.total + EMBASSY_COMPAT_BONUS) }
+        : rawCompat;
       const causes = computeUnrestEquilibrium(
         compat, hops,
         t.state.hasRoad, t.state.hasPort, t.state.fortificationLevel,
         tcount, t.state.ownershipShock, recentWeight, clashPressure,
         militaryBonus, insolvencyPressure,
+        tradeStability,
+        isolationistEntanglement,
+        expansionistStagnation,
+        collectivistIsolation,
+        individualistObligation,
+        traditionalErosion,
+        progressiveStagnation,
+        // §1.2 Population transfer shock: active while ticksLeft > 0. [PLACEHOLDER callsite: POPULATION_TRANSFER_UNREST_SCALE]
+        t.state.populationTransferShockTicksLeft > 0 ? POPULATION_TRANSFER_UNREST_SCALE : 0,
       );
+
+      // Store causes for assert_equilibrium_component harness assertions.
+      t.state.lastEquilibriumCauses = causes;
+
+      // Decay population transfer shock counter.
+      if (t.state.populationTransferShockTicksLeft > 0) {
+        t.state.populationTransferShockTicksLeft -= 1;
+      }
 
       // War unrest additions (applied directly to equilibrium after computeUnrestEquilibrium).
       // These are pure additions outside the standard formula — war physics on top of base unrest.
@@ -1096,7 +2184,9 @@ export function resolveTick(
         warEquilibriumAdj += PEACE_DECLINE_EXHAUSTION_BUMP;
       }
 
-      const effectiveEquilibrium = Math.min(1, Math.max(0, causes.equilibrium + warEquilibriumAdj));
+      const effectiveEquilibrium = Math.min(1, Math.max(0,
+        causes.equilibrium + warEquilibriumAdj + modUnrestAdj, // [PLACEHOLDER callsite: §1.4 TerritoryModifier unrestEquilibriumAdj]
+      ));
 
       // Decay ownership shock at a rate gated by integration progress.
       if (t.state.ownershipShock > 0) {
@@ -1107,7 +2197,8 @@ export function resolveTick(
       }
 
       // Drift unrest toward effective equilibrium (base + war adjustments).
-      t.state.unrest = t.state.unrest + UNREST_DRIFT_RATE * (effectiveEquilibrium - t.state.unrest);
+      // 2.4 road drift multiplier applied to UNREST_DRIFT_RATE via effectiveDriftRate.
+      t.state.unrest = t.state.unrest + effectiveDriftRate * (effectiveEquilibrium - t.state.unrest); // [PLACEHOLDER callsite: ROAD_DRIFT_MULTIPLIER, 2.4]
 
       // Revolt hysteresis: enter above threshold, exit only when well below it.
       if (!t.state.isInRevolt && t.state.unrest >= REVOLT_THRESHOLD) {
@@ -1125,7 +2216,15 @@ export function resolveTick(
       }
 
       // Cultural drift: high unrest slows assimilation.
-      t.state.valueTraits = applyDrift(t.state.valueTraits, nationCulture, t.state.unrest, rng);
+      // 2.1 TRADE_DRIFT_MULTIPLIER: territories on active trade route paths drift faster.
+      // 2.4 ROAD_DRIFT_MULTIPLIER: territories with roads drift faster.
+      // Both multipliers stack on top of each other.
+      const tradeOnPath = tradeRouteTerritoryBonus[t.def.id] !== undefined && tradeRouteTerritoryBonus[t.def.id]! > 0;
+      const tradeDriftMult = tradeOnPath ? TRADE_DRIFT_MULTIPLIER : 1.0; // [PLACEHOLDER callsite: TRADE_DRIFT_MULTIPLIER, 2.1]
+      const roadDriftMult = t.state.hasRoad ? ROAD_DRIFT_MULTIPLIER : 1.0; // [PLACEHOLDER callsite: ROAD_DRIFT_MULTIPLIER, 2.4]
+      t.state.valueTraits = applyDrift(t.state.valueTraits, nationCulture, t.state.unrest, rng,
+        tradeDriftMult * roadDriftMult * modDriftMult, // [PLACEHOLDER callsite: §1.4 TerritoryModifier driftRateMultiplier]
+      );
     }
 
     // ── Production + local stockpile → nation general stockpile ──────────────
@@ -1136,14 +2235,26 @@ export function resolveTick(
     for (const t of Object.values(draft.territories)) {
       const oid = t.state.ownerId;
       if (!oid || t.state.isInRevolt) continue;
-      t.state.localPopStock += t.def.basePopulation;
-      t.state.localIndStock += t.def.baseIndustry;
-      t.state.localWltStock += t.def.baseWealth;
+      // 2.6 Population production scaling: multiply base rates by (population / POPULATION_PRODUCTION_BASE).
+      // population 100 = 2× base; population 25 = 0.5× base; linear scaling. [PLACEHOLDER callsite: POPULATION_PRODUCTION_BASE]
+      const popScale = t.def.basePopulation / POPULATION_PRODUCTION_BASE; // [PLACEHOLDER callsite: POPULATION_PRODUCTION_BASE, 2.6]
+      t.state.localPopStock += t.def.basePopulation * popScale;
+      t.state.localIndStock += t.def.baseIndustry * popScale;
+      t.state.localWltStock += t.def.baseWealth * popScale;
     }
 
     // Flush all remaining local stock to nation general stockpile.
-    // Track incoming wealth per nation for debt recovery skim calculation.
-    const incomingWealthByNation: Record<string, number> = {};
+    // Also compute gross wealth production per nation (population-scaled baseWealth of non-revolting
+    // owned territories, before trade draws and upkeep). Used for debt recovery skim — gross
+    // is used so tribute obligations cannot prevent recovery from accruing.
+    const grossWealthByNation: Record<string, number> = {};
+    for (const t of Object.values(draft.territories)) {
+      const oid = t.state.ownerId;
+      if (!oid || t.state.isInRevolt) continue;
+      const popScale = t.def.basePopulation / POPULATION_PRODUCTION_BASE; // [PLACEHOLDER callsite: POPULATION_PRODUCTION_BASE, 2.6]
+      grossWealthByNation[oid] = (grossWealthByNation[oid] ?? 0) + t.def.baseWealth * popScale;
+    }
+
     for (const t of Object.values(draft.territories)) {
       const oid = t.state.ownerId;
       if (!oid) continue;
@@ -1152,7 +2263,6 @@ export function resolveTick(
       nation.stockpiles.population += t.state.localPopStock;
       nation.stockpiles.industry   += t.state.localIndStock;
       nation.stockpiles.wealth     += t.state.localWltStock;
-      incomingWealthByNation[oid] = (incomingWealthByNation[oid] ?? 0) + t.state.localWltStock;
       // Reset to zero — flush is complete. Production next tick refills.
       t.state.localPopStock = 0;
       t.state.localIndStock = 0;
@@ -1161,7 +2271,11 @@ export function resolveTick(
 
     // Upkeep paid from nation general Wealth after flush. Wealth may go negative (insolvency).
     for (const nation of Object.values(draft.nations)) {
-      const upkeep = nation.armySize * UPKEEP_PER_SOLDIER;
+      // Use total of all positioned armies if available; fall back to nation.armySize. // migrated from armySize
+      const effectiveArmySize = draft.armies.length > 0
+        ? totalArmySize(draft.armies, nation.id)
+        : nation.armySize;
+      const upkeep = effectiveArmySize * UPKEEP_PER_SOLDIER;
       nation.stockpiles.wealth -= upkeep;
     }
 
@@ -1192,8 +2306,9 @@ export function resolveTick(
         // wealth stays negative — intentional (insolvency is real)
       } else if (prevDebt > 0) {
         // Recovery phase: wealth is non-negative, still carrying debt.
-        const incoming = incomingWealthByNation[nation.id] ?? 0;
-        const skim = Math.floor(incoming * DEBT_RECOVERY_SKIM_RATE);
+        // Skim against gross production (not net) so tribute can't stall recovery.
+        const gross = grossWealthByNation[nation.id] ?? 0;
+        const skim = Math.floor(gross * DEBT_RECOVERY_SKIM_RATE);
         if (skim > 0) {
           const applied = Math.min(skim, nation.debtBalance);
           nation.debtBalance = Math.max(0, nation.debtBalance - applied);

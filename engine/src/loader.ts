@@ -42,6 +42,8 @@ function initialState(def: TerritoryDef): TerritoryState {
     localPopStock: 0,
     localIndStock: 0,
     localWltStock: 0,
+    hasEmbassy: false,
+    populationTransferShockTicksLeft: 0,
   };
 }
 
@@ -87,6 +89,10 @@ export function buildWorldState(
       activityTier: 'active',
       caretakerPriorities: ['defense', 'roads', 'industry', 'expansion'],
       doctrineBlend: null,
+      completedTreatiesKept: 0,
+      warsWon: 0,
+      foundedAtTick: 0,
+      isDominant: false,
     };
   }
 
@@ -101,6 +107,11 @@ export function buildWorldState(
     instantTrades: [],
     tradeRoutes: [],
     wars: [],
+    armies: [],
+    territoryClaims: [],
+    territoryModifiers: [],
+    borderSkirmishes: [],
+    embassies: [],
   };
 
 }

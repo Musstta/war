@@ -1,0 +1,108 @@
+{
+  "name": "fog-of-war",
+  "description": "Three-tier fog-of-war visibility test. Costa Rica (observer), Nicaragua (adjacent + treaty partner), Honduras (no relationship). CR's army is removed at T0 so army-adjacency (Rule 2) does not override the adjacency+treaty LightFog case for Nicaragua. Expected: costa_rica=Clear (Rule 1: own territory), nicaragua=LightFog (Rule 5/6: adjacent + treaty), honduras=TrueFog (no relationship).",
+  "ticks": 5,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      {
+        "id": "nation_costa_rica",
+        "name": "Costa Rica",
+        "territories": ["costa_rica"],
+        "armySize": 0,
+        "capitalTerritoryId": "costa_rica"
+      },
+      {
+        "id": "nation_nicaragua",
+        "name": "Nicaragua",
+        "territories": ["nicaragua"],
+        "armySize": 50,
+        "capitalTerritoryId": "nicaragua"
+      },
+      {
+        "id": "nation_honduras",
+        "name": "Honduras",
+        "territories": ["honduras"],
+        "armySize": 50,
+        "capitalTerritoryId": "honduras"
+      }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_costa_rica", "nation_nicaragua"],
+        "clauses": [
+          {
+            "type": "non_aggression",
+            "collateral": 0,
+            "payload": {}
+          }
+        ],
+        "termTicks": 20,
+        "collateralByParty": { "nation_costa_rica": 0, "nation_nicaragua": 0 }
+      }
+    },
+    {
+      "tick": 1,
+      "type": "assert_visibility",
+      "payload": {
+        "observerNationId": "nation_costa_rica",
+        "territoryId": "costa_rica",
+        "expectedTier": 2
+      }
+    },
+    {
+      "tick": 1,
+      "type": "assert_visibility",
+      "payload": {
+        "observerNationId": "nation_costa_rica",
+        "territoryId": "nicaragua",
+        "expectedTier": 1
+      }
+    },
+    {
+      "tick": 1,
+      "type": "assert_visibility",
+      "payload": {
+        "observerNationId": "nation_costa_rica",
+        "territoryId": "honduras",
+        "expectedTier": 0
+      }
+    },
+    {
+      "tick": 5,
+      "type": "assert_visibility",
+      "payload": {
+        "observerNationId": "nation_costa_rica",
+        "territoryId": "costa_rica",
+        "expectedTier": 2
+      }
+    },
+    {
+      "tick": 5,
+      "type": "assert_visibility",
+      "payload": {
+        "observerNationId": "nation_costa_rica",
+        "territoryId": "nicaragua",
+        "expectedTier": 1
+      }
+    },
+    {
+      "tick": 5,
+      "type": "assert_visibility",
+      "payload": {
+        "observerNationId": "nation_costa_rica",
+        "territoryId": "honduras",
+        "expectedTier": 0
+      }
+    }
+  ],
+  "metrics": [
+    "unrest_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick"
+  ]
+}

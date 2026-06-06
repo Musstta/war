@@ -59,6 +59,12 @@ export const ACTION_COSTS: Record<string, number> = {
   propose_peace:        2, // [PLACEHOLDER]
   accept_peace:         0, // free
   decline_peace:        0, // free
+  move_army:            1, // [PLACEHOLDER]
+  claim_territory:      1, // [PLACEHOLDER]
+  build_barricade:      1, // [PLACEHOLDER]
+  propose_embassy:      1, // [PLACEHOLDER] §1.6
+  build_embassy:        1, // [PLACEHOLDER] §1.6
+  expel_embassy:        0, // [PLACEHOLDER] §1.6 — free for host nation
 };
 
 // Which phase each action type is restricted to.
@@ -80,6 +86,12 @@ export const ACTION_PHASE: Record<string, Phase> = {
   propose_peace:        'main',
   accept_peace:         'main',
   decline_peace:        'main',
+  move_army:            'main',
+  claim_territory:      'main',
+  build_barricade:      'main',
+  propose_embassy:      'main',
+  build_embassy:        'main',
+  expel_embassy:        'main',
 };
 
 /** Mandate cost to build each fort level. [PLACEHOLDER] */

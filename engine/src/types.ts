@@ -56,6 +56,22 @@ export interface UnrestCauses {
   treatyCulturalClash: number;
   /** General insolvency pressure when wealthStock < 0 (outside war — war path uses warEquilibriumAdj). */
   insolvencyPressure: number;
+  /** Negative — active trade route flowing through this territory reduces equilibrium. [PLACEHOLDER] */
+  tradeStability: number;
+  /** Isolationist territory with too many active treaties. [PLACEHOLDER] */
+  isolationistEntanglement: number;
+  /** Expansionist territory with no territorial growth in last N ticks. [PLACEHOLDER] */
+  expansionistStagnation: number;
+  /** Collectivist territory with no active tribute/solidarity obligations as receiver. [PLACEHOLDER] */
+  collectivistIsolation: number;
+  /** Individualist territory burdened by tribute obligations as payer. [PLACEHOLDER] */
+  individualistObligation: number;
+  /** Traditional territory experiencing high cultural drift this tick. [PLACEHOLDER] */
+  traditionalErosion: number;
+  /** Progressive territory experiencing stagnant cultural drift this tick. [PLACEHOLDER] */
+  progressiveStagnation: number;
+  /** Temporary spike from a population transfer affecting this territory. [PLACEHOLDER] */
+  populationTransferShock: number;
   /** Clamped sum [0, 1]. This is the target unrest asymptotes toward. */
   equilibrium: number;
 }
@@ -85,6 +101,13 @@ export interface TerritoryDef {
   /** Starting value traits — copied into TerritoryState at world init so they can drift. */
   valueTraits: ValueTraits;
   adjacentIds: string[];
+  /**
+   * Optional hand-authored trait overrides. When present, skips deriveTerritoryTraits
+   * and uses these values directly. Allows per-territory correction without changing
+   * the initialization pipeline. Partial — only the axes specified are overridden;
+   * the rest are still derived.
+   */
+  traitOverrides?: Partial<ValueTraits>;
 }
 
 /** Mutable per-territory game state. */
@@ -122,6 +145,25 @@ export interface TerritoryState {
   localPopStock: number;
   localIndStock: number;
   localWltStock: number;
+  /**
+   * True when a foreign nation's embassy is present in this territory.
+   * Stub — embassy construction not yet built (Phase 8). Always false until then.
+   * Required for territory_cession transfers (§1.5).
+   * [DEFERRED: wire when embassy construction ships]
+   */
+  hasEmbassy: boolean;
+  /**
+   * Remaining ticks of population transfer shock.
+   * Decrements each tick; when 0, populationTransferShock component = 0.
+   * Set to POPULATION_TRANSFER_SHOCK_DURATION on transfer.
+   */
+  populationTransferShockTicksLeft: number;
+  /**
+   * Full UnrestCauses breakdown from the most recent tick's equilibrium computation.
+   * Stored so the harness assert_equilibrium_component pass can read named components
+   * without recomputing. null until the first tick runs.
+   */
+  lastEquilibriumCauses?: UnrestCauses;
 }
 
 export interface Territory {
@@ -140,6 +182,12 @@ export interface Nation {
   name: string;
   isAI: boolean;
   stockpiles: Stockpiles;
+  /**
+   * @deprecated Replaced by positioned Army rows in WorldState.armies.
+   * Still present for backward-compat during migration; do not use for battle math.
+   * Use totalArmySize(world, nationId) helper from engine/src/war.ts instead.
+   * Migrated from armySize — callsites tagged // migrated from armySize
+   */
   armySize: number;
   trust: number;    // 0–100 (design doc §8.6)
   prestige: number;
@@ -165,6 +213,14 @@ export interface Nation {
    * Values 0–1, sum = 1. Assigned at AI creation; does not drift with culture.
    */
   doctrineBlend: DoctrineBlend | null;
+  /** Cumulative count of treaties that ran to natural term without being broken. */
+  completedTreatiesKept: number;
+  /** Cumulative war wins (peace deal favored this nation). */
+  warsWon: number;
+  /** Tick when this nation was first created (world init or fragmentation spawn). */
+  foundedAtTick: number;
+  /** True if this nation currently holds Dominant status. Recomputed each tick. */
+  isDominant: boolean;
 }
 
 /** AI doctrine blend. Values 0–1, sum = 1. [PLACEHOLDER weights] */
@@ -183,7 +239,17 @@ export interface EventLogEntry {
 
 // ── Diplomacy ─────────────────────────────────────────────────────────────────
 
-export type ClauseType = 'non_aggression' | 'tribute' | 'trade' | 'military_access' | 'defense_pact' | 'objective';
+export type ClauseType =
+  | 'non_aggression'
+  | 'tribute'
+  | 'trade'
+  | 'military_access'
+  | 'defense_pact'
+  | 'objective'
+  | 'territory_cession'   // §1.5 — transfer a territory at a scheduled tick (embassy required)
+  | 'army_lending'        // §1.1 — loan troops to another nation for a fixed duration
+  | 'population_transfer' // §1.2 — one-time population transfer with cultural drift effect
+  | 'outpost';            // §1.11 — visibility grant via a constructed outpost/sentry
 
 /**
  * V1 objective types.
@@ -194,8 +260,8 @@ export type ObjectiveType =
   | 'build_road_connection'
   | 'build_port'
   | 'maintain_peace'
-  | 'joint_invasion'   // [STUB] — activate when War sub-phase ships
-  | 'attack_player';   // [STUB] — activate when War sub-phase ships
+  | 'joint_invasion'   // activated v0.14 — checks simultaneous attack queue; both responsible parties must attack targetTerritoryId same tick
+  | 'attack_player';   // activated v0.14 — checks active War table; responsible party must be attackerId in active war vs targetNationId
 
 export type ObjectiveStatus = 'pending' | 'met' | 'failed' | 'waived';
 export type ResponsibleParty = 'partyA' | 'partyB' | 'both';
@@ -383,6 +449,107 @@ export interface War {
   exhaustionByNation: Record<string, number>;
 }
 
+// ── Army (positioned) ─────────────────────────────────────────────────────────
+
+export type ArmyStatus = 'stationed' | 'moving' | 'besieging' | 'occupying';
+
+/**
+ * A positioned military unit belonging to a nation.
+ * A nation may have multiple Army rows (split armies — split/merge stubbed for v1).
+ * Replaces the flat armySize field on Nation.
+ */
+export interface Army {
+  id: number;
+  nationId: string;
+  /** Territory the army is currently in (or the origin territory while in transit). */
+  territoryId: string;
+  size: number;
+  status: ArmyStatus;
+  /** Non-null when status === 'moving'. Final destination territory. */
+  destinationTerritoryId: string | null;
+  /** True after the army moved this tick. Reset to false each tick. */
+  movedThisTick: boolean;
+  /**
+   * Ordered list of territory IDs the army will pass through on its journey.
+   * Includes the destination; excludes the origin (current territoryId).
+   * Empty when stationary. Used for multi-tick movement model.
+   */
+  transitPath: string[];
+  /**
+   * Ticks remaining until the army reaches the next territory on transitPath.
+   * Decrements each tick while status === 'moving'.
+   * When 0: army advances one step on transitPath.
+   */
+  transitTicksRemaining: number;
+}
+
+// ── TerritoryModifier framework ───────────────────────────────────────────────
+
+/**
+ * A temporary (or permanent) modifier applied to a territory.
+ * Sources: barricade, war-torn status, events, edicts.
+ * Permanent infrastructure effects (road/port/fort) stay as direct computations
+ * in computeUnrestEquilibrium — TerritoryModifier is for event-driven effects.
+ */
+export interface TerritoryModifier {
+  id: number;
+  territoryId: string;
+  /** Human-readable source tag for debugging (e.g. 'barricade', 'war_torn'). */
+  source: string;
+  /** Multiplier on army movement speed through this territory. Default 1.0. */
+  movementMultiplier: number;
+  /** Multiplier on production rates. Default 1.0. */
+  productionMultiplier: number;
+  /** Additive adjustment to unrest equilibrium. Default 0. */
+  unrestEquilibriumAdj: number;
+  /** Multiplier on cultural drift rate. Default 1.0. */
+  driftRateMultiplier: number;
+  /** Additional defense bonus (added to fort/geo bonus in battle). Default 0. */
+  defenseBonus: number;
+  startTick: number;
+  /** Null = permanent until explicitly removed. */
+  durationTicks: number | null;
+  /** Computed: startTick + durationTicks. Null if permanent. */
+  expiresAtTick: number | null;
+}
+
+// ── Border Skirmish ───────────────────────────────────────────────────────────
+
+/**
+ * A border skirmish event: two armies not at war clashed on the same tick.
+ * Stored in WorldState.borderSkirmishes; persisted to DB.
+ * Each nation receives a pending_skirmish_response notification.
+ */
+export interface BorderSkirmish {
+  id: number;
+  tick: number;
+  territoryId: string;
+  nationAId: string;
+  nationBId: string;
+  /** Army sizes at the time of the skirmish. */
+  armySizeA: number;
+  armySizeB: number;
+  /** Winner: nationId or null (tie). */
+  winnerId: string | null;
+  /** True if either nation has a competing TerritoryClaim, prior skirmish, or hostile compat. */
+  fullCasusBelli: boolean;
+}
+
+// ── Territory Claim (pacification) ────────────────────────────────────────────
+
+/**
+ * A nation's claim on an unclaimed territory.
+ * Pacification progress accumulates each tick an army is stationed there.
+ * When progress >= PACIFICATION_THRESHOLD, ownership transfers.
+ */
+export interface TerritoryClaim {
+  id: number;
+  nationId: string;
+  territoryId: string;
+  claimedAtTick: number;
+  pacificationProgress: number;
+}
+
 export interface WorldState {
   tick: number;
   rngSeed: number;
@@ -394,6 +561,16 @@ export interface WorldState {
   instantTrades: InstantTrade[];
   tradeRoutes: TradeRoute[];
   wars: War[];
+  /** All active armies, indexed by id. */
+  armies: Army[];
+  /** Active territory claims awaiting pacification. */
+  territoryClaims: TerritoryClaim[];
+  /** Active territory modifiers (barricade, war-torn, events). */
+  territoryModifiers: TerritoryModifier[];
+  /** Border skirmish events this session. New entries added each tick. */
+  borderSkirmishes: BorderSkirmish[];
+  /** Active and in-construction embassies. */
+  embassies: Embassy[];
 }
 
 /** A player action queued during the Main Phase and resolved at tick time. */
@@ -403,7 +580,28 @@ export interface QueuedAction {
   payload: unknown;
 }
 
-/** Per-action outcome returned by resolveTick. Used by the server for mandate refunds. */
+// ── Embassy ───────────────────────────────────────────────────────────────────
+
+export type EmbassyStatus = 'proposed' | 'under_construction' | 'active' | 'expelled' | 'destroyed';
+
+/**
+ * A foreign nation's embassy in a host territory.
+ * ownerNationId = the nation that owns the embassy.
+ * hostTerritoryId = the territory where it is built.
+ * Max one per bilateral (ownerNationId, hostTerritoryId) pair.
+ */
+export interface Embassy {
+  id: number;
+  ownerNationId: string;
+  hostTerritoryId: string;
+  status: EmbassyStatus;
+  /** Ticks remaining until status transitions from under_construction → active. */
+  constructionTicksLeft: number;
+  /** World tick when construction/proposal started. */
+  startedAtTick: number;
+}
+
+/** A player action queued during the Main Phase and resolved at tick time. */
 export interface ActionResult {
   nationId: string;
   type: string;

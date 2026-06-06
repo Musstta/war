@@ -12,11 +12,11 @@
 
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
-| Costa Rica | costa_rica | 1.4% | 1.4% | 0 |
-| Guatemala | guatemala | 1.4% | 1.4% | 0 |
-| Honduras | honduras | 1.4% | 1.4% | 0 |
-| Nicaragua | nicaragua | 1.4% | 1.4% | 0 |
-| Panamá | panama | 1.4% | 1.4% | 0 |
+| Costa Rica | costa_rica | 2.1% | 2.1% | 0 |
+| Guatemala | guatemala | 2.5% | 2.5% | 0 |
+| Honduras | honduras | 3.9% | 3.9% | 0 |
+| Nicaragua | nicaragua | 2.8% | 2.8% | 0 |
+| Panamá | panama | 2.8% | 2.8% | 0 |
 
 ---
 
@@ -28,7 +28,11 @@
 
 | Tick | Event |
 |------|-------|
+| T1 | Honduras has become insolvent (wealth -2.0). |
+| T1 | Nicaragua has become insolvent (wealth -2.1). |
+| T1 | Panamá has become insolvent (wealth -1.9). |
 | T9 | Objective failed: treaty #1 clause 2 (build_port) — deadline passed. Trust penalty applied to responsible party. |
+| T9 | Costa Rica has become insolvent (wealth -2.2). |
 | T10 | Treaty #1 between Costa Rica and Guatemala has completed its term. Both parties gain Trust. |
 
 ---
@@ -55,15 +59,15 @@
 | Tick | Costa Rica | Guatemala | Honduras | Nicaragua | Panamá |
 |---|---|---|---|---|---|
 | T0 | 30.0 | 20.0 | 0.0 | 0.0 | 0.0 |
-| T1 | 19.5 | 17.5 | 0.5 | 0.5 | 5.5 |
-| T2 | 24.0 | 20.0 | 1.0 | 1.0 | 11.0 |
-| T3 | 28.5 | 22.5 | 1.5 | 1.5 | 16.5 |
-| T4 | 33.0 | 25.0 | 2.0 | 2.0 | 22.0 |
-| T5 | 37.5 | 27.5 | 2.5 | 2.5 | 27.5 |
-| T6 | 42.0 | 30.0 | 3.0 | 3.0 | 33.0 |
-| T8 | 51.0 | 35.0 | 4.0 | 4.0 | 44.0 |
-| T10 | 59.0 | 55.0 | 5.0 | 5.0 | 55.0 |
-| T12 | 68.0 | 60.0 | 6.0 | 6.0 | 66.0 |
+| T1 | 13.2 | 13.9 | -2.0 | -2.1 | -1.9 |
+| T2 | 11.4 | 12.8 | -3.9 | -4.3 | -3.7 |
+| T3 | 9.6 | 11.7 | -5.9 | -6.4 | -5.6 |
+| T4 | 7.8 | 10.6 | -7.8 | -8.6 | -7.4 |
+| T5 | 6.0 | 9.5 | -9.8 | -10.7 | -9.3 |
+| T6 | 4.2 | 8.4 | -11.8 | -12.8 | -11.2 |
+| T8 | 0.6 | 6.2 | -15.7 | -17.1 | -14.9 |
+| T10 | -4.0 | 19.0 | -19.6 | -21.4 | -18.6 |
+| T12 | -7.6 | 16.8 | -23.5 | -25.7 | -22.3 |
 
 ### Treaty Status Timeline
 

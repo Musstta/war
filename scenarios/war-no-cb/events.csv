@@ -1,4 +1,9 @@
 tick,message
 1,"Costa Rica declared war on Nicaragua without justification."
+1,"Honduras has become insolvent (wealth -2.0)."
+1,"Guatemala has become insolvent (wealth -1.1)."
+1,"Panamá has become insolvent (wealth -1.9)."
 2,"Nicaragua held Nicaragua against Costa Rica (att 55 vs def 60). Costa Rica −3."
-3,"Nicaragua held Nicaragua against Costa Rica (att 58 vs def 60). Costa Rica −2."
+3,"Costa Rica won a battle in Nicaragua (att 61 vs def 60). Siege begun. Casualties: Costa Rica −3, Nicaragua −6."
+5,"Costa Rica has become insolvent (wealth -1.5)."
+5,"Nicaragua has become insolvent (wealth -2.3)."

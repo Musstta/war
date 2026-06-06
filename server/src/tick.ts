@@ -8,6 +8,7 @@ import { TICK_SCHEDULE } from './config';
 import { ACTION_COSTS, FORT_MANDATE_COSTS } from './phase';
 import { runCaretaker } from './caretaker';
 import { runAiNations } from './ai';
+import { createWarCouncils, addNationToDefenderCouncil } from './council';
 
 let tickInProgress = false;
 
@@ -105,6 +106,15 @@ export async function runTick(defs: TerritoryDef[]): Promise<{ tick: number }> {
             },
           });
 
+          // Add the defense pact ally to the original war's defender council.
+          // The original war's council is the coordination layer for all co-defenders.
+          const originalWarId = p.warId;
+          if (originalWarId) {
+            await addNationToDefenderCouncil(tx, originalWarId, thirdPartyId);
+          }
+          // Also create councils for the auto-war itself (thirdParty vs original attacker).
+          await createWarCouncils(tx, autoWar.id, thirdPartyId, attackerId);
+
           // Queue the declare_war action for the third party (engine acknowledges next tick).
           await tx.queuedAction.create({
             data: {
@@ -143,6 +153,17 @@ export async function runTick(defs: TerritoryDef[]): Promise<{ tick: number }> {
       await saveWorldState(tx, newWorld);
       await tx.nation.updateMany({ data: { mandateUsed: 0 } }); // reset per-tick budget
       await tx.queuedAction.deleteMany(); // clear processed intents inside same tx
+
+      // Clear per-tick council action mirrors — they're stale after resolution.
+      await tx.councilQueuedAction.deleteMany();
+
+      // Remove councils for wars that ended this tick (no further coordination needed).
+      const endedWarIds = newWorld.wars
+        .filter((w) => w.status === 'ended')
+        .map((w) => w.id);
+      if (endedWarIds.length > 0) {
+        await tx.warCouncil.deleteMany({ where: { warId: { in: endedWarIds } } });
+      }
 
       // ── Caretaker: tier transitions, caretaker AI queuing, abandoned fragmentation.
       // Runs after the tick's actions are cleared so caretaker queues start fresh.

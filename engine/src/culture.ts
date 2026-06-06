@@ -99,6 +99,116 @@ export const RECENT_CONQUEST_PRESSURE_PER_TERRITORY = 0.06;
  */
 export const INSOLVENCY_GENERAL_UNREST_PER_TICK = 0.02;
 
+// ── Trade → unrest and drift (2.1) ───────────────────────────────────────────
+
+/**
+ * Unrest equilibrium reduction per active trade clause flowing through a territory.
+ * Negative — reduces equilibrium. [PLACEHOLDER]
+ */
+export const TRADE_STABILITY_BONUS = 0.02;
+
+/**
+ * Drift rate multiplier for territories on an active trade route's computedPath.
+ * Applied to CULTURE_DRIFT_RATE this tick. [PLACEHOLDER]
+ */
+export const TRADE_DRIFT_MULTIPLIER = 1.3;
+
+// ── Cultural constraint axes (2.2) ───────────────────────────────────────────
+
+/** Active treaty count above which isolationist territories experience entanglement pressure. [PLACEHOLDER] */
+export const ISOLATIONIST_TREATY_THRESHOLD = 3;
+
+/** Unrest per treaty above threshold for isolationist > 0.3 territories. [PLACEHOLDER] */
+export const ISOLATIONIST_ENTANGLEMENT_WEIGHT = 0.015;
+
+/** Ticks without territorial acquisition before expansionist stagnation pressure fires. [PLACEHOLDER] */
+export const EXPANSIONIST_GROWTH_WINDOW = 10;
+
+/** Flat unrest for expansionist > 0.3 territories when no growth in EXPANSIONIST_GROWTH_WINDOW. [PLACEHOLDER] */
+export const EXPANSIONIST_STAGNATION_WEIGHT = 0.02;
+
+/** Unrest for collectivist (individualist < −0.3) territories with no tribute/solidarity receiver obligations. [PLACEHOLDER] */
+export const COLLECTIVIST_ISOLATION_WEIGHT = 0.015;
+
+/** Unrest per tribute obligation as payer for individualist > 0.3 territories. [PLACEHOLDER] */
+export const INDIVIDUALIST_OBLIGATION_WEIGHT = 0.02;
+
+/** Drift rate threshold above which traditional (progressive < −0.3) territories experience erosion pressure. [PLACEHOLDER] */
+export const TRADITIONAL_EROSION_THRESHOLD = 0.05;
+
+/** Unrest for traditional territories whose drift rate this tick exceeds TRADITIONAL_EROSION_THRESHOLD. [PLACEHOLDER] */
+export const TRADITIONAL_EROSION_WEIGHT = 0.025;
+
+/** Drift rate threshold below which progressive > 0.3 territories experience stagnation pressure. [PLACEHOLDER] */
+export const PROGRESSIVE_STAGNATION_THRESHOLD = 0.01;
+
+/** Unrest for progressive territories whose drift rate this tick is below PROGRESSIVE_STAGNATION_THRESHOLD. [PLACEHOLDER] */
+export const PROGRESSIVE_STAGNATION_WEIGHT = 0.015;
+
+// ── Population transfer shock (§1.2) ─────────────────────────────────────────
+
+/**
+ * Unrest equilibrium spike applied to all territories of both sender and receiver
+ * when a population_transfer clause executes.
+ * Formula: (1 − compatibilityScore) × POPULATION_TRANSFER_UNREST_SCALE added as
+ * named `populationTransferShock` component for POPULATION_TRANSFER_SHOCK_DURATION ticks.
+ * [PLACEHOLDER]
+ */
+export const POPULATION_TRANSFER_UNREST_SCALE = 0.15; // [PLACEHOLDER]
+
+/** How many ticks the population_transfer_shock component persists. [PLACEHOLDER] */
+export const POPULATION_TRANSFER_SHOCK_DURATION = 5; // [PLACEHOLDER]
+
+/** How many ticks cultural drift accelerates toward transferred population's family after a transfer. [PLACEHOLDER] */
+export const POPULATION_TRANSFER_DRIFT_DURATION = 8; // [PLACEHOLDER]
+
+// ── Embassy system (§1.6) ────────────────────────────────────────────────────
+
+/**
+ * Flat bonus added to compatibility total when the embassy-owning nation has an active
+ * embassy in the territory being evaluated. Does not change culture traits. [PLACEHOLDER]
+ */
+export const EMBASSY_COMPAT_BONUS = 0.10;
+
+/**
+ * Passive Trust recovery bonus per tick between the embassy-owning nation and the host
+ * nation while the embassy is active. Added on top of normal passive recovery. [PLACEHOLDER]
+ */
+export const EMBASSY_TRUST_RECOVERY_PER_TICK = 0.2;
+
+/**
+ * Ticks required to build an embassy once construction begins. [PLACEHOLDER]
+ */
+export const EMBASSY_BUILD_TICKS = 3;
+
+/**
+ * Trust penalty applied when a host nation expels an embassy. [PLACEHOLDER]
+ */
+export const EMBASSY_EXPEL_TRUST_PENALTY = 10;
+
+// ── Territory cession clause (§1.5) ──────────────────────────────────────────
+
+/**
+ * Ticks after transferAtTick during which the cession waits for a missing embassy.
+ * If no embassy appears within this window, the clause breaches. [PLACEHOLDER]
+ */
+export const CESSION_EMBASSY_GRACE_TICKS = 3; // [PLACEHOLDER]
+
+/**
+ * Minimum ticks in the future that transferAtTick must be from treaty signing.
+ * Gives the receiver time to build an embassy. [PLACEHOLDER]
+ */
+export const CESSION_MIN_FUTURE_TICKS = 3; // [PLACEHOLDER]
+
+// ── Roads → cultural drift rate (2.4) ────────────────────────────────────────
+
+/**
+ * Drift rate multiplier when territory has a road.
+ * Applied to CULTURE_DRIFT_RATE before computing this tick's drift.
+ * Roads connect territories to the cultural core, accelerating integration. [PLACEHOLDER]
+ */
+export const ROAD_DRIFT_MULTIPLIER = 1.25;
+
 // ── Infrastructure investment ─────────────────────────────────────────────────
 // Each built structure reduces the territory's unrest equilibrium.
 // Roads = integration backbone (largest bonus); ports = economic link; forts = security presence.
@@ -303,8 +413,16 @@ export function computeUnrestEquilibrium(
   ownershipShock: number,
   recentAcquisitionCount: number,
   treatyCulturalClash = 0,
-  militaryBonus = 0,        // negative = happier; activated by War sub-phase for Militaristic territories
-  insolvencyPressure = 0,   // general insolvency pressure (wealthStock < 0, any context)
+  militaryBonus = 0,                // negative = happier; activated by War sub-phase for Militaristic territories
+  insolvencyPressure = 0,           // general insolvency pressure (wealthStock < 0, any context)
+  tradeStability = 0,               // negative — active trade routes flowing through this territory [PLACEHOLDER]
+  isolationistEntanglement = 0,     // isolationist territory with too many treaties [PLACEHOLDER]
+  expansionistStagnation = 0,       // expansionist territory with no territorial growth [PLACEHOLDER]
+  collectivistIsolation = 0,        // collectivist territory with no solidarity obligations [PLACEHOLDER]
+  individualistObligation = 0,      // individualist territory burdened by tribute obligations [PLACEHOLDER]
+  traditionalErosion = 0,           // traditional territory experiencing high cultural drift [PLACEHOLDER]
+  progressiveStagnation = 0,        // progressive territory with stagnant cultural drift [PLACEHOLDER]
+  populationTransferShock = 0,      // temporary spike from population transfer event [PLACEHOLDER]
 ): UnrestCauses {
   const base = BASE_UNREST_FLOOR;
 
@@ -328,7 +446,10 @@ export function computeUnrestEquilibrium(
   const equilibrium = Math.max(0, Math.min(1,
     base + compatibilityPressure + distancePressure + infrastructureBonus +
     overexpansionPressure + ownershipShock + recentConquestPressure + militaryBonus +
-    treatyCulturalClash + insolvencyPressure,
+    treatyCulturalClash + insolvencyPressure + tradeStability +
+    isolationistEntanglement + expansionistStagnation + collectivistIsolation +
+    individualistObligation + traditionalErosion + progressiveStagnation +
+    populationTransferShock,
   ));
 
   return {
@@ -342,6 +463,14 @@ export function computeUnrestEquilibrium(
     militaryBonus,
     treatyCulturalClash,
     insolvencyPressure,
+    tradeStability,
+    isolationistEntanglement,
+    expansionistStagnation,
+    collectivistIsolation,
+    individualistObligation,
+    traditionalErosion,
+    progressiveStagnation,
+    populationTransferShock,
     equilibrium,
   };
 }
@@ -390,6 +519,9 @@ export function computeShockDecayRate(
  * resentful territory resists. When an axis value would cross zero, a seeded
  * RNG roll decides whether the flip is allowed or the value bounces back.
  *
+ * driftMultiplier: optional stacked multiplier (2.1 trade route × 2.4 road).
+ * Default 1.0 (no multiplier). [PLACEHOLDER callsite]
+ *
  * Returns a new ValueTraits object; does not mutate the input.
  */
 export function applyDrift(
@@ -397,8 +529,9 @@ export function applyDrift(
   nationCulture: NationCulture,
   unrest: number,
   rng: RNG,
+  driftMultiplier = 1.0, // [PLACEHOLDER callsite: TRADE_DRIFT_MULTIPLIER × ROAD_DRIFT_MULTIPLIER from tick.ts]
 ): ValueTraits {
-  const effectiveDrift = CULTURE_DRIFT_RATE * Math.max(0, 1 - unrest);
+  const effectiveDrift = CULTURE_DRIFT_RATE * Math.max(0, 1 - unrest) * driftMultiplier;
   const result = { ...traits };
 
   for (const axis of AXES) {

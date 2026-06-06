@@ -73,34 +73,100 @@ async function runAiForNation(
   type Candidate = { type: string; score: number; act: () => Promise<number> };
   const candidates: Candidate[] = [];
 
-  // ── Expand claim ──────────────────────────────────────────────────────────
-  // Find adjacent unclaimed territories.
+  // ── Expand claim (two-step: claim_territory first tick, move army next ticks) ─
+  // Step 1: if no active claim and there's an adjacent unclaimed territory, queue claim_territory.
+  // Step 2: if a claim exists, move the army one step toward the claimed territory.
   const ownedIds = new Set(ownedTerritories.map((t) => t.id));
-  let unclaimedAdj: string | null = null;
-  for (const t of ownedTerritories) {
-    const def = defById.get(t.id);
-    if (!def) continue;
-    for (const adjId of def.adjacentIds) {
-      if (ownedIds.has(adjId)) continue;
-      const adj = await tx.territoryState.findUnique({ where: { id: adjId } });
-      if (adj && adj.ownerId === null) { unclaimedAdj = adjId; break; }
-    }
-    if (unclaimedAdj) break;
-  }
-  if (unclaimedAdj) {
-    const adjId = unclaimedAdj;
-    const score = scoreAction({ type: 'expand_claim' }, doctrine);
-    candidates.push({
-      type: 'expand_claim',
-      score,
-      act: async () => {
-        await tx.territoryState.update({ where: { id: adjId }, data: { ownerId: nation.id } });
-        await tx.eventLog.create({
-          data: { tick, message: `[AI] ${nation.name} claimed ${adjId}.` },
+
+  const activeClaims = await tx.territoryClaim.findMany({ where: { nationId: nation.id } });
+  const armyRows = await tx.army.findMany({ where: { nationId: nation.id } });
+  const largestArmy = armyRows.length > 0
+    ? armyRows.reduce((best, a) => (a.size > best.size ? a : best))
+    : null;
+
+  if (activeClaims.length > 0 && largestArmy) {
+    // Step 2: move army toward the first active claim.
+    const claim = activeClaims[0]!;
+    const claimTerritoryId = claim.territoryId;
+    if (largestArmy.territoryId !== claimTerritoryId && largestArmy.status !== 'besieging') {
+      const nextStep = bfsNextStepAi(defById, largestArmy.territoryId, claimTerritoryId);
+      if (nextStep) {
+        const score = scoreAction({ type: 'expand_claim' }, doctrine) * 0.8; // slightly lower than initial claim
+        const armyId = largestArmy.id;
+        const toTerritoryId = nextStep;
+        candidates.push({
+          type: 'move_army_toward_claim',
+          score,
+          act: async () => {
+            if (mandateUsed + 1 > budget) return 0;
+            const already = await tx.queuedAction.findFirst({
+              where: { nationId: nation.id, type: 'move_army', payload: { path: ['armyId'], equals: armyId } },
+            });
+            if (already) return 0;
+            await tx.queuedAction.create({
+              data: {
+                nationId: nation.id, phase: 'main', type: 'move_army',
+                payload: { armyId, toTerritoryId, ai: true } as Prisma.InputJsonValue,
+                tickQueued: tick,
+              },
+            });
+            await tx.nation.update({ where: { id: nation.id }, data: { mandateUsed: { increment: 1 } } });
+            await tx.eventLog.create({
+              data: { tick, message: `[AI] ${nation.name} moving army toward claimed ${claimTerritoryId}.` },
+            });
+            return 1;
+          },
         });
-        return 0; // no mandate cost for direct expansion
-      },
-    });
+      }
+    }
+  } else {
+    // Step 1: claim an adjacent unclaimed territory.
+    let unclaimedAdj: string | null = null;
+    for (const t of ownedTerritories) {
+      const def = defById.get(t.id);
+      if (!def) continue;
+      for (const adjId of def.adjacentIds) {
+        if (ownedIds.has(adjId)) continue;
+        const adj = await tx.territoryState.findUnique({ where: { id: adjId } });
+        if (adj && adj.ownerId === null) { unclaimedAdj = adjId; break; }
+      }
+      if (unclaimedAdj) break;
+    }
+    if (unclaimedAdj) {
+      const adjId = unclaimedAdj;
+      const score = scoreAction({ type: 'expand_claim' }, doctrine);
+      candidates.push({
+        type: 'expand_claim',
+        score,
+        act: async () => {
+          if (mandateUsed + 1 > budget) return 0;
+          const already = await tx.queuedAction.findFirst({
+            where: { nationId: nation.id, type: 'claim_territory', payload: { path: ['territoryId'], equals: adjId } },
+          });
+          if (already) return 0;
+          // Check no existing claim from this nation on this territory.
+          const existingClaim = await tx.territoryClaim.findFirst({
+            where: { nationId: nation.id, territoryId: adjId },
+          });
+          if (existingClaim) return 0;
+          await tx.territoryClaim.create({
+            data: { nationId: nation.id, territoryId: adjId, claimedAtTick: tick, pacificationProgress: 0 },
+          });
+          await tx.queuedAction.create({
+            data: {
+              nationId: nation.id, phase: 'main', type: 'claim_territory',
+              payload: { territoryId: adjId, ai: true } as Prisma.InputJsonValue,
+              tickQueued: tick,
+            },
+          });
+          await tx.nation.update({ where: { id: nation.id }, data: { mandateUsed: { increment: 1 } } });
+          await tx.eventLog.create({
+            data: { tick, message: `[AI] ${nation.name} claimed ${adjId}.` },
+          });
+          return 1;
+        },
+      });
+    }
   }
 
   // ── Build road ────────────────────────────────────────────────────────────
@@ -323,6 +389,28 @@ async function runAiForNation(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** BFS to find the territory adjacent to `from` that is one step closer to `to`. */
+function bfsNextStepAi(defById: Map<string, TerritoryDef>, from: string, to: string): string | null {
+  if (from === to) return null;
+  const dist = new Map<string, number>();
+  const queue: string[] = [to];
+  dist.set(to, 0);
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    const curDist = dist.get(cur)!;
+    for (const adj of defById.get(cur)?.adjacentIds ?? []) {
+      if (!dist.has(adj)) { dist.set(adj, curDist + 1); queue.push(adj); }
+    }
+  }
+  let best: string | null = null;
+  let bestDist = Infinity;
+  for (const adj of defById.get(from)?.adjacentIds ?? []) {
+    const d = dist.get(adj) ?? Infinity;
+    if (d < bestDist) { bestDist = d; best = adj; }
+  }
+  return best;
+}
 
 /**
  * Find the first neighboring nation (adjacent territory owner) that meets

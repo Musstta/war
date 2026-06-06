@@ -12,11 +12,11 @@
 
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
-| Costa Rica | nicaragua, costa_rica | 12.5% | 20.4% | 0 |
+| Costa Rica | nicaragua, costa_rica | 15.1% | 22.4% | 0 |
 | Nicaragua | — | 0.0% | 0.0% | 0 |
-| Honduras | honduras | 1.6% | 1.6% | 0 |
-| Guatemala | guatemala | 1.6% | 1.6% | 0 |
-| Panamá | panama | 1.6% | 1.6% | 0 |
+| Honduras | honduras | 4.3% | 4.3% | 0 |
+| Guatemala | guatemala | 4.3% | 4.3% | 0 |
+| Panamá | panama | 3.1% | 3.1% | 0 |
 
 ---
 
@@ -29,9 +29,9 @@
 | T0 | nation_nicaragua | 0.0% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
 | T1 | nation_nicaragua | 0.0% | 0.0% | 0.000 | 1.000 | -0.040 | 0.000 |
 | T2 | nation_nicaragua | 0.0% | 0.0% | 0.000 | 1.000 | -0.040 | 0.000 |
-| T5 | nation_costa_rica | 14.7% | 42.8% | 0.331 | 0.941 | -0.040 | 0.040 |
-| T10 | nation_costa_rica | 22.3% | 23.2% | 0.162 | 0.946 | -0.040 | 0.040 |
-| T15 | nation_costa_rica | 20.4% | 12.4% | 0.077 | 0.950 | -0.040 | 0.040 |
+| T5 | nation_costa_rica | 13.5% | 39.5% | 0.298 | 0.941 | -0.040 | 0.040 |
+| T10 | nation_costa_rica | 22.7% | 21.9% | 0.149 | 0.946 | -0.040 | 0.040 |
+| T15 | nation_costa_rica | 22.4% | 12.0% | 0.072 | 0.950 | -0.040 | 0.040 |
 
 ---
 
@@ -41,9 +41,13 @@
 |------|-------|
 | T1 | Costa Rica declared war on Nicaragua. |
 | T1 | Costa Rica won a battle in Nicaragua (att 86 vs def 84). Siege begun. Casualties: Costa Rica −5, Nicaragua −6. |
-| T2 | Costa Rica advanced siege of Nicaragua (progress 2/3). Casualties: Costa Rica −4, Nicaragua −5. |
-| T3 | Costa Rica captured Nicaragua from Nicaragua after 3 tick siege. Casualties: Costa Rica −4, Nicaragua −4. |
-| T12 | Nicaragua has become insolvent (wealth -1.6). |
+| T1 | Honduras has become insolvent (wealth -2.0). |
+| T1 | Guatemala has become insolvent (wealth -1.1). |
+| T1 | Panamá has become insolvent (wealth -1.9). |
+| T2 | Costa Rica advanced siege of Nicaragua (progress 2/3). Casualties: Costa Rica −5, Nicaragua −5. |
+| T3 | Costa Rica captured Nicaragua from Nicaragua after 3 tick siege. Casualties: Costa Rica −5, Nicaragua −4. |
+| T5 | Costa Rica has become insolvent (wealth -0.4). |
+| T9 | Nicaragua has become insolvent (wealth -0.2). |
 
 ---
 

@@ -12,11 +12,11 @@
 
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
-| Costa Rica | nicaragua, costa_rica | 22.4% | 39.4% | 0 |
+| Costa Rica | nicaragua, costa_rica | 21.4% | 36.9% | 0 |
 | Nicaragua | — | 0.0% | 0.0% | 0 |
-| Honduras | honduras | 1.3% | 1.3% | 0 |
-| Guatemala | guatemala | 1.3% | 1.3% | 0 |
-| Panamá | panama | 1.3% | 1.3% | 0 |
+| Honduras | honduras | 3.5% | 3.5% | 0 |
+| Guatemala | guatemala | 3.5% | 3.5% | 0 |
+| Panamá | panama | 2.5% | 2.5% | 0 |
 
 ---
 
@@ -28,9 +28,9 @@
 |------|-------|--------|-----|-------|--------|-------|----------|
 | T0 | nation_nicaragua | 0.0% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
 | T1 | nation_nicaragua | 0.2% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
-| T2 | nation_costa_rica | 6.7% | 64.9% | 0.500 | 0.939 | 0.000 | 0.040 |
-| T5 | nation_costa_rica | 22.3% | 63.2% | 0.500 | 0.942 | 0.000 | 0.040 |
-| T10 | nation_costa_rica | 39.4% | 63.5% | 0.500 | 0.946 | 0.000 | 0.040 |
+| T2 | nation_costa_rica | 6.2% | 59.9% | 0.450 | 0.939 | 0.000 | 0.040 |
+| T5 | nation_costa_rica | 20.6% | 58.2% | 0.450 | 0.942 | 0.000 | 0.040 |
+| T10 | nation_costa_rica | 36.9% | 58.5% | 0.450 | 0.946 | 0.000 | 0.040 |
 
 ---
 
@@ -40,7 +40,11 @@
 |------|-------|
 | T1 | Costa Rica declared war on Nicaragua. |
 | T1 | Costa Rica won a battle in Nicaragua (att 69 vs def 40). Siege begun. Casualties: Costa Rica −4, Nicaragua −4. |
-| T2 | Costa Rica captured Nicaragua from Nicaragua after 2 tick siege. Casualties: Costa Rica −3, Nicaragua −3. |
+| T1 | Honduras has become insolvent (wealth -2.0). |
+| T1 | Guatemala has become insolvent (wealth -1.1). |
+| T1 | Panamá has become insolvent (wealth -1.9). |
+| T2 | Costa Rica captured Nicaragua from Nicaragua after 2 tick siege. Casualties: Costa Rica −4, Nicaragua −3. |
+| T7 | Costa Rica has become insolvent (wealth -0.9). |
 | T8 | Costa Rica received Nicaragua via peace treaty. |
 | T8 | Peace of tick 8 signed between Costa Rica and Nicaragua. |
 

@@ -1,6 +1,10 @@
 tick,message
+1,"Guatemala has become insolvent (wealth -1.1)."
+1,"Honduras has become insolvent (wealth -2.0)."
+1,"Panamá has become insolvent (wealth -1.9)."
 11,"costa_rica broke away from the abandoned Costa Rica empire."
 11,"[AI] Independent costa_rica proposed non-aggression with nation_costa_rica."
+12,"Costa Rica has become insolvent (wealth -1.0)."
 13,"nicaragua broke away from the abandoned Costa Rica empire."
 13,"The Costa Rica empire has dissolved."
 13,"[AI] Independent costa_rica proposed non-aggression with nation_independent_nicaragua_13."

@@ -1,0 +1,80 @@
+{
+  "name": "cultural-constraints",
+  "description": "Tests isolationist_entanglement and expansionist_stagnation cultural constraint axes. Nicaragua is forced isolationist (expansionist=-0.7) and signs 4 treaties (above threshold of 3), triggering entanglement pressure. Guatemala is forced expansionist (expansionist=0.7) and has no territory acquisitions during the run, triggering stagnation pressure. assert_equilibrium_component verifies both components appear at T8.",
+  "ticks": 13,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50, "wealthStock": 30 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50, "wealthStock": 30 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50, "wealthStock": 10 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50, "wealthStock": 10 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50, "wealthStock": 10 }
+    ],
+    "territoryOverrides": {
+      "nicaragua": { "expansionist": -0.7 },
+      "guatemala": { "expansionist": 0.7 }
+    }
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_nicaragua", "nation_costa_rica"],
+        "clauses": [{ "type": "non_aggression", "collateral": 0 }],
+        "termTicks": 20,
+        "collateralByParty": { "nation_nicaragua": 0, "nation_costa_rica": 0 }
+      }
+    },
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 2,
+        "partyIds": ["nation_nicaragua", "nation_honduras"],
+        "clauses": [{ "type": "non_aggression", "collateral": 0 }],
+        "termTicks": 20,
+        "collateralByParty": { "nation_nicaragua": 0, "nation_honduras": 0 }
+      }
+    },
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 3,
+        "partyIds": ["nation_nicaragua", "nation_guatemala"],
+        "clauses": [{ "type": "non_aggression", "collateral": 0 }],
+        "termTicks": 20,
+        "collateralByParty": { "nation_nicaragua": 0, "nation_guatemala": 0 }
+      }
+    },
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 4,
+        "partyIds": ["nation_nicaragua", "nation_panama"],
+        "clauses": [{ "type": "non_aggression", "collateral": 0 }],
+        "termTicks": 20,
+        "collateralByParty": { "nation_nicaragua": 0, "nation_panama": 0 }
+      }
+    },
+    {
+      "tick": 8,
+      "type": "assert_equilibrium_component",
+      "payload": { "territoryId": "nicaragua", "component": "isolationistEntanglement", "expectedPresent": true }
+    },
+    {
+      "tick": 12,
+      "type": "assert_equilibrium_component",
+      "payload": { "territoryId": "guatemala", "component": "expansionistStagnation", "expectedPresent": true }
+    }
+  ],
+  "metrics": [
+    "equilibrium_components_per_territory_per_tick",
+    "unrest_per_territory_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

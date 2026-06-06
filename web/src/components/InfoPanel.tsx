@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { TerritoryView, NationView, WorldView, CompatibilityBreakdown, UnrestCauses, api } from '../api';
+import { TerritoryView, NationView, WorldView, CompatibilityBreakdown, UnrestCauses, VisibilityTier, api } from '../api';
 import { CULTURE_AXES, poleName, poleShort } from '../cultureAxes';
 
 interface Props {
@@ -129,6 +129,40 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
   }
 
   const t: TerritoryView | undefined = world.territories[territoryId];
+
+  // TrueFog: only geography known.
+  if (t && t.visibilityTier === VisibilityTier.TrueFog) {
+    return (
+      <div style={panelStyle}>
+        <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', color: '#555' }}>
+          {t.name ?? territoryId}
+        </h3>
+        <p style={{ color: '#444', fontSize: '0.8rem' }}>{t.geography ?? 'Unknown terrain'}</p>
+        <p style={{ color: '#444', fontSize: '0.75rem', marginTop: '0.5rem' }}>
+          No intelligence — territory outside your observation range.
+        </p>
+      </div>
+    );
+  }
+
+  // LightFog: owner identity only.
+  if (t && t.visibilityTier === VisibilityTier.LightFog) {
+    return (
+      <div style={panelStyle}>
+        <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', color: '#aaa' }}>
+          {t.name ?? territoryId}
+        </h3>
+        <p style={{ color: '#555', fontSize: '0.8rem' }}>{t.geography ?? 'Unknown terrain'}</p>
+        <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: '#888' }}>
+          Owner: <span style={{ color: '#ccc' }}>{t.ownerName ?? (t.ownerId ? t.ownerId : '— unclaimed')}</span>
+        </div>
+        <p style={{ color: '#444', fontSize: '0.75rem', marginTop: '0.5rem' }}>
+          Limited intelligence — no detailed information available.
+        </p>
+      </div>
+    );
+  }
+
   const owner: NationView | undefined = t?.ownerId ? world.nations[t.ownerId] : undefined;
   const isOwn = t?.ownerId === world.myNationId;
   const phase = world.phase;

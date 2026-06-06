@@ -1,0 +1,6 @@
+tick,treaty_id,status,party_a,party_b,clauses,term_ticks,tick_ends,total_collateral,collateral_a,collateral_b,escrow_a,escrow_b,refund_a,refund_b
+1,1,active,nation_costa_rica,nation_honduras,"tribute",10,10,0.00,0.00,0.00,0.00,0.00,0.00,0.00
+2,1,active,nation_costa_rica,nation_honduras,"tribute",10,10,0.00,0.00,0.00,0.00,0.00,0.00,0.00
+3,1,active,nation_costa_rica,nation_honduras,"tribute",10,10,0.00,0.00,0.00,0.00,0.00,0.00,0.00
+4,1,active,nation_costa_rica,nation_honduras,"tribute",10,10,0.00,0.00,0.00,0.00,0.00,0.00,0.00
+5,1,active,nation_costa_rica,nation_honduras,"tribute",10,10,0.00,0.00,0.00,0.00,0.00,0.00,0.00

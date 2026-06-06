@@ -1,0 +1,71 @@
+{
+  "name": "trade-integration",
+  "description": "Costa Rica and Guatemala sign a 20-tick trade treaty at T1. A trade route is seeded (set_trade_route) with path [guatemala→honduras→nicaragua→costa_rica], destinationNationId=nation_costa_rica. Expected: tradeStability appears as a non-zero (negative) value on costa_rica's equilibrium causes — the receiving nation's territory on the path gets the stability bonus. assert_equilibrium_component verifies tradeStability is present on costa_rica at T5 and T12.",
+  "ticks": 12,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50, "wealthStock": 20 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50, "wealthStock": 20 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_costa_rica", "nation_guatemala"],
+        "clauses": [
+          { "type": "non_aggression", "collateral": 0 },
+          {
+            "type": "trade",
+            "collateral": 5,
+            "payload": {
+              "resource": "wealth",
+              "amount": 5,
+              "fromNationId": "nation_guatemala",
+              "toNationId": "nation_costa_rica",
+              "sourceTerritoryId": "guatemala"
+            }
+          }
+        ],
+        "termTicks": 20,
+        "collateralByParty": {
+          "nation_costa_rica": 5,
+          "nation_guatemala": 5
+        }
+      }
+    },
+    {
+      "tick": 1,
+      "type": "set_trade_route",
+      "payload": {
+        "id": 9001,
+        "treatyClauseId": 1001,
+        "sourceTerritoryId": "guatemala",
+        "destinationNationId": "nation_costa_rica",
+        "path": ["guatemala", "honduras", "nicaragua", "costa_rica"],
+        "isSeaRoute": false
+      }
+    },
+    {
+      "tick": 5,
+      "type": "assert_equilibrium_component",
+      "payload": { "territoryId": "costa_rica", "component": "tradeStability", "expectedPresent": true }
+    },
+    {
+      "tick": 12,
+      "type": "assert_equilibrium_component",
+      "payload": { "territoryId": "costa_rica", "component": "tradeStability", "expectedPresent": true }
+    }
+  ],
+  "metrics": [
+    "equilibrium_components_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

@@ -293,6 +293,24 @@ The +1 Mandate surcharge on actions costing 2+ while insolvent (wealthStock < 0 
 
 ---
 
+## Debt recovery skim rate — gross production fix (v0.24)
+
+**Previous behavior (v0.16–v0.23):** skim applied to `incomingWealthByNation` (net after trade draws and upkeep). At `DEBT_RECOVERY_SKIM_RATE = 0.20` and 5 Wealth/tick net income, skim = floor(5 × 0.20) = 1/tick. With 87.5 debt, recovery takes ~87 ticks — nearly 3 months at daily tick pace. Flagged as game-breaking in v0.16 tuning notes but not fixed until v0.24.
+
+**Fix (v0.24):** skim now applied to `grossWealthByNation` — sum of `t.def.baseWealth` for non-revolting owned territories before any deductions. Rate raised to 0.30. A nation with 5 gross Wealth/tick territory output: skim = floor(5 × 0.30) = 1/tick. **Still too slow.** 87.5 debt at 1/tick = 87 ticks. This is unchanged from before.
+
+**Why the rate change alone isn't enough:** the skim is `floor(gross × rate)`. For small gross values (1–10 Wealth/tick), the floor function absorbs much of the rate increase:
+- gross=5, rate=0.30 → floor(1.5) = 1/tick (same as rate=0.20 → floor(1.0) = 1/tick)
+- gross=5, rate=0.40 → floor(2.0) = 2/tick → 87.5 / 2 ≈ 44 ticks
+- gross=5, rate=0.70 → floor(3.5) = 3/tick → 87.5 / 3 ≈ 29 ticks
+- gross=5, rate=1.00 → floor(5.0) = 5/tick → 87.5 / 5 = 17.5 ticks (target range)
+
+**Recommendation before first playtest:** switch from `Math.floor(gross × rate)` to `Math.max(1, Math.floor(gross × rate))` — minimum skim of 1/tick regardless of rate. Add a minimum skim floor. OR raise rate to 0.60–0.70. The benefit of gross (vs net) is that tribute can no longer stall recovery — the amount is now predictable.
+
+**Target:** 10–20 ticks to clear a moderately deep hole (~30–90 Wealth debt). This requires skim ≥ 2–4/tick at typical production. Validate with a dedicated harness sweep once first playtest provides real debt accumulation data.
+
+---
+
 ## War insolvency ramp — resolved (v0.16)
 
 Previously documented as unreachable because tribute and upkeep were clamped at 0. Fixed in v0.16 by removing all `Math.max(0, ...)` floors on wealth deductions. Wealth now goes genuinely negative; the `wealthStock < 0` insolvency check fires correctly. `debtBalance` tracks cumulative debt. Recovery skim reduces debtBalance over subsequent ticks. See `DEBT_RECOVERY_SKIM_RATE` entry above — skim rate is flagged as too slow and needs to be fixed before first playtest.
@@ -317,6 +335,399 @@ Both parties gain +5 Trust for signing a peace deal. Small relative to the break
 
 **Tribute-via-treaty mechanic:**
 When a peace deal includes tribute (`tributeWealth > 0, tributeTicks > 0`), the engine emits a `[TRIBUTE_TREATY]` event log entry that the server save hook parses to create a real Treaty row. This uses the same tribute-clause machinery as voluntary tribute treaties — the attacker pays the defender per tick. No collateral, no renewal: treaty expires at `tickStarted + tributeTicks`. The tribute amount is fixed at signing (not inflation-adjusted). Whether the loser can afford it depends on their wealth stock — if they go insolvent, the insolvency unrest ramp fires. Full enforcement identical to any other tribute clause: missed payments → Trust penalty → breach.
+
+---
+
+## Prestige formula constants (v0.22 — all [PLACEHOLDER])
+
+All in `engine/src/prestige.ts`. Every constant here is first-pass and untested.
+
+**`PRESTIGE_PER_TERRITORY = 10`**
+10 points per owned territory. Dominant driver of early-game prestige. At 5 territories: 50 points base. May need to drop to 6–8 once other components fill in, otherwise territory count dominates to the exclusion of everything else.
+
+**`PRESTIGE_PER_TREATY = 5`**
+Per standing treaty. Rewards diplomacy without being farm-able past the natural limit (you can only have as many treaties as you have neighbors + tolerance for Mandate spend). At 4 treaties: +20.
+
+**`PRESTIGE_PER_KEPT_TREATY = 8`**
+Per treaty that ran to natural expiry without being broken. Cumulative — this is the "long-term reputation" component. A nation that has kept 10 treaties earns +80. Should be meaningfully higher than PRESTIGE_PER_TREATY to reward sustained diplomacy over treaty churn.
+
+**`PRESTIGE_PER_WAR_WIN = 15`**
+Per war win (territory gained or tribute extracted). At 2 wins: +30. The 15-point value is the same as the old stub — left as-is since there's no playtest data on war frequency yet. May need to be lower (10) if wars happen constantly, or higher (20–25) if wars are rare.
+
+**`PRESTIGE_STABILITY_THRESHOLD = 0.3`**
+Average unrest below this earns the stability bonus. 0.3 is already reachable for a well-developed 1-territory nation; should probably be 0.20 or lower once typical multi-territory unrest is measured from real play.
+
+**`PRESTIGE_STABILITY_BONUS = 20`**
+Flat bonus for sub-threshold stability. At 20 this is worth 2 territories — reasonable for sustained internal investment. If stability turns out to be the dominant path, lower to 10.
+
+**`PRESTIGE_PER_TICK_AGE = 0.1`**
+Points per tick of nation age. After 100 ticks: +10. Rewards longevity without being farm-able (it doesn't compound). At 0.1/tick with daily ticks, a 6-month game gives +180 — probably too large at that timescale; lower to 0.02–0.05 if age becomes the dominant Prestige driver.
+
+**`PRESTIGE_PER_INFRA_POINT = 0.5`**
+Per point of infrastructure score (hasRoad+hasPort+fortLevel per territory). A fully developed 5-territory nation scores 5×(1+1+3)=25 points → +12.5 Prestige. Reasonable but modest. Raise to 1.0 if you want infrastructure investment to be a visible Prestige lever.
+
+**`PRESTIGE_TRUST_SCALE = 0.3`**
+Trust (0–100) multiplied by this. At Trust=80: +24. At Trust=50 (baseline): +15. The spread is small (24 vs 15) — Trust is a modifier, not a primary driver. This feels right; raise to 0.5 if you want high-Trust play to be more strategically distinct.
+
+---
+
+## Dominant qualification constants (v0.22 — COMPLETELY UNTESTED)
+
+**`DOMINANT_PRESTIGE_FLOOR = 150` and `DOMINANT_COMPARABILITY_BAND = 0.85`**
+
+These are completely untested — they need a full multi-session simulation before they mean anything. At the current formula, a 5-territory nation at tick 0 with baseline Trust (50) and no wars/treaties scores: 5×10 + (0.3 floor? maybe) + 0.1×0 + 50×0.3 = 50 + 20 + 0 + 15 = 85. Nobody will be Dominant at tick 0. At tick 50 with 10 territories, 4 treaties, 2 war wins, 3 kept treaties: 100 + 20 + 24 + 30 + 20 + 5 + (infrastructure ~10) + 15 = ~224 → crosses the floor. That's roughly 2 months of active play. Whether that's too fast or too slow is completely unknowable without real game data.
+
+The comparability band (0.85) means a second nation at 190 when the leader is 224 (190/224 = 0.848) does NOT qualify — just barely outside. At 191 they do (191/224 = 0.853). This will feel arbitrary until the spread of actual Prestige scores across sessions is understood. Track the spread in harness sweeps before tuning.
+
+---
+
+## Dominant mechanical effect constants (v0.22 — all [PLACEHOLDER])
+
+**`DOMINANT_TRUST_PENALTY_REDUCTION = 0.75`**
+Dominant nation breaks a treaty: Trust penalty is 75% of normal (−15 instead of −20). This is tiny. The intent is just a small grace for the most prominent nation — if it never feels noticeable, raise to 0.5 for a more meaningful reduction.
+
+**`UNDERDOG_PRESTIGE_BONUS = 5`**
+Non-Dominant accepts Dominant's treaty: +5 Prestige. Small but visible. At 5 points it's half a territory's worth. If players can't perceive it in the leaderboard it's too small; if it becomes a farm target (spam accept treaties from the Dominant player for Prestige) raise to be non-farmable (e.g. once per Dominant nation per 10 ticks).
+
+**`UNDERDOG_UNREST_REDUCTION = −0.02` and `UNDERDOG_UNREST_DURATION = 3`**
+[DEFERRED — column exists in schema but equilibrium wiring not yet connected]. When wired: −0.02 equilibrium on all territories for 3 ticks. At 0.02 this is barely visible; the intent is a small diplomatic-morale effect. Wire in next prestige pass; tune after first observations.
+
+**`DOMINANT_WAR_ATTACKER_BONUS = 1.15`**
+Non-Dominant attacking Dominant: ×1.15 attack strength. At armySize=50 this adds ~7.5 effective soldiers. Against a Dominant defender with no army (coastal L0 fort) this is irrelevant; against a well-fortified Dominant force it gives the underdog a fighting chance. Tune relative to BATTLE_RANDOM_SPREAD (0.15) — a 15% bonus barely exceeds the random spread, so upsets aren't guaranteed. May need to raise to 1.25–1.30 to feel impactful.
+
+**`DOMINANT_WAR_MILITARISTIC_BONUS = −0.03`**
+Additional equilibrium reduction for Militaristic territories of the attacker (on top of WAR_MILITARISTIC_HAPPINESS_BONUS) while fighting a Dominant nation. −0.03 added to −0.02 = −0.05 total. Only fires for Militaristic > 0.3 territories, same gate as the base bonus. If the base bonus is already invisible at 0.02, the combination at 0.05 may still be too small. Tune both together.
+
+---
+
+## Fog of war — visibility rule placeholder (v0.21)
+
+**`military_access` clause grants Clear visibility [PLACEHOLDER — may be too strong]**
+
+Currently, having an active `military_access` clause with a nation's owner grants **Clear** (full detail) visibility over all their territories. This was chosen as the conservative, intuitive default: if you have military access through a nation's lands, you can see those lands.
+
+**Why it might be too strong:** In practice, a military_access clause means your armies can pass through — not that you have stationed scouts in every territory. A nation could sign military_access treaties purely for the visibility benefit, with no intention of moving armies. If this becomes a loophole (players sign access treaties just to spy), downgrade the grant to LightFog instead.
+
+**How to apply:** When revisiting, change Rule 3 in `engine/src/visibility.ts` from `VisibilityTier.Clear` to `VisibilityTier.LightFog`. Revisit once military access has real enforcement (blocking movement through unauthorized territory) and players have tested the system.
+
+---
+
+## Army positioning constants (v0.20 — all [PLACEHOLDER])
+
+All in `engine/src/war.ts`.
+
+**`PACIFICATION_THRESHOLD = 100`**
+Progress required to fully pacify and claim an unclaimed territory. Army contributes `armySize / nativeDifficulty` each tick. At default armySize=50 and coastal terrain (difficulty=1.0), 2 ticks to pacify. Mountainous (difficulty=1.8): 3–4 ticks. This is intentionally fast for v1 — raise to 200–500 once real play reveals whether pacification feels too easy or too hard. Should require at least several days of sustained army presence.
+
+**`PACIFICATION_DECAY_PER_TICK = 10`**
+Progress lost per tick when the claiming army is absent. At threshold=100 and decay=10, a fully-progressed territory loses 10% per tick without an army. An army that pacifies halfway (50/100) and then leaves would decay to 0 in 5 ticks. Tune relative to threshold: decay/threshold ratio (0.10) determines the "forgiveness window." If too low, brief retreats are catastrophic; if too high, pacification is too lossless.
+
+**Terrain difficulty values (`TERRAIN_DIFFICULTY`):**
+All values are first-pass placeholders. The intent: mountainous and forest terrain is harder to pacify (defenders can hide, resist longer); coastal and plain is easier.
+- `coastal: 1.0` — baseline; easy access, established trade routes
+- `inland: 1.2` — slightly harder; fewer supply lines
+- `mountainous: 1.8` — significantly harder; natural fortifications, guerrilla terrain
+- `desert: 1.5` — hard; supply problems, harsh environment
+- `forest: 1.4` — hard; difficult movement and visibility
+
+These should diverge once real play data exists. The current mountainous bonus (1.8×) is also coincidentally equal to the GEO_DEFENSE_BONUS multiplier — that's a placeholder coincidence, not a design decision.
+
+**`POP_DIFFICULTY_SCALE = 0.001`**
+Per-capita population contribution to pacification difficulty: `population × 0.001` added to terrain difficulty. A territory with basePopulation=100 adds 0.1 to difficulty (10% harder). Intent: dense populations resist pacification longer. At 0.001 scale this is nearly invisible — raise to 0.002–0.005 once typical population values are understood from play.
+
+**`COMPAT_DIFFICULTY_SCALE = 0.5`**
+Cultural incompatibility contribution to pacification difficulty. Currently unused in the engine formula (the `(1 - compatScore) × COMPAT_DIFFICULTY_SCALE` term is in the spec but the engine uses 0.5 as a fixed placeholder for compat). Wire up the actual compat score once it's available in the pacification context. At full incompatibility (compatScore=0): +0.5 difficulty; at full compatibility (compatScore=1): +0.0. This is the planned tuning lever for culturally-resistant territories.
+
+---
+
+## Split/merge army stubs (v0.20)
+
+`split_army` and `merge_army` are **not yet implemented**. The data model supports them: a nation may have multiple `Army` rows, each with independent `territoryId` and `size`. Splitting would divide one army into two smaller ones at the same territory; merging would combine two armies at the same territory into one.
+
+**Why stub now:** The primary use case is splitting a large home army into two — one stays to defend, one moves to pacify a new claim. Without split/merge, a nation with one army (the default) must choose between defense and expansion. This creates useful strategic pressure for v1 but will feel constraining once nations grow larger.
+
+**Tag for future prompt:** Implement `split_army` and `merge_army` action handlers. Each creates/modifies Army rows; both cost 0 Mandate (repositioning, not a strategic decision). Validate: split requires army.size >= 2; merge requires both armies in same territory and same nation. The engine already handles multiple armies per nation in all combat/pacification paths.
+
+---
+
+## Siege without army — defense note (v0.20)
+
+When a battle is resolved against a territory where the defending nation has **no army stationed**, the defending army size is 0. Only fort bonus and geography apply. An ungarrisoned L3 fort still provides `fortBonus = 3 × GEO_DEFENSE_BONUS = 0.60` defense, but with defendingArmySize=0 that is `0 × 1.60 = 0` — the fort is worthless without troops.
+
+This is intentional: fortifications slow siege only when combined with army presence. An abandoned fortification falls in 1 tick (still requires siegeProgress >= fortLevel + 1 to capture, but with 0 vs any army the attacker wins every tick). The design intent is that forts buy time for a garrison to arrive, not substitute for one.
+
+**Implication for caretaker:** The caretaker defense priority (move army toward besieged territory) is critical for nations going Dormant/Autopilot — if no army reaches the besieged territory, the siege completes automatically even behind a L3 fort. Tune `TIER_ACTIVE_TO_DORMANT_DAYS` conservatively so forts have time to matter.
+
+---
+
+## Movement model constants (v0.28 — all [PLACEHOLDER])
+
+### §1.3 Multi-tick army transit
+
+**`BASE_MOVEMENT_TICKS = 1`** (war.ts)
+Minimum ticks to cross any territory. With no terrain modifier this equals 1.
+
+**`GEOGRAPHY_MOVEMENT_MODIFIER`** (war.ts)
+Per-geography travel cost multipliers:
+- `mountainous: 1.5` — alpine terrain doubles movement cost (+50%)
+- `forest: 1.5` — dense jungle/forest, same cost as mountainous
+- `desert: 1.33` — arid terrain, approx 1 extra day per 3 territories
+- `plain: 1.0` / `coastal: 1.0` / `island: 1.0` / `inland: 1.0` — baseline
+Mountainous and forest are equal at 1.5. Consider whether forest should be slightly cheaper (1.25) — in Central America, mountain passes are more restrictive than jungle paths, but both are punishing. Revisit after first movement playtest.
+
+**`ROAD_MOVEMENT_MODIFIER = 0.5`** (war.ts)
+Multiplier applied to terrain cost for road-equipped territories. Halves movement cost. With a road, mountainous costs 0.75 (under 1 tick → rounds to instant). This makes roads very powerful for military logistics — possibly too powerful. Consider 0.6–0.7.
+
+### §1.4 Barricade
+
+**`BARRICADE_DEFENSE_BONUS = 0.15`** (war.ts)
+Added to the territory's defense calculation while the barricade TerritoryModifier is active. Stacks with fort bonus. At L0 fort, barricade provides 0.15 raw defense — enough to notice but not game-breaking.
+
+**`BARRICADE_MOVEMENT_MULTIPLIER = 1.5`** (war.ts)
+Movement penalty applied to armies crossing a barricaded territory (slows transit, matches mountainous). Encourages going around rather than through.
+
+**`BARRICADE_DURATION_TICKS = 5`** (war.ts)
+How long a barricade lasts before it degrades. 5 real days = effectively one week of coverage. May be too long if barricades can chain into indefinite blocking. Revisit if players spam barricade renewals.
+
+### §1.4 Border skirmish thresholds
+
+**`SKIRMISH_FULL_CB_WINDOW = 10`** (war.ts)
+Ticks after a border skirmish during which the victim gets full `hasCasusBelli` for a declaration of war. 10 ticks = 10 real days. Generous window; consider 5 if skirmish-farming for CB becomes a degenerate strategy.
+
+**`SKIRMISH_CB_DECLARATION_WINDOW = 5`** (war.ts)
+Additional ticks (beyond FULL window) where a CB can still be declared but at reduced legitimacy. Total CB window = 15 ticks from skirmish. Not yet mechanically distinct from FULL_CB — currently both grant CB. Distinction to be wired in future pass.
+
+**`SKIRMISH_HOSTILITY_COMPAT_THRESHOLD = 0.3`** (war.ts)
+Minimum compatibility gap between the two nations for a skirmish to generate a CB. Prevents two culturally-similar nations from accidentally generating CB through routine border contact. Tune against actual compatibility distributions once several games have run.
+
+---
+
+## Diplomatic value engine constants (v0.28 — all [PLACEHOLDER])
+
+**`COLLATERAL_FLOOR_RATE = 0.20`** (diplomaticValue.ts)
+Fraction of net Wealth value differential between parties used as minimum collateral floor. A treaty where one party benefits 20 Wealth more than the other requires at least 4 Wealth total collateral. Conservative — the point is to establish a non-zero floor, not to make every treaty expensive.
+
+**`MAINTAIN_PEACE_LOW_VALUE_TRUST_FRACTION = 0.25`** (diplomaticValue.ts)
+When `maintainPeaceTrustMultiplier` detects a low-value context (no armies, no prior skirmish), the Trust bonus from completing a maintain_peace objective is reduced to 25% of normal. Prevents two pacifist nations from farming Trust via empty peace treaties.
+
+**`MAINTAIN_PEACE_MAX_CONSECUTIVE = 2`** (diplomaticValue.ts)
+Maximum number of maintain_peace treaties the same pair of nations can sign within the consecutive window. At 2, a pair can sign once, let it expire, sign again — but a third attempt within the window is blocked. This is the anti-farming gate. If 2 feels too restrictive for genuine peace-building relationships, raise to 3.
+
+**`MAINTAIN_PEACE_CONSECUTIVE_WINDOW = 20`** (diplomaticValue.ts)
+Tick window within which the consecutive count is measured. 20 ticks = 20 real days (roughly 3 weeks). Chosen to span a typical treaty term (MIN_TREATY_TERM = 3, typical = 5–10). A treaty signed at T0 and another at T12 would both count within a 20-tick window queried at T15. Reduce to 10 if the window is too punishing for genuine long-term partners.
+
+---
+
+## Embassy system constants (v0.29 — all [PLACEHOLDER])
+
+All in `engine/src/culture.ts` (constants) and `engine/src/tick.ts` (logic).
+
+**`EMBASSY_BUILD_TICKS = 3`** (tick.ts / types.ts)
+Construction ticks before an embassy transitions from `under_construction` to `active`. With daily ticks this is 3 real days. Matches `CESSION_MIN_FUTURE_TICKS` and `CESSION_EMBASSY_GRACE_TICKS` — a receiving nation that starts construction immediately on treaty signing has zero margin. Consider raising to 5 if the grace window is also raised.
+
+**`EMBASSY_COMPAT_BONUS = −0.01`** (culture.ts)
+Equilibrium reduction on territories of the host nation for each active embassy owned by a foreign nation. Negative — small diplomatic-presence stability effect. At −0.01 this is nearly invisible; may need 2×–3× to be felt. Intended as a soft reward for maintaining embassies rather than a dominant driver.
+
+**`EMBASSY_TRUST_RECOVERY_PER_TICK = 0.5`** (culture.ts)
+Additional Trust recovery per tick for the embassy owner toward the host nation while the embassy is active. Stacks with normal passive Trust recovery (`TRUST_RECOVERY_PER_TICK`). At 0.5/tick this doubles the baseline recovery rate — may need to be lower (0.2–0.3) once real diplomatic Trust dynamics are observed. Intended to make "maintain embassy rather than breaking and re-building" the dominant Trust strategy.
+
+**`EMBASSY_EXPEL_TRUST_PENALTY = −10`** (culture.ts)
+Trust hit applied to the host nation when it expels an embassy. Magnitude is half the treaty-break penalty (−20). Rationale: expulsion is an aggressive signal but less severe than breaking a signed agreement. Tune relative to `TRUST_BREAK_PENALTY` once embassy-expulsion incidents exist in real play.
+
+**`EmbassyStatus` lifecycle:**
+`proposed` → (after `build_embassy` action) `under_construction` → (after `EMBASSY_BUILD_TICKS` ticks) `active` → (after `expel_embassy` action) `expelled`.
+A `destroyed` status fires automatically when the host territory changes ownership (engine tick loop).
+
+---
+
+## Treaty system expansion constants (v0.27 — all [PLACEHOLDER])
+
+### §1.5 Territory cession
+
+**`CESSION_EMBASSY_GRACE_TICKS = 3`** (culture.ts)
+Ticks after `transferAtTick` during which the engine waits for the receiving nation to establish an embassy before the clause breaches. 3 ticks = 3 real days. With embassy construction time ([PLACEHOLDER: 3 ticks]), a receiving nation that immediately starts construction upon treaty signing has zero margin — they must have started before or they need more grace ticks. Consider raising to 5–7 to be realistic.
+
+**`CESSION_MIN_FUTURE_TICKS = 3`** (culture.ts)
+Minimum ticks between treaty signing and `transferAtTick`. Enforced at proposal time. 3 ticks matches the embassy construction time placeholder — a receiver needs at least this window to build one. If embassy construction time changes, update both.
+
+**Embassy stub:** `hasEmbassy` is always false in the current DB schema (new `TerritoryState` column defaults false). The territory cession code currently short-circuits this with `|| true` in the engine to allow testing without embassy construction. When embassy construction ships (Phase 8), remove the `|| true` override and the clause will naturally require an embassy. Tag in `tick.ts`: `[DEFERRED: remove '|| true' when embassy ships]`.
+
+### §1.2 Population transfer
+
+**`POPULATION_TRANSFER_UNREST_SCALE = 0.15`** (culture.ts)
+Unrest equilibrium spike applied to all territories of both nations for `POPULATION_TRANSFER_SHOCK_DURATION` ticks. Currently applied as a flat 0.15 (the `populationTransferShock` named component). The compat-scaled formula `(1 − compatScore) × 0.15` is computed in the engine but the per-territory compat score would require additional state storage — the current implementation uses the flat `POPULATION_TRANSFER_UNREST_SCALE` value directly. Wire the compat-scaled version when per-territory shock magnitude storage is available.
+
+**`POPULATION_TRANSFER_SHOCK_DURATION = 5`** (culture.ts)
+How many ticks the `populationTransferShock` component persists. 5 real days. Probably correct order-of-magnitude — a sudden population movement should affect stability for about a week. Tune once real transfer data exists.
+
+**`POPULATION_TRANSFER_DRIFT_DURATION = 8`** (culture.ts)
+How many ticks cultural drift accelerates toward the transferred population's cultural family. Currently stored as a constant but the drift acceleration effect is not yet wired into `applyDrift` — it's defined here for the Phase 8 implementation when cultural drift toward specific families (not just nation culture) is built. Tag: **[DEFERRED — acceleration toward transferred family not yet wired]**.
+
+### §1.10 Auto-assign resource sourcing
+
+Auto-assign tribute: deducts from territory local Wealth stockpiles proportionally (weight = `territory.def.baseWealth`). Overflow (when local stockpiles are insufficient) falls back to the nation's general stockpile, then allows insolvency as before. The distribution is by **base production rate**, not by current local stockpile level — this means a territory with high base wealth takes a larger share even if its local stockpile happens to be depleted (e.g. by earlier trade draws). Whether weighting by current stockpile level (more fair) or base rate (more predictable) is better depends on play experience.
+
+Auto-assign trade: same proportional logic, with missed-payment detection checking total available (local + general) against the required amount. The "consecutive" missed-payment rule still applies.
+
+**Known gap:** trade clause `sourceTerritoryId = null` enables auto-assign. Existing treaties stored in the DB from v0.9–v0.26 have `sourceTerritoryId` set (manual pin path). New treaties signed after v0.27 default to auto-assign if `sourceTerritoryId` is omitted from the payload. Backward-compatible.
+
+---
+
+## Initialization pipeline constants (v0.26 — all [PLACEHOLDER])
+
+All in `engine/src/initialization.ts`. These are principled starting points derived from Hofstede cultural dimensions (§3.1) and geographic intuition (§3.2–3.3). None have been validated against actual play data — treat as directional guesses.
+
+### §3.1 Cultural family → trait offsets
+
+Each family shifts all four axis values from a baseline of 0. The table entries are Hofstede-inspired but do not map 1:1 to any specific Hofstede dimension.
+
+**Current values and first-pass notes:**
+- `latin`: individualist −0.3 (collectivist lean), progressive −0.1 (slightly traditional), militaristic −0.1, expansionist +0.1. Broadly matches Central American cultural profile in the current test map.
+- `european`: individualist −0.2 (less collectivist), progressive −0.1, militaristic +0.1, expansionist +0.2. European expansion history encoded. May be too expansionist.
+- `arab`: individualist −0.2, progressive −0.5 (strong traditional lean), militaristic +0.1, expansionist 0. Traditional pole is the strongest signal here.
+- `slavic`: individualist −0.1, progressive −0.2, militaristic +0.2, expansionist +0.1. Slightly more militaristic than european.
+- `east_asian`: individualist −0.5 (strongly collectivist), progressive −0.4 (strongly traditional), militaristic +0.1, expansionist −0.1. Hofstede high power-distance + collectivism.
+- `african`: individualist −0.3, progressive −0.2, militaristic 0, expansionist 0. Moderate collectivist baseline.
+- `south_asian`: individualist −0.4, progressive −0.3, militaristic 0, expansionist 0. Similar to east_asian but less extreme.
+- `indigenous`: individualist −0.2, progressive −0.4 (traditional), militaristic −0.2 (peaceful lean), expansionist −0.3 (isolationist lean). Encodes historical defensive/isolated posture.
+
+**To validate:** run a full-world sweep across all families at Phase 7 and check whether the resulting nation culture distributions produce interesting diplomatic variation rather than convergent behavior.
+
+### §3.2 Geography → trait modifiers
+
+Applied on top of family offsets. Captures how terrain shapes culture over generations.
+
+- `mountainous`: progressive −0.2 (isolation preserves tradition), militaristic +0.1 (defensive necessity), expansionist −0.2 (hard to expand from mountains). Mountain kingdoms historically conservative and non-expansionist.
+- `coastal`: progressive +0.2 (trade exposure drives change), militaristic −0.1, expansionist +0.2 (sea access enables expansion). This is the strongest positive progressive signal in the table.
+- `inland`: all 0 (neutral baseline — no special terrain effect).
+- `desert`: progressive −0.3 (extreme isolation preserves tradition), militaristic +0.2 (survival demands toughness), expansionist 0.
+- `forest`: progressive −0.1, militaristic +0.1, expansionist −0.1. Moderate defensive lean.
+- `island`: not yet in the Geography type — will be needed for Phase 7 Caribbean territories. Add when the type is extended.
+
+**Known gap:** the current Geography type (`coastal | inland | mountainous | desert | forest`) lacks `island`. When Phase 7 adds island territories, extend both the Geography type and the GEOGRAPHY_TRAIT_MODIFIERS table.
+
+### §3.3 Starting population
+
+Formula: `round(GEOGRAPHY_BASE_POPULATION[geography] × FAMILY_POPULATION_MULTIPLIER[family])`.
+
+**Geography bases (GEOGRAPHY_BASE_POPULATION):**
+- coastal: 80, inland: 60, forest: 40, mountainous: 30, desert: 15
+- These are abstract units, not real-world population counts. The important thing is relative density. At Phase 7 scale (37 territories), the range 15–80 produces meaningful spread. May need to scale down or up once POPULATION_PRODUCTION_BASE is calibrated.
+
+**Family multipliers (FAMILY_POPULATION_MULTIPLIER):**
+- east_asian: 1.8, south_asian: 1.6, european: 1.1, latin: 1.0, arab: 0.9, african: 0.8, slavic: 0.7, indigenous: 0.6
+- These reflect broad historical density patterns. The 1.8× east_asian multiplier is the most aggressive — an east_asian coastal territory gets population 80 × 1.8 = 144. At POPULATION_PRODUCTION_BASE=50, that's a 2.88× production multiplier, which may be too strong. Revisit when the full world is authored.
+
+**Current test map all 8 territories:**
+- coastal latin (coast 80 × latin 1.0 = 80): costa_rica, honduras, el_salvador, nicaragua, panama, mexico_yucatan, belize(european → 88)
+- mountainous latin (30 × 1.0 = 30): guatemala
+- These are computed starting populations for the DB at init — they replace the hand-authored `basePopulation` values in the def file only at server initialization. The harness still uses the def file values directly.
+
+### §3.4 Cultural family → production multipliers
+
+The `ProductionModifiers` struct has three fields: wealthMultiplier, industryMultiplier, populationMultiplier. These multiply the territory's `baseWealth`, `baseIndustry`, and `basePopulation` at production time.
+
+**Current values and rationale:**
+- `latin`: wealth 1.0, industry 0.9, pop 1.1. Standard trader/agrarian profile.
+- `european`: wealth 1.1, industry 1.2, pop 1.0. Industrial and mercantile.
+- `east_asian`: wealth 1.1, industry 1.3, pop 1.2. Highest industry multiplier — encodes East Asian manufacturing tradition.
+- `arab`: wealth 1.2, industry 0.8, pop 1.0. Mercantile wealth without industrial strength (trade routes > manufacturing).
+- `slavic`: wealth 0.9, industry 1.1, pop 1.0. Modest industrial lean.
+- `african`: wealth 0.9, industry 0.8, pop 1.0. Slight underperformance — intentional placeholder; revisit when African territories are authored, as this generalizes an enormous diverse region unfairly.
+- `south_asian`: wealth 1.0, industry 0.9, pop 1.1. Agricultural/service lean.
+- `indigenous`: wealth 0.7, industry 0.8, pop 0.9. Lowest multipliers — encodes subsistence economy. Will produce very weak nations if used for major territories; tuning priority before Phase 7 indigenous territory authoring.
+
+**Known issue:** these multipliers are stored in the initialization pipeline but are NOT currently applied to territory base rates at server init (the `ensureWorldInitialized` function derives traits and population but does not yet update `baseWealth`/`baseIndustry` in the DB — those columns exist only in the def file JSON, not in `TerritoryState`). The production modifiers are returned by the API for inspection but need a DB column or a separate application step before they affect actual production. Tag: **[DEFERRED — productionModifiers need DB application]**.
+
+### `TRAIT_RNG_VARIANCE = 0.15`
+
+±0.15 seeded variance per axis at initialization. At a family offset of −0.3 and geography of 0, the range is [−0.45, −0.15] for that axis. This produces meaningful territorial variation within the same family × geography bucket. If 0.15 feels too wide (territories of the same type feel chaotic), lower to 0.10. If it feels too narrow (all latin coastal territories feel identical), raise to 0.20. Validate by inspecting `derived-traits` across a batch of same-family same-geography territories after Phase 7 authoring.
+
+---
+
+## Systems integration constants (v0.25 — all [PLACEHOLDER])
+
+### Trade → unrest and drift (2.1)
+
+**`TRADE_STABILITY_BONUS = 0.02`** (culture.ts)
+Equilibrium reduction per active trade clause flowing through a territory on the receiving nation's side. Negative — reduces unrest. Applies to all territories owned by the receiving nation that appear on the trade route's `computedPath`. The "first-pass" note: currently applies to all territories on the computedPath, which may be too broad — the path includes both source and destination endpoints, so even the source nation's capital could appear if it's on the path. Validate once real trade route data exists.
+
+**`TRADE_DRIFT_MULTIPLIER = 1.3`** (culture.ts)
+Drift rate multiplier applied to cultural drift (`applyDrift`) for territories on an active trade route's computedPath this tick. Stacks multiplicatively with `ROAD_DRIFT_MULTIPLIER`. A territory on 2 trade routes still only gets 1.3× (not 1.6×) — the multiplier is per-territory, not per-route-count. If multi-route drift acceleration is desired, change to `tradeRouteCount × 0.1 + 1.0` style formula.
+
+**trade_stability and drift acceleration are first-pass — need real trade route data to validate. Currently applies to all territories on the computedPath which may be too broad.**
+
+### Eight cultural constraint axes (2.2)
+
+All in `engine/src/culture.ts`. All weights first-pass — need harness scenarios with specific cultural conditions to validate.
+
+**`ISOLATIONIST_TREATY_THRESHOLD = 3`** — Nation active treaty count above which isolationist (expansionist < −0.3) territories experience entanglement pressure. 3 is a guess; with 5 players and typical diplomatic activity, 3 active treaties is achievable quickly. May need to be 4–5.
+
+**`ISOLATIONIST_ENTANGLEMENT_WEIGHT = 0.015`** — Unrest per treaty above threshold. At 4 treaties (1 above threshold): +0.015. At 6 treaties: +0.045. Probably needs 2×–3× to be felt.
+
+**`EXPANSIONIST_GROWTH_WINDOW = 10`** — Ticks without territorial acquisition before expansionist stagnation fires. 10 ticks = 10 real days. May be too short early-game (not everyone expands immediately) or too long late-game (expansion slows). Tune relative to actual game pace.
+
+**`EXPANSIONIST_STAGNATION_WEIGHT = 0.02`** — Flat unrest for expansionist territories stagnating. Small — probably needs 2×–3× to be meaningfully felt.
+
+**`COLLECTIVIST_ISOLATION_WEIGHT = 0.015`** — Unrest for collectivist territories with no tribute receiver obligations. Currently only checks tribute clauses (where nation is toNationId). Does not check "solidarity" obligations because those don't exist yet as a clause type. Wire to solidarity clauses when they ship.
+
+**`INDIVIDUALIST_OBLIGATION_WEIGHT = 0.02`** — Unrest per tribute clause where the nation is the payer. At 1 obligation: +0.02. At 3 obligations: +0.06. Probably needs 2×–3× to sting enough.
+
+**`TRADITIONAL_EROSION_THRESHOLD = 0.05`** — Cultural drift magnitude threshold. This compares against `CULTURE_DRIFT_RATE (0.02) × (1 − unrest) × roadMult`. At unrest=0 and no road: drift = 0.02 < 0.05 → threshold never fires! At unrest=0 with road: drift = 0.02 × 1.25 = 0.025 < 0.05 → still never fires. This means the threshold is too high — the maximum possible drift magnitude is ~0.025 (road + low unrest). Lower to 0.015 or reframe as "any drift above 0" to make it responsive.
+
+**`TRADITIONAL_EROSION_WEIGHT = 0.025`** — Unrest when drift exceeds threshold. Since threshold is currently unreachable, this never fires. Fix threshold first.
+
+**`PROGRESSIVE_STAGNATION_THRESHOLD = 0.01`** — Drift magnitude below which progressive territories feel stagnant. At drift=0.02 (baseline): 0.02 > 0.01, so progressive_stagnation doesn't fire at baseline unless unrest is high. At unrest=0.5: drift = 0.02 × 0.5 = 0.01 → right at threshold. Feels reasonable — progressive stagnation fires when territory is half-stressed. May want to lower to 0.005 if it fires too rarely.
+
+**`PROGRESSIVE_STAGNATION_WEIGHT = 0.015`** — Unrest when drift is stagnant. Small, may need 2×.
+
+### Geography → trade capacity and friction (2.3)
+
+All in `engine/src/trade.ts`. First-pass values — need real trade route data to validate.
+
+**`CAPACITY_BASE = 10`** — Base capacity before infrastructure multipliers. Units are flow/tick in the relevant resource. At typical trade amounts (3–8 Wealth/tick), a capacity of 10 is not binding. May need to be lower (5) once trade volumes are calibrated.
+
+**`SEA_CAPACITY_MULTIPLIER = 2.0`** — Sea routes (port+port) get 2× base capacity. Rationale: ports are expensive infrastructure. This creates a meaningful incentive to build ports.
+
+**`LAND_ROAD_CAPACITY_MULTIPLIER = 1.5`** — Land routes with roads on both ends get 1.5× base. Road investment pays off in trade.
+
+**`NO_INFRA_CAPACITY_MULTIPLIER = 0.7`** — No infrastructure: 70% of base. Landlocked/unroaded nation trades at a penalty. May need to be lower (0.5) to make infrastructure more meaningful.
+
+**`FRICTION_BASE = 0.05`** — Base friction per territory on the path. A 3-territory path has 0.15 base friction = 15% flow lost. At typical path lengths (2–5 territories), total friction 0.10–0.25. May need calibration against actual route lengths.
+
+**`FRICTION_MOUNTAIN = 0.08`** — Extra friction for mountainous path territory. Combined with base: 0.13/territory. Mountain nations are genuinely hard to trade through.
+
+**`FRICTION_DESERT = 0.06`** — Extra friction for desert path territory. Combined with base: 0.11/territory.
+
+**`FRICTION_HOSTILE_CROSSING = 0.10`** — Extra friction for crossing a territory not owned by source or destination nation. Hostile crossings penalize trade through third-party territory — incentivizes direct borders or military access.
+
+**`FRICTION_ROAD_REDUCTION = 0.03`** — Friction reduction for a road on the crossing territory. Roads mitigate friction but don't eliminate it. At base+mountain: 0.13 − 0.03 = 0.10 net. May need to be 0.05 to be more meaningful.
+
+**Note: capacity and friction are stored but not yet applied to actual flow amounts in resolveTick. The friction value is computed at signing time and stored on the TradeRoute row — it should be applied to the resource transfer (receiver gets amount × (1 − friction)) when the friction enforcement pass is built. Currently stored only.**
+
+### Roads → cultural drift rate (2.4)
+
+**`ROAD_DRIFT_MULTIPLIER = 1.25`** (culture.ts)
+Drift rate multiplier for roaded territories. Applied to `CULTURE_DRIFT_RATE` before computing cultural drift this tick. At base CULTURE_DRIFT_RATE=0.02 and unrest=0: drift = 0.025/tick (vs 0.020 without road). At typical unrest=0.3: drift = 0.017 (vs 0.014). The difference is subtle at [PLACEHOLDER] values; may need 1.5× to be noticeable over multi-tick periods. Also applied to UNREST_DRIFT_RATE to slightly speed up unrest convergence on roaded territories.
+
+### Geography → conquest shock magnitude (2.5)
+
+**`GEOGRAPHY_SHOCK_MULTIPLIER`** (war.ts) — Per-geography multipliers applied to base conquest shock (0.50). All [PLACEHOLDER]:
+- `mountainous: 1.3` → shock 0.65 (capped at 1.0). Mountain territories resist hard.
+- `forest: 1.15` → shock 0.575. Forest terrain gives modest extra resistance.
+- `desert: 1.2` → shock 0.60. Harsh terrain, supply difficulty.
+- `island: 1.25` → shock 0.625. Geographic isolation fosters strong identity.
+- `coastal: 0.9` → shock 0.45. Trade exposure reduces cultural resistance (intentional — ports and trade connectivity make coastal territories slightly easier to integrate).
+- `plain: 1.0` → shock 0.50. Baseline.
+
+The base shock (0.50) is the `[PLACEHOLDER]` from war sub-phase. These multipliers stack on top of it. The full compat-scaled shock (`computeConquestShock`) is only used in the harness assign_territory path; the engine uses the fixed base shock × geography multiplier. These two paths should be unified eventually.
+
+### Population → production scaling (2.6)
+
+**`POPULATION_PRODUCTION_BASE = 50`** (tick.ts)
+Population level at which production multiplier is exactly 1.0. Formula: `popScale = territory.basePopulation / POPULATION_PRODUCTION_BASE`. A territory with population 100 produces 2× base; population 25 produces 0.5× base; population 50 produces 1.0× base.
+
+**population production scaling is linear — may need a sublinear curve at high population to prevent runaway production in dense territories.** At the current test map's population values (3–20 for Central American territories), all territories produce well below their nominal rates. For example, belize (population 3): `3/50 = 0.06×` base production — only 6% of stated base rates. This makes the `basePopulation`, `baseIndustry`, and `baseWealth` values in the territory seed file much less intuitive. Recommendation before first playtest: either raise POPULATION_PRODUCTION_BASE to match actual territory population range (e.g., 10 for the current Central America set), or reframe population values to represent "effective workforce units" at a consistent scale.
 
 ---
 

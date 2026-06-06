@@ -1,8 +1,8 @@
 import Fastify from 'fastify';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
-import { loadTerritoryDefs, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, computeConquestShock, bfsDistance, CONQUEST_SHOCK_MIN, RECENT_ACQUISITION_WINDOW } from '@war/engine';
-import type { TerritoryDef, TerritoryState } from '@war/engine';
+import { loadTerritoryDefs, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, computeConquestShock, bfsDistance, CONQUEST_SHOCK_MIN, RECENT_ACQUISITION_WINDOW, computeVisibility, VisibilityTier, deriveTerritoryTraits, deterministicSeed, computeClauseWealthValue, computeClauseDiplomaticWeight, computeMinCollateral, maintainPeaceTrustMultiplier } from '@war/engine';
+import type { TerritoryDef, TerritoryState, ComputeVisibilityInput, VisTreatyInput, VisEmbassyInput } from '@war/engine';
 import { prisma } from './db';
 import { ensureWorldInitialized } from './world';
 import { runTick, startScheduler } from './tick';
@@ -87,21 +87,108 @@ const start = async () => {
     const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
     if (!meta) return reply.code(503).send({ error: 'World not initialized' });
 
-    const [nationRows, territoryRows, events, myQueued] = await Promise.all([
+    const prisma_any = prisma as any;
+    const [nationRows, territoryRows, events, myQueued, armyRows, treatyRows, federationRows, prestigeHistoryRows, embassyRows] = await Promise.all([
       prisma.nation.findMany(),
       prisma.territoryState.findMany(),
       prisma.eventLog.findMany({ orderBy: { id: 'desc' }, take: 10 }),
       prisma.queuedAction.findMany({ where: { nationId } }),
+      prisma.army.findMany(),
+      prisma.treaty.findMany({
+        where: { status: { in: ['active', 'degraded'] } },
+        include: { parties: true, clauses: { select: { type: true, clauseStatus: true } } },
+      }),
+      prisma.federationMember.findMany({
+        where: { federation: { status: 'active' } },
+        include: { federation: { include: { members: { select: { nationId: true } } } } },
+      }),
+      // Last 20 ticks of history per nation for sparklines.
+      prisma.prestigeHistory.findMany({
+        where: { tick: { gte: meta.tick - 19 } },
+        orderBy: { tick: 'asc' },
+      }),
+      // §1.6 Active embassies for visibility grants.
+      prisma_any.embassy ? prisma_any.embassy.findMany({ where: { status: 'active' } }) : Promise.resolve([]),
     ]);
 
-    // Visibility: own territories + all their adjacent territories
-    const ownIds = territoryRows.filter((t) => t.ownerId === nationId).map((t) => t.id);
-    const visibleIds = new Set(ownIds);
-    for (const id of ownIds) {
-      defById.get(id)?.adjacentIds.forEach((adj) => visibleIds.add(adj));
+    // ── Build computeVisibility input ──────────────────────────────────────
+
+    const visTerritories = territoryRows.map((t) => ({
+      id: t.id,
+      ownerId: t.ownerId,
+      adjacentIds: defById.get(t.id)?.adjacentIds ?? [],
+    }));
+
+    const visArmies = armyRows.map((a) => ({ nationId: a.nationId, territoryId: a.territoryId }));
+
+    // Deduplicate treaties by partner pair; collect outpost grants.
+    const seenTreatyPairs = new Set<string>();
+    const visTreaties: VisTreatyInput[] = [];
+    for (const treaty of treatyRows) {
+      const partyIds = treaty.parties.map((p) => p.nationId) as [string, string];
+      if (!partyIds.includes(nationId)) continue;
+      const partnerId = partyIds[0] === nationId ? partyIds[1] : partyIds[0];
+      const pairKey = [nationId, partnerId].sort().join(':');
+      const hasAccess = treaty.clauses.some(
+        (c) => c.type === 'military_access' && c.clauseStatus === 'active',
+      );
+      // §1.11 Collect outpost/sentry grants from active outpost clauses.
+      const outpostGrants: Array<{ targetTerritoryId: string; type: 'sentry' | 'outpost'; grantedToNationId: string }> = [];
+      for (const clause of treaty.clauses) {
+        if (clause.type !== 'outpost' || clause.clauseStatus !== 'active') continue;
+        const op = clause.payload as { targetTerritoryId?: string; type?: string; grantedToNationId?: string };
+        if (!op.targetTerritoryId || !op.grantedToNationId) continue;
+        const outpostType = op.type === 'outpost' ? 'outpost' : 'sentry';
+        outpostGrants.push({ targetTerritoryId: op.targetTerritoryId, type: outpostType, grantedToNationId: op.grantedToNationId });
+      }
+      if (!seenTreatyPairs.has(pairKey)) {
+        seenTreatyPairs.add(pairKey);
+        visTreaties.push({ partyIds, hasActiveMilitaryAccess: hasAccess, outpostGrants: outpostGrants.length > 0 ? outpostGrants : undefined });
+      } else {
+        const existing = visTreaties.find((v) => v.partyIds.includes(partnerId));
+        if (existing) {
+          if (hasAccess && !existing.hasActiveMilitaryAccess) {
+            (existing as { hasActiveMilitaryAccess: boolean }).hasActiveMilitaryAccess = true;
+          }
+          // Merge outpost grants.
+          if (outpostGrants.length > 0) {
+            const merged = [...(existing.outpostGrants ?? []), ...outpostGrants];
+            (existing as { outpostGrants?: typeof outpostGrants }).outpostGrants = merged;
+          }
+        }
+      }
     }
 
-    // Build lightweight Territory objects for culture computation.
+    // Build federation inputs: each unique federation the requesting nation belongs to.
+    const seenFedIds = new Set<number>();
+    const visFederations: Array<{ memberNationIds: readonly string[] }> = [];
+    for (const membership of federationRows) {
+      if (membership.nationId !== nationId) continue;
+      if (seenFedIds.has(membership.federationId)) continue;
+      seenFedIds.add(membership.federationId);
+      const memberIds = membership.federation.members.map((m) => m.nationId);
+      visFederations.push({ memberNationIds: memberIds });
+    }
+
+    // §1.6 Embassy visibility grants.
+    const visEmbassies: VisEmbassyInput[] = (embassyRows as any[]).map((e) => ({
+      ownerNationId: e.ownerNationId,
+      hostTerritoryId: e.hostTerritoryId,
+    }));
+
+    const visInput: ComputeVisibilityInput = {
+      nationId,
+      territories: visTerritories,
+      armies: visArmies,
+      treaties: visTreaties,
+      federations: visFederations,
+      embassies: visEmbassies,
+    };
+
+    const visMap = computeVisibility(visInput);
+
+    // ── Build lightweight Territory objects for culture computation ────────
+
     const adjacency: Record<string, readonly string[]> = Object.fromEntries(
       defs.map((d) => [d.id, d.adjacentIds]),
     );
@@ -131,18 +218,18 @@ const start = async () => {
       };
     }
 
-    // Compute nation cultures. Pass capital so it gets extra weight. [PLACEHOLDER — fog-of-war TBD]
+    // Compute nation cultures.
     const nationCultures: Record<string, ReturnType<typeof computeNationCulture>> = {};
     const capitalMap = Object.fromEntries(nationRows.map((n) => [n.id, n.capitalTerritoryId ?? null]));
     for (const n of nationRows) {
       nationCultures[n.id] = computeNationCulture(n.id, allTerritories, capitalMap[n.id]);
     }
 
-    // Territory counts + developed/fortified counts per nation.
+    // Territory counts + developed/fortified counts per nation (needed for mandate budget + unrest).
     const territoryCounts: Record<string, number> = {};
     const recentAcquiredCounts: Record<string, number> = {};
-    const developedCounts: Record<string, number> = {};   // road+port+fort≥1
-    const fullyFortCounts: Record<string, number> = {};   // road+port+fort=3
+    const developedCounts: Record<string, number> = {};
+    const fullyFortCounts: Record<string, number> = {};
     for (const row of territoryRows) {
       if (!row.ownerId) continue;
       territoryCounts[row.ownerId] = (territoryCounts[row.ownerId] ?? 0) + 1;
@@ -161,59 +248,129 @@ const start = async () => {
       }
     }
 
-    // All territories show ownership; visible ones also show detailed stats + culture.
+    // Armies grouped by territory (for Clear territory responses).
+    const armiesByTerritory: Record<string, Array<{ id: number; nationId: string; size: number; status: string }>> = {};
+    for (const a of armyRows) {
+      if (!armiesByTerritory[a.territoryId]) armiesByTerritory[a.territoryId] = [];
+      armiesByTerritory[a.territoryId]!.push({ id: a.id, nationId: a.nationId, size: a.size, status: a.status });
+    }
+
+    // ── Build filtered territory responses by tier ─────────────────────────
     const territories: Record<string, object> = {};
     for (const t of territoryRows) {
       const def = defById.get(t.id);
+      const tier = visMap.get(t.id) ?? VisibilityTier.TrueFog;
+
+      // TrueFog: only geography (static def data — no political info).
+      if (tier === VisibilityTier.TrueFog) {
+        territories[t.id] = {
+          id: t.id,
+          visibilityTier: VisibilityTier.TrueFog,
+          geography: def?.geography ?? null,
+          name: def?.name ?? t.id,
+        };
+        continue;
+      }
+
+      // LightFog: owner identity only.
+      if (tier === VisibilityTier.LightFog) {
+        const ownerRow = t.ownerId ? nationRows.find((n) => n.id === t.ownerId) : null;
+        territories[t.id] = {
+          id: t.id,
+          visibilityTier: VisibilityTier.LightFog,
+          geography: def?.geography ?? null,
+          name: def?.name ?? t.id,
+          ownerId: t.ownerId,
+          ownerName: ownerRow?.name ?? null,
+          isCoastal: def?.isCoastal ?? false,
+        };
+        continue;
+      }
+
+      // Clear: full state.
       const entry: Record<string, unknown> = {
         id: t.id,
+        visibilityTier: VisibilityTier.Clear,
+        geography: def?.geography ?? null,
+        name: def?.name ?? t.id,
         ownerId: t.ownerId,
+        isCoastal: def?.isCoastal ?? false,
         hasRoad: t.hasRoad,
         hasPort: t.hasPort,
-        isCoastal: def?.isCoastal ?? false,
         isInRevolt: t.isInRevolt,
+        fortificationLevel: t.fortificationLevel,
+        unrest: t.unrest,
+        constructionType: t.constructionType ?? null,
+        constructionTicksLeft: t.constructionTicksLeft ?? null,
+        pendingConstructionType: t.pendingConstructionType ?? null,
+        armies: armiesByTerritory[t.id] ?? [],
       };
-      if (visibleIds.has(t.id) && def) {
-        entry.fortificationLevel = t.fortificationLevel;
-        entry.unrest = t.unrest;
-        entry.constructionType = t.constructionType ?? null;
-        entry.constructionTicksLeft = t.constructionTicksLeft ?? null;
-        entry.pendingConstructionType = t.pendingConstructionType ?? null;
-        // Local stockpiles shown for own territories (trade source selection).
-        if (t.ownerId === nationId) {
-          entry.localPopStock = t.localPopStock;
-          entry.localIndStock = t.localIndStock;
-          entry.localWltStock = t.localWltStock;
-        }
 
-        // Culture breakdown — only meaningful when territory has an owner.
-        if (t.ownerId && nationCultures[t.ownerId]) {
-          const nc = nationCultures[t.ownerId]!;
-          const terrTraits = { individualist: t.individualist, progressive: t.progressive, militaristic: t.militaristic, expansionist: t.expansionist };
-          const effectiveFamily = (t.culturalFamily ?? def.culturalFamily) as import('@war/engine').CulturalFamily;
-          const compat = computeCompatibility(terrTraits, effectiveFamily, nc);
-
-          const ownerRow = nationRows.find((n) => n.id === t.ownerId);
-          const capital = ownerRow?.capitalTerritoryId ?? null;
-          const hops = capital ? bfsDistance(adjacency, capital, t.id) : 0;
-          const tcount = territoryCounts[t.ownerId] ?? 1;
-          const causes = computeUnrestEquilibrium(
-            compat, hops, t.hasRoad, t.hasPort, t.fortificationLevel,
-            tcount, t.ownershipShock, recentAcquiredCounts[t.ownerId] ?? 0,
-          );
-
-          entry.compatibility = compat;
-          entry.unrestCauses = causes;
-        }
+      // Own territory extras: local stockpiles (trade source selection).
+      if (t.ownerId === nationId) {
+        entry.localPopStock = t.localPopStock;
+        entry.localIndStock = t.localIndStock;
+        entry.localWltStock = t.localWltStock;
       }
+
+      // Culture breakdown (Clear only — meaningful when territory has an owner).
+      if (t.ownerId && nationCultures[t.ownerId] && def) {
+        const nc = nationCultures[t.ownerId]!;
+        const terrTraits = { individualist: t.individualist, progressive: t.progressive, militaristic: t.militaristic, expansionist: t.expansionist };
+        const effectiveFamily = (t.culturalFamily ?? def.culturalFamily) as import('@war/engine').CulturalFamily;
+        const compat = computeCompatibility(terrTraits, effectiveFamily, nc);
+        const ownerRow = nationRows.find((n) => n.id === t.ownerId);
+        const capital = ownerRow?.capitalTerritoryId ?? null;
+        const hops = capital ? bfsDistance(adjacency, capital, t.id) : 0;
+        const tcount = territoryCounts[t.ownerId] ?? 1;
+        const causes = computeUnrestEquilibrium(
+          compat, hops, t.hasRoad, t.hasPort, t.fortificationLevel,
+          tcount, t.ownershipShock, recentAcquiredCounts[t.ownerId] ?? 0,
+        );
+        entry.compatibility = compat;
+        entry.unrestCauses = causes;
+      }
+
       territories[t.id] = entry;
     }
 
-    // All nations show name + culture + prestige (public leaderboard); own nation also shows stockpiles.
+    // Build prestige history lookup: nationId → sorted array of { tick, prestige }.
+    const prestigeHistoryByNation: Record<string, Array<{ tick: number; prestige: number }>> = {};
+    for (const row of prestigeHistoryRows) {
+      if (!prestigeHistoryByNation[row.nationId]) prestigeHistoryByNation[row.nationId] = [];
+      prestigeHistoryByNation[row.nationId]!.push({ tick: row.tick, prestige: row.prestige });
+    }
+
+    // All nations show name + culture + prestige + dominant status (public leaderboard).
+    // Own nation also shows stockpiles + secondary stats.
     const nations: Record<string, object> = {};
     const myNationRow = nationRows.find((n) => n.id === nationId);
     for (const n of nationRows) {
-      const entry: Record<string, unknown> = { id: n.id, name: n.name, culture: nationCultures[n.id], prestige: n.prestige };
+      const history = prestigeHistoryByNation[n.id] ?? [];
+      // Delta vs previous tick (one tick back from current).
+      const prevEntry = history.length >= 2 ? history[history.length - 2] : null;
+      const prestigeDelta = prevEntry != null ? n.prestige - prevEntry.prestige : 0;
+
+      // Secondary stats.
+      const completedTreatiesKept = (n as any).completedTreatiesKept ?? 0;
+      const warsWon = (n as any).warsWon ?? 0;
+      const isDominant = (n as any).isDominant ?? false;
+
+      // Longest time at #1: count consecutive ticks from the end of history where this nation was top.
+      // Simplified: count ticks in the last 7 where prestige was highest among all nations (server would need all histories).
+      // For now we expose the raw history and let the client compute secondary stats from it.
+
+      const entry: Record<string, unknown> = {
+        id: n.id,
+        name: n.name,
+        culture: nationCultures[n.id],
+        prestige: n.prestige,
+        prestigeDelta,
+        isDominant,
+        prestigeHistory: history,
+        completedTreatiesKept,
+        warsWon,
+      };
       if (n.id === nationId) {
         entry.stockpiles = { population: n.popStock, industry: n.indStock, wealth: n.wealthStock };
         entry.armySize = n.armySize;
@@ -222,6 +379,16 @@ const start = async () => {
       }
       nations[n.id] = entry;
     }
+
+    // Expose active war IDs involving this nation for the War Council panel.
+    const myActiveWarRows = await prisma.war.findMany({
+      where: {
+        status: { in: ['active', 'peace_negotiation'] },
+        OR: [{ attackerId: nationId }, { defenderId: nationId }],
+      },
+      select: { id: true },
+    });
+    const myActiveWarIds = myActiveWarRows.map((w) => w.id);
 
     return {
       tick: meta.tick,
@@ -233,6 +400,7 @@ const start = async () => {
       territories,
       recentEvents: events.map((e) => ({ tick: e.tick, message: e.message })),
       myQueuedActions: myQueued.map((a) => ({ type: a.type, payload: a.payload })),
+      myActiveWarIds,
     };
   });
 
@@ -289,6 +457,31 @@ const start = async () => {
     // [PLACEHOLDER] revisit if this makes diplomacy during war too punishing.
     const isInsolvent = nation.wealthStock < 0 || (nation as any).debtBalance > 0;
     if (isInsolvent && cost >= 2) cost += 1;
+
+    // §1.6 Embassy Mandate discount: −1 (min 1) on diplomatic actions toward nations
+    // where there is an active embassy between the two parties. [PLACEHOLDER]
+    if (cost >= 2) {
+      const prisma_action_any = prisma as any;
+      // Determine the target nation from the payload (treaty/instant-trade actions have targetId or targetNationId).
+      const actionPayload = payload as Record<string, unknown>;
+      const targetNationIdForDiscount: string | null =
+        (actionPayload.targetNationId as string | null) ??
+        (actionPayload.targetId as string | null) ??
+        null;
+      if (targetNationIdForDiscount && prisma_action_any.embassy) {
+        const embassyExists = await prisma_action_any.embassy.findFirst({
+          where: {
+            status: 'active',
+            OR: [
+              { ownerNationId: nationId, hostTerritoryId: { in: await prisma.territoryState.findMany({ where: { ownerId: targetNationIdForDiscount }, select: { id: true } }).then((rows) => rows.map((r) => r.id)) } },
+              { ownerNationId: targetNationIdForDiscount, hostTerritoryId: { in: await prisma.territoryState.findMany({ where: { ownerId: nationId }, select: { id: true } }).then((rows) => rows.map((r) => r.id)) } },
+            ],
+          },
+        });
+        if (embassyExists) cost = Math.max(1, cost - 1);
+      }
+    }
+
     if (nation.mandateUsed + cost > myBudget) {
       return reply.code(400).send({ error: isInsolvent && cost > result.cost ? 'Insufficient mandates (insolvency surcharge +1 Mandate applied)' : 'Insufficient mandates' });
     }
@@ -337,6 +530,9 @@ const start = async () => {
     await prisma.$transaction([
       prisma.queuedAction.deleteMany(),
       prisma.eventLog.deleteMany(),
+      prisma.warCouncil.deleteMany(),
+      prisma.army.deleteMany(),
+      prisma.territoryClaim.deleteMany(),
       prisma.territoryState.deleteMany(),
       prisma.nation.deleteMany(),
       prisma.worldMeta.deleteMany(),
@@ -377,6 +573,9 @@ const start = async () => {
     await prisma.$transaction([
       prisma.queuedAction.deleteMany(),
       prisma.eventLog.deleteMany(),
+      prisma.warCouncil.deleteMany(),
+      prisma.army.deleteMany(),
+      prisma.territoryClaim.deleteMany(),
       prisma.territoryState.deleteMany(),
       prisma.nation.deleteMany(),
       prisma.worldMeta.deleteMany(),
@@ -490,8 +689,16 @@ const start = async () => {
       lastActiveAt: (n as any).lastActiveAt ?? null,
       abandonedAt: (n as any).abandonedAt ?? null,
     }));
+    // Expose army positions for admin panel.
+    const armyRows = await prisma.army.findMany();
+    const armiesByNation: Record<string, Array<{ id: number; territoryId: string; size: number; status: string }>> = {};
+    for (const a of armyRows) {
+      if (!armiesByNation[a.nationId]) armiesByNation[a.nationId] = [];
+      armiesByNation[a.nationId]!.push({ id: a.id, territoryId: a.territoryId, size: a.size, status: a.status });
+    }
+    const nationsWithArmies = nations.map((n) => ({ ...n, armies: armiesByNation[n.id] ?? [] }));
     return {
-      tick: meta.tick, phase: currentPhase(), nations, territories,
+      tick: meta.tick, phase: currentPhase(), nations: nationsWithArmies, territories,
       recentEvents: events.map((e) => ({ tick: e.tick, message: e.message })),
     };
   });
@@ -633,6 +840,59 @@ const start = async () => {
     return { ok: true };
   });
 
+  /**
+   * GET /api/admin/territory/:id/derived-traits
+   * Returns what deriveTerritoryTraits would compute for this territory.
+   * Useful during Phase 7 territory authoring — inspect derived values before
+   * committing them to the seed file. Accepts optional ?geography= query param
+   * to preview what a different geography type would produce without editing
+   * the data file.
+   */
+  app.get('/api/admin/territory/:id/derived-traits', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { geography: geoOverride } = request.query as { geography?: string };
+
+    const def = defById.get(id);
+    if (!def) return reply.code(404).send({ error: `Territory not found: ${id}` });
+
+    const validGeographies = ['coastal', 'inland', 'mountainous', 'desert', 'forest'] as const;
+    type GeoType = typeof validGeographies[number];
+    let effectiveGeography = def.geography as GeoType;
+    if (geoOverride) {
+      if (!validGeographies.includes(geoOverride as GeoType)) {
+        return reply.code(400).send({ error: `geography must be one of: ${validGeographies.join(', ')}` });
+      }
+      effectiveGeography = geoOverride as GeoType;
+    }
+
+    const seed = deterministicSeed(def.id);
+    const derived = deriveTerritoryTraits(def.culturalFamily, effectiveGeography, seed);
+
+    // Apply traitOverrides from def if present.
+    const finalTraits = {
+      individualist: def.traitOverrides?.individualist ?? derived.traits.individualist,
+      progressive:   def.traitOverrides?.progressive   ?? derived.traits.progressive,
+      militaristic:  def.traitOverrides?.militaristic  ?? derived.traits.militaristic,
+      expansionist:  def.traitOverrides?.expansionist  ?? derived.traits.expansionist,
+    };
+
+    return {
+      territoryId: id,
+      culturalFamily: def.culturalFamily,
+      geography: effectiveGeography,
+      geographyOverridden: !!geoOverride,
+      traitOverridesInDef: def.traitOverrides ?? null,
+      derived: {
+        traits: derived.traits,
+        startingPopulation: derived.startingPopulation,
+        productionModifiers: derived.productionModifiers,
+      },
+      finalTraits,
+      seed,
+    };
+  });
+
   // ── Dev endpoints (session-gated to player1 / nation_costa_rica) ───────────
   // [DEV-ONLY] Session-gated wrappers so the web UI can call admin functions
   // without the admin key ever reaching the browser.
@@ -671,6 +931,9 @@ const start = async () => {
     await prisma.$transaction([
       prisma.queuedAction.deleteMany(),
       prisma.eventLog.deleteMany(),
+      prisma.warCouncil.deleteMany(),
+      prisma.army.deleteMany(),
+      prisma.territoryClaim.deleteMany(),
       prisma.territoryState.deleteMany(),
       prisma.nation.deleteMany(),
       prisma.worldMeta.deleteMany(),
@@ -710,6 +973,187 @@ const start = async () => {
     }
     await prisma.territoryState.update({ where: { id }, data: { [trait]: value } });
     return { ok: true };
+  });
+
+  // ── War Council API ────────────────────────────────────────────────────────
+
+  // GET /api/war/:warId/council
+  // Returns the requesting nation's side of the war council: members, their queued
+  // military actions this tick, contested territory status, and joint_invasion objectives.
+  // Strictly limited to the requesting nation's own side — never exposes enemy plans.
+  app.get('/api/war/:warId/council', async (request, reply) => {
+    const nationId = getSession(request);
+    if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const { warId: warIdStr } = request.params as { warId: string };
+    const warId = parseInt(warIdStr, 10);
+    if (isNaN(warId)) return reply.code(400).send({ error: 'Invalid warId' });
+
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    const currentTick = meta?.tick ?? 0;
+
+    const war = await prisma.war.findUnique({ where: { id: warId } });
+    if (!war) return reply.code(404).send({ error: 'War not found' });
+    if (war.status === 'ended') return reply.code(400).send({ error: 'War has ended' });
+
+    // Determine which side this nation is on.
+    const isAttacker = war.attackerId === nationId;
+    const isDefender = war.defenderId === nationId;
+    // Also check if they are in a council for this war.
+    const allCouncils = await prisma.warCouncil.findMany({ where: { warId } });
+    const myCouncil = allCouncils.find((c) => {
+      const members = (c.memberNationIds as string[]) ?? [];
+      return members.includes(nationId);
+    });
+
+    if (!myCouncil && !isAttacker && !isDefender) {
+      return reply.code(403).send({ error: 'You are not a party to this war' });
+    }
+
+    // Fall back to the appropriate council based on direct attacker/defender status
+    // if council rows haven't been created yet (race condition: declaration same tick).
+    const council = myCouncil ?? allCouncils.find((c) =>
+      c.side === (isAttacker ? 'attacker' : 'defender'),
+    );
+    if (!council) {
+      return reply.code(404).send({ error: 'Council not found — war may have just started' });
+    }
+
+    const memberNationIds = (council.memberNationIds as string[]) ?? [];
+
+    // Load member nation names.
+    const memberNations = await prisma.nation.findMany({
+      where: { id: { in: memberNationIds } },
+      select: { id: true, name: true },
+    });
+
+    // Load queued military actions for this tick from council mirrors.
+    const councilActions = await prisma.councilQueuedAction.findMany({
+      where: { councilId: council.id, tick: currentTick },
+      orderBy: { id: 'asc' },
+    });
+
+    // Load armies for all council members (for "army present/moving toward" status).
+    const memberArmies = await prisma.army.findMany({
+      where: { nationId: { in: memberNationIds } },
+    });
+
+    // Build contested territory status: war's occupiedTerritories + besieging armies.
+    const occupiedTerritories = (war.occupiedTerritories as Array<{
+      territoryId: string;
+      occupyingNationId: string;
+      siegeProgress: number;
+      siegeStartTick: number;
+    }>) ?? [];
+
+    // For each contested territory, list which council members have armies present or moving toward it.
+    const contestedTerritoryIds = new Set(occupiedTerritories.map((o) => o.territoryId));
+    // Also include any territory that a council member's army is besieging or moving to.
+    for (const army of memberArmies) {
+      if (army.status === 'besieging') contestedTerritoryIds.add(army.territoryId);
+      if (army.status === 'moving' && army.destinationTerritoryId) {
+        contestedTerritoryIds.add(army.destinationTerritoryId);
+      }
+    }
+
+    const contestedTerritories = [...contestedTerritoryIds].map((terrId) => {
+      const def = defById.get(terrId);
+      const armiesPresent = memberArmies
+        .filter((a) => a.territoryId === terrId || (a.status === 'moving' && a.destinationTerritoryId === terrId))
+        .map((a) => ({ nationId: a.nationId, size: a.size, status: a.status }));
+
+      const occ = occupiedTerritories.find((o) => o.territoryId === terrId);
+
+      return {
+        territoryId: terrId,
+        name: def?.name ?? terrId,
+        siegeProgress: occ?.siegeProgress ?? null,
+        occupyingNationId: occ?.occupyingNationId ?? null,
+        councilArmiesPresent: armiesPresent,
+      };
+    });
+
+    // Load joint_invasion objective clauses for this council's side.
+    // Find active treaties between council members and check for joint_invasion objectives.
+    const activeTreaties = await prisma.treaty.findMany({
+      where: {
+        status: { in: ['active', 'degraded'] },
+        parties: { some: { nationId: { in: memberNationIds } } },
+      },
+      include: {
+        parties: true,
+        clauses: { include: { objectiveClause: true } },
+      },
+    });
+
+    const jointInvasionObjectives: Array<{
+      treatyId: number;
+      clauseIndex: number;
+      targetTerritoryId: string | null;
+      status: string;
+      deadlineTicks: number;
+      checklist: Array<{ nationId: string; name: string; hasQueuedAttack: boolean }>;
+    }> = [];
+
+    for (const treaty of activeTreaties) {
+      for (const clause of treaty.clauses) {
+        const obj = (clause as any).objectiveClause;
+        if (!obj || obj.objectiveType !== 'joint_invasion') continue;
+        if (obj.status !== 'pending') continue;
+
+        // Check which council members have already queued an attack on the target this tick.
+        const attacksOnTarget = councilActions.filter(
+          (a) => a.actionType === 'attack_territory' && a.targetTerritoryId === obj.targetTerritoryId,
+        );
+        const attackingNationIds = new Set(attacksOnTarget.map((a) => a.nationId));
+
+        // Checklist: all responsible parties (from the treaty parties on this council).
+        const checklist = memberNations
+          .filter((n) => {
+            // Include if they are a party to the treaty.
+            return treaty.parties.some((p) => p.nationId === n.id);
+          })
+          .map((n) => ({
+            nationId: n.id,
+            name: n.name,
+            hasQueuedAttack: attackingNationIds.has(n.id),
+          }));
+
+        jointInvasionObjectives.push({
+          treatyId: treaty.id,
+          clauseIndex: clause.clauseIndex,
+          targetTerritoryId: obj.targetTerritoryId ?? null,
+          status: obj.status,
+          deadlineTicks: obj.deadlineTicks,
+          checklist,
+        });
+      }
+    }
+
+    // Build the members-with-actions response.
+    const membersWithActions = memberNations.map((n) => {
+      const actions = councilActions
+        .filter((a) => a.nationId === n.id)
+        .map((a) => ({ actionType: a.actionType, targetTerritoryId: a.targetTerritoryId }));
+      const hasQueuedMilitary = actions.length > 0;
+      return {
+        nationId: n.id,
+        name: n.name,
+        isMe: n.id === nationId,
+        hasQueuedMilitary,
+        queuedActions: actions,
+      };
+    });
+
+    return {
+      warId,
+      warStatus: war.status,
+      councilSide: council.side,
+      tick: currentTick,
+      members: membersWithActions,
+      contestedTerritories,
+      jointInvasionObjectives,
+    };
   });
 
   // ── Diplomacy API ──────────────────────────────────────────────────────────
@@ -850,6 +1294,159 @@ const start = async () => {
       prisma.tradeRoute.findMany({ include: { treatyClause: { select: { treatyId: true, type: true, clauseIndex: true } } } }),
     ]);
     return { treaties, proposals, nations, instantTrades, tradeRoutes };
+  });
+
+  // ── Treaty preview endpoint ───────────────────────────────────────────────
+
+  /**
+   * GET /api/treaty/preview
+   * Accepts a proposed treaty structure (proposerId, targetId, clauses, termTicks)
+   * and returns per-clause wealth values + diplomatic weights from both parties'
+   * perspectives, plus minimum collateral floor.
+   *
+   * Does not write anything — pure read + pure function computation.
+   *
+   * Body (JSON):
+   *   { proposerId: string, targetId: string, termTicks: number,
+   *     clauses: Array<{ type: string, payload: object }> }
+   */
+  app.post('/api/treaty/preview', async (request, reply) => {
+    const nationId = getSession(request);
+    if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const body = request.body as {
+      proposerId?: string;
+      targetId?: string;
+      termTicks?: number;
+      clauses?: Array<{ type?: string; payload?: Record<string, unknown> }>;
+    };
+
+    const { proposerId, targetId, termTicks, clauses } = body;
+    if (!proposerId || !targetId) return reply.code(400).send({ error: 'proposerId and targetId required' });
+    if (!Array.isArray(clauses)) return reply.code(400).send({ error: 'clauses must be an array' });
+
+    // Requesting nation must be one of the parties.
+    if (nationId !== proposerId && nationId !== targetId) {
+      return reply.code(403).send({ error: 'You must be a party to the proposed treaty' });
+    }
+
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    if (!meta) return reply.code(503).send({ error: 'World not initialized' });
+
+    // Build a minimal WorldState snapshot (just what diplomaticValue.ts needs).
+    const [nationRows, territoryRows, armyRows, skirmishRows] = await Promise.all([
+      prisma.nation.findMany(),
+      prisma.territoryState.findMany(),
+      prisma.army.findMany(),
+      (prisma as any).borderSkirmish?.findMany?.({ where: { status: 'resolved' } }) ?? Promise.resolve([]),
+    ]);
+
+    const allTerritories: Record<string, { def: import('@war/engine').TerritoryDef; state: import('@war/engine').TerritoryState }> = {};
+    for (const row of territoryRows) {
+      const def = defById.get(row.id);
+      if (!def) continue;
+      allTerritories[row.id] = {
+        def: row.culturalFamily ? { ...def, culturalFamily: row.culturalFamily as import('@war/engine').CulturalFamily } : def,
+        state: {
+          ownerId: row.ownerId,
+          fortificationLevel: row.fortificationLevel,
+          hasRoad: row.hasRoad,
+          hasPort: row.hasPort,
+          unrest: row.unrest,
+          isInRevolt: row.isInRevolt,
+          valueTraits: { individualist: row.individualist, progressive: row.progressive, militaristic: row.militaristic, expansionist: row.expansionist },
+          constructionType: (row.constructionType ?? null) as import('@war/engine').TerritoryState['constructionType'],
+          constructionTicksLeft: row.constructionTicksLeft ?? null,
+          pendingConstructionType: (row.pendingConstructionType ?? null) as import('@war/engine').TerritoryState['pendingConstructionType'],
+          ownershipShock: row.ownershipShock,
+          acquiredTick: row.acquiredTick ?? null,
+          localPopStock: row.localPopStock,
+          localIndStock: row.localIndStock,
+          localWltStock: row.localWltStock,
+          hasEmbassy: (row as any).hasEmbassy ?? false,
+          populationTransferShockTicksLeft: (row as any).populationTransferShockTicksLeft ?? 0,
+        },
+      };
+    }
+
+    const nations: Record<string, import('@war/engine').NationState> = {};
+    for (const n of nationRows) {
+      nations[n.id] = {
+        name: n.name,
+        popStock: n.popStock,
+        indStock: n.indStock,
+        wealthStock: n.wealthStock,
+        armySize: n.armySize,
+        mandateUsed: n.mandateUsed,
+        trust: n.trust,
+        prestige: n.prestige,
+        debtBalance: (n as any).debtBalance ?? 0,
+        isAI: n.isAI,
+        capitalTerritoryId: n.capitalTerritoryId ?? null,
+      };
+    }
+
+    const armies: import('@war/engine').Army[] = armyRows.map((a) => ({
+      id: a.id,
+      nationId: a.nationId,
+      territoryId: a.territoryId,
+      size: a.size,
+      status: a.status as import('@war/engine').Army['status'],
+      destinationTerritoryId: a.destinationTerritoryId ?? null,
+      transitPath: (a as any).transitPath ?? [],
+      transitTicksRemaining: (a as any).transitTicksRemaining ?? 0,
+    }));
+
+    const previewWorld: import('@war/engine').WorldState = {
+      tick: meta.tick,
+      territories: allTerritories,
+      nations,
+      armies,
+      wars: [],
+      treaties: [],
+      tradeRoutes: [],
+      territoryModifiers: [],
+      borderSkirmishes: Array.isArray(skirmishRows) ? skirmishRows.map((s: any) => ({
+        id: s.id,
+        nationAId: s.nationAId,
+        nationBId: s.nationBId,
+        territoryId: s.territoryId,
+        tick: s.tick,
+        status: s.status,
+      })) : [],
+    };
+
+    const normalizedClauses = clauses.map((c) => ({
+      type: (c.type ?? 'non_aggression') as import('@war/engine').ClauseType,
+      payload: c.payload ?? {},
+    }));
+
+    const clausePreviews = normalizedClauses.map((clause, idx) => ({
+      clauseIndex: idx,
+      type: clause.type,
+      payload: clause.payload,
+      proposerPerspective: {
+        wealthValue: computeClauseWealthValue(clause, previewWorld, proposerId),
+        diplomaticWeight: computeClauseDiplomaticWeight(clause, previewWorld, proposerId),
+      },
+      targetPerspective: {
+        wealthValue: computeClauseWealthValue(clause, previewWorld, targetId),
+        diplomaticWeight: computeClauseDiplomaticWeight(clause, previewWorld, targetId),
+      },
+    }));
+
+    const collateral = computeMinCollateral(normalizedClauses, previewWorld, proposerId, targetId);
+    const trustMultiplier = maintainPeaceTrustMultiplier(proposerId, targetId, previewWorld);
+    const hasMaintainPeace = normalizedClauses.some((c) => c.type === 'maintain_peace' as string);
+
+    return {
+      proposerId,
+      targetId,
+      termTicks: termTicks ?? null,
+      clauses: clausePreviews,
+      collateral,
+      ...(hasMaintainPeace ? { maintainPeaceTrustMultiplier: trustMultiplier } : {}),
+    };
   });
 
   // POST /api/admin/nation/:id/set-trust — force-set a nation's Trust
@@ -1223,6 +1820,71 @@ const start = async () => {
       data: { tick: meta?.tick ?? 0, message: `The ${nation.name} empire has fallen under AI control.` },
     });
     return { ok: true, nationId: id };
+  });
+
+  // ── Federation admin endpoint ──────────────────────────────────────────────
+
+  // POST /api/admin/create-federation — create a federation for testing visibility grants.
+  // Body: { name: string, memberNationIds: string[] }
+  // Creates a Federation row + one FederationMember row per nation.
+  app.post('/api/admin/create-federation', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { name, memberNationIds } = request.body as { name?: string; memberNationIds?: string[] };
+    if (!name) return reply.code(400).send({ error: 'name required' });
+    if (!Array.isArray(memberNationIds) || memberNationIds.length < 2) {
+      return reply.code(400).send({ error: 'memberNationIds must be an array of at least 2 nation IDs' });
+    }
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    const currentTick = meta?.tick ?? 0;
+
+    const federation = await prisma.federation.create({
+      data: {
+        name,
+        foundedAtTick: currentTick,
+        status: 'active',
+        members: {
+          create: memberNationIds.map((nId, idx) => ({
+            nationId: nId,
+            joinedAtTick: currentTick,
+            role: idx === 0 ? 'founder' : 'member',
+          })),
+        },
+      },
+    });
+    await prisma.eventLog.create({
+      data: { tick: currentTick, message: `[admin] Federation "${name}" created with members: ${memberNationIds.join(', ')}.` },
+    });
+    return { ok: true, federationId: federation.id };
+  });
+
+  // ── Army admin endpoint ────────────────────────────────────────────────────
+
+  // POST /api/admin/nation/:nationId/set-army — create or replace the nation's first army for testing.
+  app.post('/api/admin/nation/:nationId/set-army', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { nationId } = request.params as { nationId: string };
+    const { territoryId, size } = request.body as { territoryId?: string; size?: number };
+    if (!territoryId) return reply.code(400).send({ error: 'territoryId required' });
+    if (typeof size !== 'number' || size < 0) return reply.code(400).send({ error: 'size must be >= 0' });
+
+    const nation = await prisma.nation.findUnique({ where: { id: nationId } });
+    if (!nation) return reply.code(404).send({ error: 'Nation not found' });
+
+    // Delete existing armies for this nation, then create one.
+    await prisma.army.deleteMany({ where: { nationId } });
+    if (size > 0) {
+      await prisma.army.create({
+        data: { nationId, territoryId, size, status: 'stationed' },
+      });
+    }
+    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    await prisma.eventLog.create({
+      data: {
+        tick: meta?.tick ?? 0,
+        message: `[admin] ${nation.name} army set to size=${size} at ${territoryId}.`,
+      },
+    });
+    return { ok: true };
   });
 
   // ── Startup ────────────────────────────────────────────────────────────────

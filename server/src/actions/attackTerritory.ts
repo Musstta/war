@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { ActionContext, ActionHandler, ValidateResult } from './types';
 import { ACTION_COSTS } from '../phase';
+import { mirrorMilitaryAction } from '../council';
 
 // [PLACEHOLDER] Mandate cost to queue an attack.
 const COST = ACTION_COSTS['attack_territory']!;
@@ -35,10 +36,20 @@ export const attackTerritoryHandler: ActionHandler = {
     });
     if (!activeWar) return { ok: 'error', status: 400, reason: 'No active war with the territory owner' };
 
-    // Target must be reachable by the attacker (land adjacency only).
+    // Target must be reachable by the attacker.
+    // Primary: the nation has an army adjacent to or already in the target territory.
+    // Fallback (backward compat): territory adjacency check.
     // [DEFERRED: amphibious] — sea crossing not supported in v1.
     const targetDef = ctx.defById.get(p.targetTerritoryId);
     if (!targetDef) return { ok: 'error', status: 404, reason: 'Territory definition not found' };
+
+    // Check if any army of this nation is in a territory adjacent to the target.
+    const nationArmies = await ctx.prisma.army.findMany({ where: { nationId: ctx.nationId } });
+    const armyIsReachable = nationArmies.some((army) => {
+      if (army.territoryId === p.targetTerritoryId) return true; // army already in target (besieging)
+      const armyTerr = ctx.defById.get(army.territoryId);
+      return armyTerr?.adjacentIds.includes(p.targetTerritoryId) ?? false;
+    });
 
     const ownedTerritories = await ctx.prisma.territoryState.findMany({
       where: { ownerId: ctx.nationId },
@@ -46,12 +57,14 @@ export const attackTerritoryHandler: ActionHandler = {
     });
     const ownedIds = new Set(ownedTerritories.map((t) => t.id));
     const isDirectlyAdjacent = targetDef.adjacentIds.some((adjId) => ownedIds.has(adjId));
+    // Reachable if army is adjacent OR territory is adjacent (backward compat for no-army scenarios).
+    const isReachable = armyIsReachable || isDirectlyAdjacent;
 
-    if (!isDirectlyAdjacent) {
+    if (!isReachable) {
       // Check for reachability via military_access clause with an intermediate nation.
       // The intermediate nation must own at least one territory adjacent to the target,
       // and the attacker must have an active military_access clause with that nation.
-      // [DEFERRED: full movement model Phase 5] — this is a minimal enforcement hook.
+      // [DEFERRED: full movement model — army positioning built v0.20, multi-territory pathing and logistics deferred to Phase 7+]
       const militaryAccessTreaties = await ctx.prisma.treaty.findMany({
         where: {
           status: { in: ['active'] },
@@ -79,7 +92,7 @@ export const attackTerritoryHandler: ActionHandler = {
       }
 
       if (!reachableViaAccess) {
-        return { ok: 'error', status: 400, reason: 'Target territory is not reachable — not adjacent to your territory and no military access through an intermediate nation ([DEFERRED: full movement model Phase 5])' };
+        return { ok: 'error', status: 400, reason: 'Target territory is not reachable — no army adjacent and no military access through an intermediate nation ([DEFERRED: full movement model])' };
       }
     }
 
@@ -102,6 +115,8 @@ export const attackTerritoryHandler: ActionHandler = {
         where: { id: ctx.nationId },
         data: { mandateUsed: { increment: cost } },
       });
+      // Mirror into war council for allied visibility.
+      await mirrorMilitaryAction(tx, ctx.nationId, 'attack_territory', p.targetTerritoryId, ctx.currentTick);
     });
   },
 };

@@ -13,10 +13,10 @@
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
 | Costa Rica | — | 0.0% | 0.0% | 0 |
-| Guatemala | guatemala | 1.6% | 1.6% | 0 |
-| Honduras | honduras | 1.6% | 1.6% | 0 |
-| Nicaragua | nicaragua | 1.6% | 1.6% | 0 |
-| Panamá | panama | 1.6% | 1.6% | 0 |
+| Guatemala | guatemala | 4.3% | 4.3% | 0 |
+| Honduras | honduras | 4.3% | 4.3% | 0 |
+| Nicaragua | nicaragua | 3.1% | 3.1% | 0 |
+| Panamá | panama | 3.1% | 3.1% | 0 |
 
 ---
 
@@ -31,7 +31,7 @@
 | T2 | nation_costa_rica | 66.8% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
 | T5 | nation_costa_rica | 49.2% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
 | T10 | nation_costa_rica | 29.9% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
-| T15 | nation_independent_costa_rica_11 | 18.5% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
+| T15 | nation_independent_costa_rica_11 | 19.2% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
 
 ---
 
@@ -39,9 +39,14 @@
 
 | Tick | Event |
 |------|-------|
+| T1 | Guatemala has become insolvent (wealth -1.1). |
+| T1 | Honduras has become insolvent (wealth -2.0). |
+| T1 | Nicaragua has become insolvent (wealth -2.1). |
+| T1 | Panamá has become insolvent (wealth -1.9). |
 | T11 | costa_rica broke away from the abandoned Costa Rica empire. |
 | T11 | The Costa Rica empire has dissolved. |
 | T11 | [AI] Independent costa_rica proposed non-aggression with nation_nicaragua. |
+| T13 | Costa Rica has become insolvent (wealth -0.3). |
 
 ---
 

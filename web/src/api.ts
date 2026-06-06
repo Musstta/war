@@ -43,14 +43,42 @@ export interface NationCulture {
   familyWeights: Record<string, number>;
 }
 
+/** Mirrors engine VisibilityTier enum values. */
+export const VisibilityTier = {
+  TrueFog:  0,
+  LightFog: 1,
+  Clear:    2,
+} as const;
+export type VisibilityTierValue = typeof VisibilityTier[keyof typeof VisibilityTier];
+
+/** Army stationed in a territory, visible in Clear tier. */
+export interface TerritoryArmyView {
+  id: number;
+  nationId: string;
+  size: number;
+  status: string;
+}
+
+/**
+ * Territory as returned by /api/world.
+ * Fields present depend on visibilityTier:
+ *   TrueFog (0):  id, visibilityTier, geography, name
+ *   LightFog (1): + ownerId, ownerName, isCoastal
+ *   Clear (2):    + all detail fields + armies
+ */
 export interface TerritoryView {
   id: string;
-  ownerId: string | null;
-  hasRoad: boolean;
-  hasPort: boolean;
-  isCoastal: boolean;
-  isInRevolt: boolean;
-  // present only for own + adjacent territories
+  visibilityTier: VisibilityTierValue;
+  geography: string | null;
+  name: string;
+  // LightFog+
+  ownerId?: string | null;
+  ownerName?: string | null;
+  isCoastal?: boolean;
+  // Clear only
+  hasRoad?: boolean;
+  hasPort?: boolean;
+  isInRevolt?: boolean;
   fortificationLevel?: number;
   unrest?: number;
   constructionType?: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | null;
@@ -58,10 +86,16 @@ export interface TerritoryView {
   pendingConstructionType?: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | 'road' | null;
   compatibility?: CompatibilityBreakdown;
   unrestCauses?: UnrestCauses;
-  // present only for own territories (trade source selection)
+  armies?: TerritoryArmyView[];
+  // own territory only (Clear)
   localPopStock?: number;
   localIndStock?: number;
   localWltStock?: number;
+}
+
+export interface PrestigeHistoryPoint {
+  tick: number;
+  prestige: number;
 }
 
 export interface NationView {
@@ -69,6 +103,16 @@ export interface NationView {
   name: string;
   culture?: NationCulture;
   prestige: number;
+  /** Prestige change since last tick. Positive = gained, negative = lost. */
+  prestigeDelta: number;
+  /** True if this nation currently holds Dominant status. */
+  isDominant: boolean;
+  /** Last ≤20 ticks of prestige history for sparklines. */
+  prestigeHistory: PrestigeHistoryPoint[];
+  /** Cumulative kept treaties (for secondary stat display). */
+  completedTreatiesKept: number;
+  /** Cumulative war wins. */
+  warsWon: number;
   // present only for own nation
   stockpiles?: { population: number; industry: number; wealth: number };
   armySize?: number;
@@ -86,6 +130,8 @@ export interface WorldView {
   territories: Record<string, TerritoryView>;
   recentEvents: Array<{ tick: number; message: string }>;
   myQueuedActions: Array<{ type: string; payload: unknown }>;
+  /** Active war IDs involving this nation. Used by the War Council panel. */
+  myActiveWarIds: number[];
 }
 
 export interface TerritoryDevState {
@@ -123,6 +169,13 @@ export interface AdminTerritoryRow {
   fragmentationRisk: number | null;
 }
 
+export interface AdminArmyRow {
+  id: number;
+  territoryId: string;
+  size: number;
+  status: string;
+}
+
 export interface AdminNationRow {
   id: string;
   name: string;
@@ -136,6 +189,7 @@ export interface AdminNationRow {
   activityTier: string;
   lastActiveAt: string | null;
   abandonedAt: string | null;
+  armies: AdminArmyRow[];
 }
 
 export interface AdminWorldFull {
@@ -264,6 +318,43 @@ export interface TreatyClauseInput {
   payload?: Record<string, unknown>;
 }
 
+// ── War Council types ─────────────────────────────────────────────────────────
+
+export interface CouncilMember {
+  nationId: string;
+  name: string;
+  isMe: boolean;
+  hasQueuedMilitary: boolean;
+  queuedActions: Array<{ actionType: string; targetTerritoryId: string | null }>;
+}
+
+export interface CouncilContestedTerritory {
+  territoryId: string;
+  name: string;
+  siegeProgress: number | null;
+  occupyingNationId: string | null;
+  councilArmiesPresent: Array<{ nationId: string; size: number; status: string }>;
+}
+
+export interface JointInvasionChecklist {
+  treatyId: number;
+  clauseIndex: number;
+  targetTerritoryId: string | null;
+  status: string;
+  deadlineTicks: number;
+  checklist: Array<{ nationId: string; name: string; hasQueuedAttack: boolean }>;
+}
+
+export interface WarCouncilView {
+  warId: number;
+  warStatus: string;
+  councilSide: 'attacker' | 'defender';
+  tick: number;
+  members: CouncilMember[];
+  contestedTerritories: CouncilContestedTerritory[];
+  jointInvasionObjectives: JointInvasionChecklist[];
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { credentials: 'include', ...init });
   if (!res.ok) {
@@ -290,6 +381,8 @@ export const api = {
   me: () => apiFetch<MeResponse>('/api/me'),
 
   world: () => apiFetch<WorldView>('/api/world'),
+
+  warCouncil: (warId: number) => apiFetch<WarCouncilView>(`/api/war/${warId}/council`),
 
   action: (type: string, payload: unknown) =>
     apiFetch<{ ok: boolean }>('/api/action', {
@@ -472,6 +565,12 @@ export const api = {
     convertToAi: (key: string, nationId: string) =>
       apiFetch<{ ok: boolean }>(`/api/admin/nation/${nationId}/convert-to-ai`, {
         method: 'POST', headers: adminHeaders(key),
+      }),
+    createFederation: (key: string, name: string, memberNationIds: string[]) =>
+      apiFetch<{ ok: boolean; federationId: number }>('/api/admin/create-federation', {
+        method: 'POST',
+        headers: adminHeaders(key, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ name, memberNationIds }),
       }),
   },
 };

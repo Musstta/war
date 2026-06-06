@@ -12,12 +12,12 @@
 
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
-| Expansionist AI | mexico_yucatan, belize | 11.7% | 19.7% | 0 |
-| Costa Rica | costa_rica | 1.6% | 1.6% | 0 |
-| Guatemala | guatemala | 1.6% | 1.6% | 0 |
-| Honduras | honduras | 1.6% | 1.6% | 0 |
-| Nicaragua | nicaragua | 1.6% | 1.6% | 0 |
-| Panamá | panama | 1.6% | 1.6% | 0 |
+| Expansionist AI | mexico_yucatan, belize | 13.2% | 21.3% | 0 |
+| Costa Rica | costa_rica | 3.1% | 3.1% | 0 |
+| Guatemala | guatemala | 4.3% | 4.3% | 0 |
+| Honduras | honduras | 4.3% | 4.3% | 0 |
+| Nicaragua | nicaragua | 3.1% | 3.1% | 0 |
+| Panamá | panama | 3.1% | 3.1% | 0 |
 
 ---
 
@@ -29,10 +29,10 @@
 |------|-------|--------|-----|-------|--------|-------|----------|
 | T0 | — | 0.0% | 0.0% | 0.000 | — | — | — |
 | T1 | nation_ai_expansionist | 0.0% | 30.3% | 0.000 | 0.668 | 0.000 | 0.040 |
-| T2 | nation_ai_expansionist | 3.0% | 29.7% | 0.000 | 0.670 | 0.000 | 0.040 |
-| T5 | nation_ai_expansionist | 10.1% | 27.9% | 0.000 | 0.674 | 0.000 | 0.040 |
-| T10 | nation_ai_expansionist | 16.9% | 25.0% | 0.000 | 0.682 | 0.000 | 0.040 |
-| T15 | nation_ai_expansionist | 19.7% | 23.2% | 0.000 | 0.688 | 0.000 | 0.040 |
+| T2 | nation_ai_expansionist | 3.2% | 29.7% | 0.000 | 0.670 | 0.000 | 0.040 |
+| T5 | nation_ai_expansionist | 10.8% | 27.9% | 0.000 | 0.674 | 0.000 | 0.040 |
+| T10 | nation_ai_expansionist | 18.1% | 25.0% | 0.000 | 0.682 | 0.000 | 0.040 |
+| T15 | nation_ai_expansionist | 21.3% | 23.2% | 0.000 | 0.688 | 0.000 | 0.040 |
 
 ---
 
@@ -40,6 +40,12 @@
 
 | Tick | Event |
 |------|-------|
+| T1 | Expansionist AI has become insolvent (wealth -0.3). |
+| T1 | Costa Rica has become insolvent (wealth -1.8). |
+| T1 | Guatemala has become insolvent (wealth -1.1). |
+| T1 | Honduras has become insolvent (wealth -2.0). |
+| T1 | Nicaragua has become insolvent (wealth -2.1). |
+| T1 | Panamá has become insolvent (wealth -1.9). |
 | T1 | [AI] Expansionist AI claimed belize. |
 | T2 | [AI] Expansionist AI proposed non-aggression with nation_guatemala. |
 | T8 | A treaty proposal from Expansionist AI to Guatemala has expired. |

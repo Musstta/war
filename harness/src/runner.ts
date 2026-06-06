@@ -2,7 +2,7 @@
  * Core scenario runner — pure engine, no DB, no HTTP.
  */
 import { resolve } from 'path';
-import type { WorldState, QueuedAction, TerritoryDef, CulturalFamily, Treaty, ClauseType, War, PeaceDeal, PeaceDealType, Territorycessation, DoctrineBlend } from '@war/engine';
+import type { WorldState, QueuedAction, TerritoryDef, CulturalFamily, Treaty, ClauseType, War, PeaceDeal, PeaceDealType, Territorycessation, DoctrineBlend, EmbassyStatus, VisEmbassyInput, TradeRoute } from '@war/engine';
 import {
   loadTerritoryDefs,
   buildWorldState,
@@ -17,8 +17,10 @@ import {
   scoreAction,
   BALANCED_DOCTRINE,
   deriveDoctrineBlend,
+  computeVisibility,
+  VisibilityTier,
 } from '@war/engine';
-import type { Scenario, RunResult } from './types';
+import type { Scenario, RunResult, AssertionError } from './types';
 import { captureSnapshot } from './snapshot';
 
 const DATA_FILE = process.env.WAR_DATA_FILE ?? resolve(__dirname, '../../data/territories.seed.json');
@@ -37,6 +39,21 @@ export function run(scenario: Scenario): RunResult {
   }));
 
   let world = buildWorldState(defs, nationInits, scenario.rngSeed ?? 42);
+
+  // Seed one army per nation from armySize (harness backward compat). // migrated from armySize
+  // armySize: 0 means no army (used in scenarios that need army-absent visibility testing).
+  const seededArmies: import('@war/engine').Army[] = nationInits.map((n, i) => ({
+    id: 8000 + i + 1,
+    nationId: n.id,
+    territoryId: n.startingTerritoryIds[0] ?? '',
+    size: n.armySize ?? 50,
+    status: 'stationed' as import('@war/engine').ArmyStatus,
+    destinationTerritoryId: null,
+    movedThisTick: false,
+    transitPath: [],
+    transitTicksRemaining: 0,
+  })).filter((a) => a.territoryId !== '' && a.size > 0);
+  world = { ...world, armies: seededArmies };
 
   // Apply capital and stockpile overrides.
   for (const n of scenario.world.nations) {
@@ -89,6 +106,9 @@ export function run(scenario: Scenario): RunResult {
 
   // Side map for abandonment: tick when each nation entered Abandoned state.
   const abandonedAtTickByNation = new Map<string, number>();
+
+  // Assertion errors collected across all ticks.
+  const assertionErrors: AssertionError[] = [];
 
   // Group actions by tick for fast lookup.
   const actionsByTick = new Map<number, typeof scenario.actions extends undefined ? never[] : NonNullable<typeof scenario.actions>>();
@@ -373,6 +393,59 @@ export function run(scenario: Scenario): RunResult {
         if (!nationId) { console.warn('[harness] accept_peace requires explicit nationId in payload'); continue; }
         engineActions.push({ nationId, type: 'accept_peace', payload: p });
 
+      } else if (action.type === 'set_army_size') {
+        // Set the nation's first army size (creates one if missing). Direct test setup.
+        // payload: { nationId, size }
+        const nationId = p['nationId'] as string;
+        const size = p['size'] as number;
+        const nation = world.nations[nationId];
+        if (!nation) { console.warn(`[harness] set_army_size: nation ${nationId} not found`); continue; }
+        const existingIdx = world.armies.findIndex((a) => a.nationId === nationId);
+        if (existingIdx !== -1) {
+          const updatedArmies = [...world.armies];
+          updatedArmies[existingIdx] = { ...world.armies[existingIdx]!, size };
+          world = { ...world, armies: updatedArmies };
+        } else {
+          const capitalId = nation.capitalTerritoryId ?? Object.entries(world.territories).find(([, t]) => t.state.ownerId === nationId)?.[0] ?? '';
+          const newArmy = {
+            id: 9000 + world.armies.length + 1,
+            nationId,
+            territoryId: capitalId,
+            size,
+            status: 'stationed' as import('@war/engine').ArmyStatus,
+            destinationTerritoryId: null,
+            movedThisTick: false,
+            transitPath: [] as string[],
+            transitTicksRemaining: 0,
+          };
+          world = { ...world, armies: [...world.armies, newArmy] };
+        }
+        // Also update nation.armySize for backward compat. // migrated from armySize
+        world = { ...world, nations: { ...world.nations, [nationId]: { ...nation, armySize: size } } };
+
+      } else if (action.type === 'move_army') {
+        // Engine pass-through: move the nation's first army.
+        const nationId = p['nationId'] as string | undefined;
+        if (!nationId) { console.warn('[harness] move_army requires explicit nationId'); continue; }
+        const toTerritoryId = p['toTerritoryId'] as string | undefined;
+        if (!toTerritoryId) { console.warn('[harness] move_army requires toTerritoryId'); continue; }
+        // Find the army and get its id.
+        const army = world.armies.find((a) => a.nationId === nationId);
+        if (!army) { console.warn(`[harness] move_army: no army found for ${nationId}`); continue; }
+        engineActions.push({ nationId, type: 'move_army', payload: { armyId: army.id, toTerritoryId } });
+
+      } else if (action.type === 'claim_territory') {
+        // Engine pass-through: claim an adjacent unclaimed territory.
+        const nationId = p['nationId'] as string | undefined;
+        if (!nationId) { console.warn('[harness] claim_territory requires explicit nationId'); continue; }
+        engineActions.push({ nationId, type: 'claim_territory', payload: p });
+
+      } else if (action.type === 'assert_visibility') {
+        // Visibility assertion: deferred until after this tick resolves.
+        // Collected here and processed below after resolveTick.
+        // No world mutation — assertions are read-only checks.
+        continue; // handled in post-tick assertion pass
+
       } else if (action.type === 'set_ai_doctrine') {
         // Assign a doctrineBlend to a nation (for testing specific doctrine behaviors).
         // payload: { nationId, doctrine: { expansionist, merchant, industrialist, militarist, isolationist } }
@@ -387,6 +460,63 @@ export function run(scenario: Scenario): RunResult {
             [nationId]: { ...nation, isAI: true, doctrineBlend: doctrine },
           },
         };
+
+      } else if (action.type === 'set_trade_route') {
+        // Harness: inject a TradeRoute directly into world.tradeRoutes.
+        // Required for tradeStability equilibrium component tests (server populates routes from DB;
+        // harness must inject them explicitly).
+        // payload: { id, treatyClauseId, sourceTerritoryId, destinationNationId, path }
+        const routeId = p['id'] as number ?? (9000 + world.tradeRoutes.length + 1);
+        const route: TradeRoute = {
+          id: routeId,
+          treatyClauseId: p['treatyClauseId'] as number ?? 0,
+          sourceTerritoryId: p['sourceTerritoryId'] as string,
+          destinationNationId: p['destinationNationId'] as string,
+          path: p['path'] as string[] ?? [],
+          pathComputedAtTick: world.tick,
+          pathStale: false,
+          capacity: null,
+          friction: null,
+          isSeaRoute: (p['isSeaRoute'] as boolean) ?? false,
+        };
+        world = { ...world, tradeRoutes: [...world.tradeRoutes, route] };
+
+      } else if (action.type === 'propose_embassy') {
+        // Harness: directly insert a proposed embassy into world.embassies.
+        // payload: { ownerNationId, hostTerritoryId }
+        const ownerNationId = p['ownerNationId'] as string;
+        const hostTerritoryId = p['hostTerritoryId'] as string;
+        if (!ownerNationId || !hostTerritoryId) { console.warn('[harness] propose_embassy requires ownerNationId and hostTerritoryId'); continue; }
+        const embassyId = 9000 + world.embassies.length + 1;
+        world = {
+          ...world,
+          embassies: [...world.embassies, {
+            id: embassyId,
+            ownerNationId,
+            hostTerritoryId,
+            status: 'proposed' as EmbassyStatus,
+            constructionTicksLeft: 0,
+            startedAtTick: world.tick,
+          }],
+        };
+
+      } else if (action.type === 'build_embassy') {
+        // Engine pass-through: advance embassy from proposed → under_construction.
+        // payload: { nationId, embassyId }
+        const nationId = p['nationId'] as string | undefined;
+        if (!nationId) { console.warn('[harness] build_embassy requires explicit nationId in payload'); continue; }
+        const embassyId = p['embassyId'] as number | undefined;
+        if (embassyId === undefined) { console.warn('[harness] build_embassy requires embassyId in payload'); continue; }
+        engineActions.push({ nationId, type: 'build_embassy', payload: { embassyId } });
+
+      } else if (action.type === 'expel_embassy') {
+        // Engine pass-through: expel an active embassy (host nation only).
+        // payload: { nationId, embassyId }
+        const nationId = p['nationId'] as string | undefined;
+        if (!nationId) { console.warn('[harness] expel_embassy requires explicit nationId in payload'); continue; }
+        const embassyId = p['embassyId'] as number | undefined;
+        if (embassyId === undefined) { console.warn('[harness] expel_embassy requires embassyId in payload'); continue; }
+        engineActions.push({ nationId, type: 'expel_embassy', payload: { embassyId } });
 
       } else {
         // Pass-through to engine: derive nationId from territory owner.
@@ -461,10 +591,95 @@ export function run(scenario: Scenario): RunResult {
     // Harness AI pass: for AI nations with a doctrineBlend, apply the highest-scored action.
     world = applyHarnessAiActions(world, defs, defById);
 
+    // ── assert_visibility post-tick pass ────────────────────────────────────
+    // Process any assert_visibility actions scheduled for this tick.
+    // Runs after all world mutations so the assertion sees the final state.
+    for (const action of tickActions) {
+      if (action.type !== 'assert_visibility') continue;
+      const p = action.payload;
+      const observerNationId = p['observerNationId'] as string;
+      const territoryId = p['territoryId'] as string;
+      const expectedTier = p['expectedTier'] as number;
+
+      // Build computeVisibility input from current world state.
+      const visTerritories = Object.values(world.territories).map((t) => ({
+        id: t.def.id,
+        ownerId: t.state.ownerId,
+        adjacentIds: t.def.adjacentIds,
+      }));
+      const visArmies = world.armies.map((a) => ({ nationId: a.nationId, territoryId: a.territoryId }));
+      const visTreaties = world.treaties
+        .filter((t) => t.status === 'active' || t.status === 'degraded')
+        .filter((t) => t.partyIds.includes(observerNationId))
+        .map((t) => ({
+          partyIds: t.partyIds,
+          hasActiveMilitaryAccess: t.clauses.some(
+            (c) => c.type === 'military_access' && c.clauseStatus === 'active',
+          ),
+        }));
+      // No federation data in harness (federation tables don't exist in pure engine).
+      const visFederations: Array<{ memberNationIds: readonly string[] }> = [];
+
+      const visEmbassies = world.embassies
+        .filter((e) => e.status === 'active')
+        .map((e) => ({ ownerNationId: e.ownerNationId, hostTerritoryId: e.hostTerritoryId }));
+
+      const visMap = computeVisibility({
+        nationId: observerNationId,
+        territories: visTerritories,
+        armies: visArmies,
+        treaties: visTreaties,
+        federations: visFederations,
+        embassies: visEmbassies,
+      });
+
+      const actualTier = visMap.get(territoryId) ?? VisibilityTier.TrueFog;
+      if (actualTier !== expectedTier) {
+        const tierName = (t: number) => t === 0 ? 'TrueFog' : t === 1 ? 'LightFog' : 'Clear';
+        const msg = `[assert_visibility] FAILED at tick ${world.tick}: ${observerNationId} sees ${tierName(actualTier)} for ${territoryId}, expected ${tierName(expectedTier)}`;
+        console.error(msg);
+        assertionErrors.push({
+          tick: world.tick,
+          type: 'assert_visibility',
+          observerNationId,
+          territoryId,
+          expectedTier,
+          actualTier,
+          message: msg,
+        });
+      }
+    }
+
+    // ── assert_equilibrium_component post-tick pass ──────────────────────────
+    for (const action of tickActions) {
+      if (action.type !== 'assert_equilibrium_component') continue;
+      const p = action.payload;
+      const territoryId = p['territoryId'] as string;
+      const component = p['component'] as string;
+      const expectedPresent = p['expectedPresent'] as boolean;
+
+      const causes = world.territories[territoryId]?.state.lastEquilibriumCauses;
+      const value = causes ? (causes as Record<string, number>)[component] ?? 0 : 0;
+      const actualPresent = value !== 0;
+
+      if (actualPresent !== expectedPresent) {
+        const msg = `[assert_equilibrium_component] FAILED at tick ${world.tick}: territory ${territoryId} component "${component}" present=${actualPresent}, expected present=${expectedPresent} (value=${value})`;
+        console.error(msg);
+        assertionErrors.push({
+          tick: world.tick,
+          type: 'assert_equilibrium_component',
+          territoryId,
+          component,
+          expectedPresent,
+          message: msg,
+        });
+      }
+    }
+
     snapshots.push(captureSnapshot(world, world.tick, defs, abandonedAtTickByNation));
   }
 
-  return { scenario, snapshots };
+  return { scenario, snapshots, assertionErrors };
 }
 
 // ── Harness caretaker pass ────────────────────────────────────────────────────
@@ -600,6 +815,10 @@ function applyHarnessFragmentation(
         activityTier: 'active',
         caretakerPriorities: ['defense', 'roads', 'industry', 'expansion'],
         doctrineBlend: doctrine,
+        completedTreatiesKept: 0,
+        warsWon: 0,
+        foundedAtTick: w.tick,
+        isDominant: false,
       };
       w = {
         ...w,

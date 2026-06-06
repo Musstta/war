@@ -13,10 +13,10 @@
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
 | Costa Rica | costa_rica | 1.5% | 1.5% | 0 |
-| Guatemala | guatemala | 1.5% | 1.5% | 0 |
-| Honduras | honduras | 1.5% | 1.5% | 0 |
-| Nicaragua | nicaragua | 1.5% | 1.5% | 0 |
-| Panamá | panama | 1.5% | 1.5% | 0 |
+| Guatemala | guatemala | 4.0% | 4.0% | 0 |
+| Honduras | honduras | 4.2% | 4.2% | 0 |
+| Nicaragua | nicaragua | 3.0% | 3.0% | 0 |
+| Panamá | panama | 3.0% | 3.0% | 0 |
 
 ---
 
@@ -28,10 +28,15 @@
 
 | Tick | Event |
 |------|-------|
-| T6 | Trade clause missed_payment: treaty #1 clause 1 — insufficient wealth (have 2.5, need 5). |
-| T8 | Trade clause missed_payment: treaty #1 clause 1 — insufficient wealth (have 2.5, need 5). |
-| T10 | Trade clause missed_payment: treaty #1 clause 1 — insufficient wealth (have 2.5, need 5). |
+| T1 | Honduras has become insolvent (wealth -2.0). |
+| T1 | Nicaragua has become insolvent (wealth -2.1). |
+| T1 | Panamá has become insolvent (wealth -1.9). |
+| T3 | Trade clause missed_payment: treaty #1 clause 1 — insufficient wealth (have 2.8, need 5). |
+| T4 | Trade clause missed_payment: treaty #1 clause 1 — insufficient wealth (have 1.7, need 5). |
+| T4 | Trade clause breached: treaty #1 clause 1 — 2 consecutive missed payments. Trust penalty applied. |
+| T4 | Guatemala has become insolvent (wealth -0.4). |
 | T10 | Treaty #1 between Costa Rica and Guatemala has completed its term. Both parties gain Trust. |
+| T14 | Costa Rica has become insolvent (wealth -0.2). |
 
 ---
 
@@ -45,27 +50,27 @@
 | T1 | 50.0 | 50.0 | 50.0 | 50.0 | 50.0 |
 | T2 | 50.0 | 50.0 | 50.0 | 50.0 | 50.0 |
 | T3 | 50.0 | 50.0 | 50.0 | 50.0 | 50.0 |
-| T4 | 50.0 | 50.0 | 50.0 | 50.0 | 50.0 |
-| T5 | 50.0 | 50.0 | 50.0 | 50.0 | 50.0 |
-| T6 | 50.0 | 50.0 | 50.0 | 50.0 | 50.0 |
-| T8 | 50.0 | 50.0 | 50.0 | 50.0 | 50.0 |
-| T10 | 54.5 | 54.5 | 50.0 | 50.0 | 50.0 |
-| T12 | 53.5 | 53.5 | 50.0 | 50.0 | 50.0 |
+| T4 | 50.0 | 30.0 | 50.0 | 50.0 | 50.0 |
+| T5 | 50.0 | 30.0 | 50.0 | 50.0 | 50.0 |
+| T6 | 50.0 | 30.0 | 50.0 | 50.0 | 50.0 |
+| T8 | 50.0 | 30.0 | 50.0 | 50.0 | 50.0 |
+| T10 | 54.5 | 35.0 | 50.0 | 50.0 | 50.0 |
+| T12 | 53.5 | 35.0 | 50.0 | 50.0 | 50.0 |
 
 ### Wealth Over Time (shows collateral + tribute effects)
 
 | Tick | Costa Rica | Guatemala | Honduras | Nicaragua | Panamá |
 |---|---|---|---|---|---|
 | T0 | 20.0 | 20.0 | 0.0 | 0.0 | 0.0 |
-| T1 | 24.5 | 12.5 | 0.5 | 0.5 | 5.5 |
-| T2 | 34.0 | 10.0 | 1.0 | 1.0 | 11.0 |
-| T3 | 43.5 | 7.5 | 1.5 | 1.5 | 16.5 |
-| T4 | 53.0 | 5.0 | 2.0 | 2.0 | 22.0 |
-| T5 | 62.5 | 2.5 | 2.5 | 2.5 | 27.5 |
-| T6 | 67.0 | 5.0 | 3.0 | 3.0 | 33.0 |
-| T8 | 81.0 | 5.0 | 4.0 | 4.0 | 44.0 |
-| T10 | 95.0 | 5.0 | 5.0 | 5.0 | 55.0 |
-| T12 | 104.0 | 10.0 | 6.0 | 6.0 | 66.0 |
+| T1 | 18.2 | 8.9 | -2.0 | -2.1 | -1.9 |
+| T2 | 21.4 | 2.8 | -3.9 | -4.3 | -3.7 |
+| T3 | 19.6 | 1.7 | -5.9 | -6.4 | -5.6 |
+| T4 | 17.8 | -0.4 | -7.8 | -8.6 | -7.4 |
+| T5 | 16.0 | -2.5 | -9.8 | -10.7 | -9.3 |
+| T6 | 14.2 | -4.6 | -11.8 | -12.8 | -11.2 |
+| T8 | 10.6 | -8.8 | -15.7 | -17.1 | -14.9 |
+| T10 | 7.0 | -12.0 | -19.6 | -21.4 | -18.6 |
+| T12 | 3.4 | -14.2 | -23.5 | -25.7 | -22.3 |
 
 ### Treaty Status Timeline
 

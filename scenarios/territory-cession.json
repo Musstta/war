@@ -1,0 +1,76 @@
+{
+  "name": "territory-cession",
+  "description": "Tests territory cession clause with and without embassy. Case A: Costa Rica signs a cession treaty to receive panama at T3 (transferAtTick=3). CR proposes and builds an embassy in panama at T1 (active by T4 — EMBASSY_BUILD_TICKS=3). Since the embassy is active before the grace period expires (CESSION_EMBASSY_GRACE_TICKS=3), the transfer executes. Case B: Guatemala signs a cession treaty to receive honduras at T3 with no embassy — grace period expires after 3 delay ticks and the clause is breached. Two separate treaties run in parallel.",
+  "ticks": 12,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 50, "wealthStock": 30 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 20, "wealthStock": 20 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50, "wealthStock": 30 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 20, "wealthStock": 20 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_costa_rica", "nation_panama"],
+        "clauses": [
+          {
+            "type": "territory_cession",
+            "collateral": 0,
+            "payload": {
+              "territoryId": "panama",
+              "fromNationId": "nation_panama",
+              "toNationId": "nation_costa_rica",
+              "transferAtTick": 3
+            }
+          }
+        ],
+        "termTicks": 20,
+        "collateralByParty": { "nation_costa_rica": 0, "nation_panama": 0 }
+      }
+    },
+    {
+      "tick": 1,
+      "type": "propose_embassy",
+      "payload": { "ownerNationId": "nation_costa_rica", "hostTerritoryId": "panama" }
+    },
+    {
+      "tick": 2,
+      "type": "build_embassy",
+      "payload": { "nationId": "nation_costa_rica", "embassyId": 9001 }
+    },
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 2,
+        "partyIds": ["nation_guatemala", "nation_honduras"],
+        "clauses": [
+          {
+            "type": "territory_cession",
+            "collateral": 5,
+            "payload": {
+              "territoryId": "honduras",
+              "fromNationId": "nation_honduras",
+              "toNationId": "nation_guatemala",
+              "transferAtTick": 3
+            }
+          }
+        ],
+        "termTicks": 20,
+        "collateralByParty": { "nation_guatemala": 5, "nation_honduras": 0 }
+      }
+    }
+  ],
+  "metrics": [
+    "unrest_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

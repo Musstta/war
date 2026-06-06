@@ -41,6 +41,15 @@ export function generateReport(result: RunResult, outputDir: string): void {
   lines.push(`**Nations:** ${scenario.world.nations.length}`);
   lines.push(`**Scripted actions:** ${(scenario.actions ?? []).length}`);
 
+  // ── Assertion errors ────────────────────────────────────────────────────────
+  const assertionErrors = result.assertionErrors ?? [];
+  if (assertionErrors.length > 0) {
+    lines.push('\n---\n\n## ⚠ ASSERTION FAILURES\n');
+    for (const err of assertionErrors) {
+      lines.push(`- **${err.message}**`);
+    }
+  }
+
   // ── Final state per nation ──────────────────────────────────────────────────
   lines.push('\n---\n\n## Nation Summary — Final State\n');
   lines.push('| Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |');

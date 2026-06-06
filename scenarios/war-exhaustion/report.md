@@ -1,6 +1,6 @@
 # Scenario: war-exhaustion
 
-> Costa Rica declares war on Nicaragua at T1. Nicaragua has a pre-existing tribute obligation to Honduras of 8 Wealth/tick — signed at T1. Nicaragua's production (~5 wealth/tick) cannot cover tribute (8/tick) + army upkeep (50 × 0.05 = 2.5/tick), so its wealth goes genuinely negative each tick. Expected: Nicaragua hits insolvency at T1 (WAR_INSOLVENCY_UNREST_PER_TICK +0.03/tick fires), INSOLVENCY_GENERAL_UNREST_PER_TICK (+0.02/tick) also fires, insolvencyPressure appears as a named component in the territory breakdown, equilibrium climbs toward revolt threshold over 15 ticks.
+> Costa Rica declares war on Nicaragua at T1. Nicaragua has a pre-existing tribute obligation to Honduras of 8 Wealth/tick — signed at T1. Nicaragua's production (~5 wealth/tick) cannot cover tribute (8/tick) + army upkeep (50 × 0.05 = 2.5/tick), so its wealth goes genuinely negative each tick. Expected: Nicaragua hits insolvency at T1 (WAR_INSOLVENCY_UNREST_PER_TICK +0.03/tick fires), INSOLVENCY_GENERAL_UNREST_PER_TICK (+0.02/tick) also fires, insolvencyPressure appears as a named component in the territory breakdown, equilibrium climbs toward revolt threshold over 15 ticks. Note: debt recovery (v0.24) now uses gross production, but Nicaragua stays insolvent for this full run since tribute drain exceeds production every tick — recovery never triggers within 15 ticks.
 
 **Ticks run:** 15
 **Nations:** 5
@@ -12,11 +12,11 @@
 
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
-| Costa Rica | costa_rica | 1.6% | 1.6% | 0 |
+| Costa Rica | costa_rica | 2.1% | 2.1% | 0 |
 | Nicaragua | nicaragua | 5.6% | 5.6% | 0 |
 | Honduras | honduras | 1.6% | 1.6% | 0 |
-| Guatemala | guatemala | 1.6% | 1.6% | 0 |
-| Panamá | panama | 1.6% | 1.6% | 0 |
+| Guatemala | guatemala | 4.3% | 4.3% | 0 |
+| Panamá | panama | 3.1% | 3.1% | 0 |
 
 ---
 
@@ -29,7 +29,10 @@
 | Tick | Event |
 |------|-------|
 | T1 | Costa Rica declared war on Nicaragua. |
-| T1 | Nicaragua has become insolvent (wealth -2.5). |
+| T1 | Nicaragua has become insolvent (wealth -5.1). |
+| T1 | Guatemala has become insolvent (wealth -1.1). |
+| T1 | Panamá has become insolvent (wealth -1.9). |
+| T14 | Costa Rica has become insolvent (wealth -2.2). |
 
 ---
 
@@ -56,16 +59,16 @@
 | Tick | Costa Rica | Nicaragua | Honduras | Guatemala | Panamá |
 |---|---|---|---|---|---|
 | T0 | 30.0 | 5.0 | 10.0 | 0.0 | 0.0 |
-| T1 | 34.0 | -2.5 | 18.5 | 2.5 | 5.5 |
-| T2 | 38.0 | -10.0 | 27.0 | 5.0 | 11.0 |
-| T3 | 42.0 | -17.5 | 35.5 | 7.5 | 16.5 |
-| T4 | 46.0 | -25.0 | 44.0 | 10.0 | 22.0 |
-| T5 | 50.0 | -32.5 | 52.5 | 12.5 | 27.5 |
-| T6 | 54.0 | -40.0 | 61.0 | 15.0 | 33.0 |
-| T8 | 62.0 | -55.0 | 78.0 | 20.0 | 44.0 |
-| T10 | 70.0 | -70.0 | 95.0 | 25.0 | 55.0 |
-| T12 | 78.0 | -85.0 | 112.0 | 30.0 | 66.0 |
-| T15 | 90.0 | -107.5 | 137.5 | 37.5 | 82.5 |
+| T1 | 27.7 | -5.1 | 16.0 | -1.1 | -1.9 |
+| T2 | 25.4 | -15.3 | 22.1 | -2.2 | -3.7 |
+| T3 | 23.1 | -25.4 | 28.1 | -3.3 | -5.6 |
+| T4 | 20.8 | -35.6 | 34.2 | -4.4 | -7.4 |
+| T5 | 18.5 | -45.7 | 40.2 | -5.5 | -9.3 |
+| T6 | 16.2 | -55.8 | 46.2 | -6.6 | -11.2 |
+| T8 | 11.6 | -76.1 | 58.3 | -8.8 | -14.9 |
+| T10 | 7.0 | -96.4 | 70.4 | -11.0 | -18.6 |
+| T12 | 2.4 | -116.7 | 82.5 | -13.2 | -22.3 |
+| T15 | -4.5 | -147.1 | 100.6 | -16.5 | -27.9 |
 
 ### Treaty Status Timeline
 

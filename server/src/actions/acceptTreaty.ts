@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { ActionContext, ActionHandler, ValidateResult } from './types';
-import { findTradePath } from '@war/engine';
+import { findTradePath, computeTradeCapacity, computeTradeFriction, UNDERDOG_PRESTIGE_BONUS } from '@war/engine';
 import type { Territory, TerritoryState, CulturalFamily } from '@war/engine';
 import { ACTION_COSTS } from '../phase';
 
@@ -114,6 +114,22 @@ export const acceptTreatyHandler: ActionHandler = {
             ctx.allDefs,
           );
 
+          // Compute capacity and friction from geography and path. [PLACEHOLDER callsite: computeTradeCapacity, computeTradeFriction, 2.3]
+          const sourceTerr = territories[payload.sourceTerritoryId];
+          const destTerrId = pathResult?.path[pathResult.path.length - 1];
+          const destTerr = destTerrId ? territories[destTerrId] : undefined;
+          const routeCapacity = (sourceTerr && destTerr && pathResult)
+            ? computeTradeCapacity(sourceTerr, destTerr, pathResult.isSeaRoute) // [PLACEHOLDER callsite: computeTradeCapacity, 2.3]
+            : null;
+          const routeFriction = (pathResult && pathResult.path.length > 0)
+            ? computeTradeFriction( // [PLACEHOLDER callsite: computeTradeFriction, 2.3]
+                pathResult.path,
+                territories,
+                payload.sourceTerritoryId,
+                payload.toNationId,
+              )
+            : null;
+
           await tx.tradeRoute.create({
             data: {
               treatyClauseId: clause.id,
@@ -123,9 +139,8 @@ export const acceptTreatyHandler: ActionHandler = {
               pathComputedAtTick: ctx.currentTick,
               pathStale: pathResult === null,
               isSeaRoute: pathResult?.isSeaRoute ?? false,
-              // capacity and friction are [PLACEHOLDER] — null until formulas are defined.
-              capacity: null,
-              friction: null,
+              capacity: routeCapacity,   // [PLACEHOLDER: computed from geography + infrastructure, 2.3]
+              friction: routeFriction,   // [PLACEHOLDER: computed from path terrain + hostile crossings, 2.3]
             },
           });
         }
@@ -152,6 +167,22 @@ export const acceptTreatyHandler: ActionHandler = {
         }
       }
 
+      // §1.9 Write TreatyHistory entry for each maintain_peace objective clause (consecutive limit tracking).
+      for (const clause of proposal.clauses) {
+        if (clause.type !== 'objective') continue;
+        const payload = clause.payload as Record<string, unknown>;
+        if (payload?.objectiveType !== 'maintain_peace') continue;
+        const [idA, idB] = [proposal.proposerId, proposal.targetId].sort();
+        await (tx as any).treatyHistory?.create?.({
+          data: {
+            nationAId: idA,
+            nationBId: idB,
+            clauseType: 'maintain_peace',
+            signedAtTick: ctx.currentTick,
+          },
+        });
+      }
+
       // Mark proposal accepted.
       await tx.proposal.update({ where: { id: proposal.id }, data: { status: 'accepted' } });
 
@@ -162,13 +193,34 @@ export const acceptTreatyHandler: ActionHandler = {
         mandateUsed: { increment: cost },
       }});
 
-      const targetNationName = (await tx.nation.findUniqueOrThrow({ where: { id: proposal.targetId } })).name;
+      const targetNation = await tx.nation.findUniqueOrThrow({ where: { id: proposal.targetId } });
       await tx.eventLog.create({
         data: {
           tick: ctx.currentTick,
-          message: `Treaty #${treaty.id} signed between ${proposerNation.name} and ${targetNationName}. Term: ${proposal.termTicks} ticks.`,
+          message: `Treaty #${treaty.id} signed between ${proposerNation.name} and ${targetNation.name}. Term: ${proposal.termTicks} ticks.`,
         },
       });
+
+      // Underdog negotiation bonus: non-Dominant accepts a Dominant proposer's treaty.
+      // Dominant party receives nothing extra — no double-dipping. [PLACEHOLDER callsite: UNDERDOG_PRESTIGE_BONUS]
+      const proposerIsDominant = (proposerNation as any).isDominant ?? false;
+      const targetIsDominant = (targetNation as any).isDominant ?? false;
+      if (proposerIsDominant && !targetIsDominant) {
+        await tx.nation.update({
+          where: { id: proposal.targetId },
+          data: { prestige: { increment: UNDERDOG_PRESTIGE_BONUS } },
+        });
+        await tx.eventLog.create({
+          data: {
+            tick: ctx.currentTick,
+            message: `${targetNation.name} gains Prestige for securing a treaty with the Dominant ${proposerNation.name}. [UNDERDOG_PRESTIGE_BONUS +${UNDERDOG_PRESTIGE_BONUS}]`,
+          },
+        });
+        // Unrest reduction applied via engine UnrestCauses at next tick via the WorldState.
+        // The UNDERDOG_UNREST_REDUCTION equilibrium effect is handled server-side:
+        // store the expiry tick so the /api/world endpoint can pass it to computeUnrestEquilibrium.
+        // [DEFERRED: underdog unrest buff requires storing the buff end tick on Nation — scaffolded, not yet wired into equilibrium]
+      }
     });
   },
 };

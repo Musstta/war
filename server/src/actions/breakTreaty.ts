@@ -1,5 +1,5 @@
 import type { ActionContext, ActionHandler, ValidateResult } from './types';
-import { TRUST_BREAK_PENALTY } from '@war/engine';
+import { TRUST_BREAK_PENALTY, DOMINANT_TRUST_PENALTY_REDUCTION } from '@war/engine';
 
 export const breakTreatyHandler: ActionHandler = {
   async validate(ctx: ActionContext): Promise<ValidateResult> {
@@ -53,10 +53,16 @@ export const breakTreatyHandler: ActionHandler = {
         }
       } else {
         // Voluntary break: Trust penalty + collateral transferred to wronged party.
+        // Dominant nations take reduced Trust damage when breaking. [PLACEHOLDER callsite: DOMINANT_TRUST_PENALTY_REDUCTION]
+        const breakerNationForDominant = await tx.nation.findUnique({ where: { id: ctx.nationId }, select: { isDominant: true } });
+        const isDominant = (breakerNationForDominant as any)?.isDominant ?? false;
+        const effectivePenalty = isDominant
+          ? Math.round(TRUST_BREAK_PENALTY * DOMINANT_TRUST_PENALTY_REDUCTION)
+          : TRUST_BREAK_PENALTY;
         await tx.nation.update({
           where: { id: ctx.nationId },
           data: {
-            trust: { decrement: TRUST_BREAK_PENALTY },
+            trust: { decrement: effectivePenalty },
             lastBrokenPromiseTick: ctx.currentTick,
           },
         });

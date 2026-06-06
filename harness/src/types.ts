@@ -21,10 +21,19 @@ export type ActionType =
   | 'set_nation_tier'    // harness: set inactivityTier, trigger degradation/upgrade logic
   | 'set_fort_level'     // harness: directly set fortificationLevel (0–3)
   | 'set_ai_doctrine'   // harness: assign doctrineBlend to an AI nation
+  | 'set_army_size'     // harness: set the nation's first army size (creates if missing)
+  | 'move_army'         // engine pass-through: { nationId, toTerritoryId } — moves first army
+  | 'claim_territory'   // engine pass-through: { nationId, territoryId } — claim adjacent unclaimed
   | 'declare_war'        // harness: inject a War into world.wars (equivalent to server declareWar)
   | 'propose_peace'      // harness: set pendingPeaceDeal + peace_negotiation status on a war
   | 'attack_territory'   // engine pass-through with explicit nationId
   | 'accept_peace'       // engine pass-through with explicit nationId
+  | 'assert_visibility'  // harness assertion: verify computeVisibility result for a territory
+  | 'assert_equilibrium_component' // harness assertion: verify a named UnrestCauses component present/absent
+  | 'propose_embassy'   // harness: directly place a proposed embassy into world.embassies
+  | 'build_embassy'     // harness: advance an embassy to under_construction (engine pass-through)
+  | 'expel_embassy'     // harness: expel an embassy (engine pass-through)
+  | 'set_trade_route'  // harness: inject a TradeRoute into world.tradeRoutes (for tradeStability tests)
   | 'build_road'
   | 'build_port'
   | 'build_fort';
@@ -180,7 +189,29 @@ export interface TickSnapshot {
   fragmentationData: TerritoryFragmentationSnapshot[];
 }
 
+export interface VisibilityAssertionError {
+  tick: number;
+  type: 'assert_visibility';
+  observerNationId: string;
+  territoryId: string;
+  expectedTier: number;
+  actualTier: number;
+  message: string;
+}
+
+export interface EquilibriumComponentAssertionError {
+  tick: number;
+  type: 'assert_equilibrium_component';
+  territoryId: string;
+  component: string;
+  expectedPresent: boolean;
+  message: string;
+}
+
+export type AssertionError = VisibilityAssertionError | EquilibriumComponentAssertionError;
+
 export interface RunResult {
   scenario: Scenario;
   snapshots: TickSnapshot[];   // index 0 = T0 initial state
+  assertionErrors: AssertionError[];
 }

@@ -43,7 +43,16 @@ console.log('Running scenario...');
 const t0 = Date.now();
 const result = run(scenario);
 const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
-console.log(`  ✓ ${scenario.ticks} ticks in ${elapsed}s\n`);
+
+const assertionErrors = result.assertionErrors ?? [];
+if (assertionErrors.length > 0) {
+  console.log(`  ✗ ${scenario.ticks} ticks in ${elapsed}s — ${assertionErrors.length} assertion failure(s)\n`);
+  for (const err of assertionErrors) {
+    console.error(`  ${err.message}`);
+  }
+} else {
+  console.log(`  ✓ ${scenario.ticks} ticks in ${elapsed}s\n`);
+}
 
 console.log('Writing outputs...');
 generateReport(result, outputDir);
@@ -65,3 +74,8 @@ if (!noCharts) {
 console.log(`\n✓ Output written to: ${outputDir}/`);
 console.log(`  report.md  territory-metrics.csv  nation-metrics.csv  events.csv`);
 if (!noCharts) console.log(`  charts/`);
+
+// Exit non-zero if any assertions failed so the test runner reports correctly.
+if (assertionErrors.length > 0) {
+  process.exit(1);
+}

@@ -462,6 +462,77 @@ curl -X POST http://localhost:3001/api/admin/nation/nation_costa_rica/convert-to
 
 ---
 
+## 15. Army admin commands
+
+### Set an army for testing (creates/replaces first army)
+
+```bash
+# Place Costa Rica's army at nicaragua with size 80
+curl -X POST http://localhost:3001/api/admin/nation/nation_costa_rica/set-army \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" \
+  -d '{"territoryId":"nicaragua","size":80}'
+# → {"ok":true}
+```
+
+`size=0` deletes all armies for the nation.
+
+---
+
+## 16. Federation admin commands
+
+### Create a federation for testing visibility grants
+
+```bash
+# Create a federation between Costa Rica and Guatemala
+# Both nations will now see each other's territories at Clear tier
+curl -X POST http://localhost:3001/api/admin/create-federation \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Central Pact","memberNationIds":["nation_costa_rica","nation_guatemala"]}'
+# → {"ok":true,"federationId":1}
+```
+
+The federation grants **Clear** visibility between all member nations. No federation actions exist yet — this endpoint is for testing fog-of-war visibility grants. See `tuning-notes.md` for the placeholder note on federation visibility strength.
+
+---
+
+## 17. Initialization pipeline (derived-traits inspection)
+
+Inspect what `deriveTerritoryTraits` would compute for a territory. Useful during Phase 7 territory authoring to validate derived values before they are baked into the world.
+
+```bash
+# Inspect derived traits for costa_rica (uses def's actual geography = coastal)
+curl "http://localhost:3001/api/admin/territory/costa_rica/derived-traits" \
+  -H "X-Admin-Key: dev-only-insecure-key" | jq .
+
+# Preview with a different geography (mountainous) without editing the data file
+curl "http://localhost:3001/api/admin/territory/costa_rica/derived-traits?geography=mountainous" \
+  -H "X-Admin-Key: dev-only-insecure-key" | jq .
+```
+
+Response shape:
+```json
+{
+  "territoryId": "costa_rica",
+  "culturalFamily": "latin",
+  "geography": "coastal",
+  "geographyOverridden": false,
+  "traitOverridesInDef": null,
+  "derived": {
+    "traits": { "individualist": -0.28, "progressive": 0.07, "militaristic": -0.22, "expansionist": 0.37 },
+    "startingPopulation": 80,
+    "productionModifiers": { "wealthMultiplier": 1.0, "industryMultiplier": 0.9, "populationMultiplier": 1.1 }
+  },
+  "finalTraits": { "individualist": -0.28, "progressive": 0.07, "militaristic": -0.22, "expansionist": 0.37 },
+  "seed": 1234567890
+}
+```
+
+`finalTraits` = derived traits after applying `traitOverrides` from the def (if any). The `?geography=` override is for inspection only — it does not persist to the DB.
+
+---
+
 ## Player credentials (dev)
 
 | Username | Password | Nation     |

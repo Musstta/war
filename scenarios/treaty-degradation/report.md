@@ -12,11 +12,11 @@
 
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
-| Costa Rica | costa_rica | 0.2% | 0.2% | 0 |
-| Guatemala | guatemala | 1.8% | 1.8% | 0 |
-| Honduras | honduras | 1.8% | 1.8% | 0 |
-| Nicaragua | nicaragua | 1.8% | 1.8% | 0 |
-| Panamá | panama | 1.8% | 1.8% | 0 |
+| Costa Rica | costa_rica | 0.1% | 0.1% | 0 |
+| Guatemala | guatemala | 3.1% | 3.1% | 0 |
+| Honduras | honduras | 4.8% | 4.8% | 0 |
+| Nicaragua | nicaragua | 3.5% | 3.5% | 0 |
+| Panamá | panama | 3.5% | 3.5% | 0 |
 
 ---
 
@@ -28,6 +28,9 @@
 
 | Tick | Event |
 |------|-------|
+| T1 | Honduras has become insolvent (wealth -2.0). |
+| T1 | Nicaragua has become insolvent (wealth -2.1). |
+| T1 | Panamá has become insolvent (wealth -1.9). |
 | T5 | [Caretaker] Costa Rica built a road in costa_rica. |
 | T20 | Treaty #1 between Costa Rica and Guatemala has completed its term. Both parties gain Trust. |
 
@@ -57,17 +60,17 @@
 | Tick | Costa Rica | Guatemala | Honduras | Nicaragua | Panamá |
 |---|---|---|---|---|---|
 | T0 | 50.0 | 50.0 | 0.0 | 0.0 | 0.0 |
-| T1 | 44.5 | 42.5 | 0.5 | 0.5 | 5.5 |
-| T2 | 49.0 | 45.0 | 1.0 | 1.0 | 11.0 |
-| T3 | 53.5 | 47.5 | 1.5 | 1.5 | 16.5 |
-| T4 | 58.0 | 50.0 | 2.0 | 2.0 | 22.0 |
-| T5 | 62.5 | 55.8 | 2.5 | 2.5 | 27.5 |
-| T6 | 67.0 | 61.7 | 3.0 | 3.0 | 33.0 |
-| T8 | 76.0 | 70.0 | 4.0 | 4.0 | 44.0 |
-| T10 | 85.0 | 75.0 | 5.0 | 5.0 | 55.0 |
-| T12 | 94.0 | 80.0 | 6.0 | 6.0 | 66.0 |
-| T15 | 117.0 | 87.5 | 7.5 | 7.5 | 82.5 |
-| T20 | 139.5 | 100.0 | 10.0 | 10.0 | 110.0 |
+| T1 | 38.2 | 38.9 | -2.0 | -2.1 | -1.9 |
+| T2 | 36.4 | 37.8 | -3.9 | -4.3 | -3.7 |
+| T3 | 34.6 | 36.7 | -5.9 | -6.4 | -5.6 |
+| T4 | 32.8 | 35.6 | -7.8 | -8.6 | -7.4 |
+| T5 | 31.0 | 37.8 | -9.8 | -10.7 | -9.3 |
+| T6 | 29.2 | 40.1 | -11.8 | -12.8 | -11.2 |
+| T8 | 25.6 | 41.2 | -15.7 | -17.1 | -14.9 |
+| T10 | 22.0 | 39.0 | -19.6 | -21.4 | -18.6 |
+| T12 | 18.4 | 36.8 | -23.5 | -25.7 | -22.3 |
+| T15 | 22.5 | 33.5 | -29.4 | -32.1 | -27.9 |
+| T20 | 13.5 | 28.0 | -39.2 | -42.8 | -37.2 |
 
 ### Treaty Status Timeline
 

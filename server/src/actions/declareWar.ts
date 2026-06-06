@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { ActionContext, ActionHandler, ValidateResult } from './types';
 import { getNonAggressionPairs, breachMaintainPeaceObjectives, TRUST_BREAK_PENALTY } from '@war/engine';
+import { createWarCouncils } from '../council';
 import type { Treaty, TreatyClause, ClauseType, ObjectiveClause, ObjectiveType, ObjectiveStatus, ResponsibleParty } from '@war/engine';
 import { ACTION_COSTS } from '../phase';
 
@@ -125,6 +126,9 @@ export const declareWarHandler: ActionHandler = {
       // maintain_peace objective breach fires in resolveTick (engine-side) so it has
       // access to the full world state and can update clause.objective.status there.
       // saveWorldState then persists the status change via the normal clause loop.
+
+      // Create attacker + defender war councils for coordination visibility.
+      await createWarCouncils(tx, war.id, ctx.nationId, p.targetNationId!);
 
       // Queue the declare_war action row (engine acknowledges it as pass-through).
       await tx.queuedAction.create({

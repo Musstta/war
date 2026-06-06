@@ -49,6 +49,20 @@ model Nation {
   // Null for human nations and caretaker-mode nations. Fixed at AI creation time.
   doctrineBlend         Json?
 
+  // ── Prestige counters (Phase 8) ──────────────────────────────────────────
+  // Cumulative count of treaties that ran to natural expiry without being broken.
+  completedTreatiesKept Int     @default(0)
+  // Cumulative war wins (peace deal favored this nation).
+  warsWon               Int     @default(0)
+  // Tick when this nation was first created (world init or fragmentation spawn).
+  foundedAtTick         Int     @default(0)
+  // True if this nation currently holds Dominant status (recomputed each tick).
+  isDominant            Boolean @default(false)
+  // Tick when the underdog unrest reduction buff expires. Null = no active buff.
+  // Set when a non-Dominant nation accepts a Dominant nation's treaty.
+  // [DEFERRED: wired to schema but not yet read in equilibrium computation — add in next prestige pass]
+  underdogBuffExpiresAt Int?
+
   territories    TerritoryState[]
   actions        QueuedAction[]
   treatyParties  TreatyParty[]
@@ -56,6 +70,8 @@ model Nation {
   proposalsReceived Proposal[] @relation("ProposalTarget")
   warsAsAttacker War[]      @relation("WarAttacker")
   warsAsDefender War[]      @relation("WarDefender")
+  armies         Army[]
+  territoryClaims TerritoryClaim[]
 }
 
 // One row per territory. Territory static data (name, base production, geography,
@@ -99,6 +115,14 @@ model TerritoryState {
   localPopStock  Float @default(0)
   localIndStock  Float @default(0)
   localWltStock  Float @default(0)
+
+  // §1.5 Territory cession: embassy present in this territory.
+  // Stub — always false until embassy construction ships (Phase 8).
+  // [DEFERRED: wire when embassy construction ships]
+  hasEmbassy     Boolean @default(false)
+
+  // §1.2 Population transfer shock: ticks remaining for the unrest spike.
+  populationTransferShockTicksLeft Int @default(0)
 }
 
 // Actions queued during the Main or Preparation phase, resolved atomically at the
@@ -259,6 +283,118 @@ model War {
   exhaustionByNation    Json     @default("{}")
 }
 
+// ── Army (positioned military unit) ──────────────────────────────────────────
+// Replaces flat armySize on Nation. Each nation may have multiple armies (split/merge stubbed).
+// status: 'stationed' | 'moving' | 'besieging' | 'occupying'
+
+model Army {
+  id                      Int     @id @default(autoincrement())
+  nationId                String
+  nation                  Nation  @relation(fields: [nationId], references: [id])
+  territoryId             String
+  size                    Int
+  status                  String  @default("stationed")
+  destinationTerritoryId  String?  // non-null while moving
+  movedThisTick           Boolean @default(false)
+
+  // §1.3 Multi-tick movement model.
+  // transitPath: ordered territory IDs remaining on the journey (destination included, origin excluded).
+  transitPath             Json    @default("[]")
+  // transitTicksRemaining: ticks until next step on transitPath.
+  transitTicksRemaining   Int     @default(0)
+
+  @@index([nationId])
+  @@index([territoryId])
+}
+
+// §1.4 TerritoryModifier: temporary (or permanent) effect on a territory.
+// Sources: barricade, war-torn, events, edicts.
+model TerritoryModifier {
+  id                    Int     @id @default(autoincrement())
+  territoryId           String
+  source                String  // 'barricade' | 'war_torn' | 'event' | ...
+  movementMultiplier    Float   @default(1.0)
+  productionMultiplier  Float   @default(1.0)
+  unrestEquilibriumAdj  Float   @default(0.0)
+  driftRateMultiplier   Float   @default(1.0)
+  defenseBonus          Float   @default(0.0)
+  startTick             Int
+  durationTicks         Int?    // null = permanent
+  expiresAtTick         Int?    // null = permanent
+
+  @@index([territoryId])
+  @@index([expiresAtTick])
+}
+
+// §1.4 Border skirmish event record.
+model BorderSkirmish {
+  id              Int     @id @default(autoincrement())
+  tick            Int
+  territoryId     String
+  nationAId       String
+  nationBId       String
+  armySizeA       Int
+  armySizeB       Int
+  winnerId        String?
+  fullCasusBelli  Boolean @default(false)
+
+  @@index([tick])
+  @@index([nationAId, nationBId])
+}
+
+// §1.9 Maintain_peace history: track consecutive treaty signing per nation-pair.
+model TreatyHistory {
+  id            Int     @id @default(autoincrement())
+  nationAId     String
+  nationBId     String
+  clauseType    String  // 'maintain_peace' (may extend to other types)
+  signedAtTick  Int
+
+  @@index([nationAId, nationBId, clauseType])
+}
+
+// ── Territory Claim ────────────────────────────────────────────────────────────
+// A nation's claim on an unclaimed territory. Pacification completes when
+// pacificationProgress >= PACIFICATION_THRESHOLD.
+
+model TerritoryClaim {
+  id                    Int    @id @default(autoincrement())
+  nationId              String
+  nation                Nation @relation(fields: [nationId], references: [id])
+  territoryId           String
+  claimedAtTick         Int
+  pacificationProgress  Float  @default(0)
+
+  @@index([nationId])
+  @@index([territoryId])
+}
+
+// ── Federation (scaffolding — visibility grant only, no actions yet) ──────────
+// Federations grant Clear visibility between member nations.
+// No federation actions exist yet — tables created for computeVisibility.
+// status: 'active' | 'dissolved'
+
+model Federation {
+  id            Int               @id @default(autoincrement())
+  name          String
+  foundedAtTick Int
+  status        String            @default("active") // 'active' | 'dissolved'
+  members       FederationMember[]
+}
+
+// role: 'founder' | 'member'
+model FederationMember {
+  id           Int        @id @default(autoincrement())
+  federationId Int
+  federation   Federation @relation(fields: [federationId], references: [id])
+  nationId     String
+  joinedAtTick Int
+  role         String     @default("member") // 'founder' | 'member'
+
+  @@unique([federationId, nationId])
+  @@index([nationId])
+}
+
 // ── Trade ─────────────────────────────────────────────────────────────────────
 
 // A pending instant trade offer (no term, no collateral).
@@ -292,4 +428,72 @@ model TradeRoute {
   capacity             Float?       // [PLACEHOLDER] max flow per tick
   friction             Float?       // [PLACEHOLDER] fraction lost in transit
   isSeaRoute           Boolean      @default(false)
+}
+
+// ── War Council ───────────────────────────────────────────────────────────────
+// One council per side per war. Created when a war starts.
+// memberNationIds: JSON array of nation IDs on this side.
+// side: 'attacker' | 'defender'
+
+model WarCouncil {
+  id               Int    @id @default(autoincrement())
+  warId            Int
+  side             String // 'attacker' | 'defender'
+  memberNationIds  Json   @default("[]")
+
+  queuedActions    CouncilQueuedAction[]
+
+  @@index([warId])
+}
+
+// Read-only mirror of military actions queued by council members for the current tick.
+// Written when a member queues attack_territory, move_army, or retreat_army.
+// Deleted at tick resolution after actions resolve.
+// actionType: 'attack_territory' | 'move_army' | 'retreat_army'
+// targetTerritoryId: the territory being attacked/moved-to/retreated-from
+
+model CouncilQueuedAction {
+  id                  Int        @id @default(autoincrement())
+  councilId           Int
+  council             WarCouncil @relation(fields: [councilId], references: [id])
+  nationId            String
+  actionType          String
+  targetTerritoryId   String?
+  tick                Int
+
+  @@index([councilId])
+}
+
+// ── Prestige History ──────────────────────────────────────────────────────────
+// One row per nation per tick. Used for sparklines and secondary stat queries.
+// Written by saveWorldState after Prestige is computed.
+
+model PrestigeHistory {
+  id        Int    @id @default(autoincrement())
+  nationId  String
+  tick      Int
+  prestige  Float  @default(0)
+
+  @@index([nationId, tick])
+}
+
+// ── Embassy (§1.6) ────────────────────────────────────────────────────────────
+// One embassy per bilateral (ownerNationId, hostTerritoryId) pair.
+// status: 'proposed' | 'under_construction' | 'active' | 'expelled' | 'destroyed'
+// A proposal is created by propose_embassy. The owner nation then queues build_embassy
+// to begin construction. constructionTicksLeft decrements each tick until active.
+// The host nation may expel (sets status='expelled') at any time.
+// If hostTerritoryId changes owner, status → 'destroyed'.
+
+model Embassy {
+  id                      Int    @id @default(autoincrement())
+  ownerNationId           String
+  hostTerritoryId         String
+  status                  String @default("proposed") // EmbassyStatus
+  constructionTicksLeft   Int    @default(0)
+  startedAtTick           Int
+
+  @@unique([ownerNationId, hostTerritoryId])
+  @@index([hostTerritoryId])
+  @@index([ownerNationId])
 }

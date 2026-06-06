@@ -483,7 +483,19 @@ function NationsTable({ nations, territories }: { nations: AdminNationRow[]; ter
                   <span style={{ color: '#444' }}> / </span>
                   <span style={{ color: '#aaa' }}>{Math.floor(n.stockpiles.wealth)}</span>
                 </td>
-                <td style={td}>{n.armySize}</td>
+                <td style={td}>
+                  {(n.armies ?? []).length > 0
+                    ? (n.armies ?? []).map((a) => (
+                        <div key={a.id} style={{ fontSize: '0.8em', lineHeight: 1.3 }}>
+                          <span style={{ color: a.status === 'besieging' ? '#ff9900' : a.status === 'moving' ? '#66aaff' : '#ccc' }}>
+                            {a.size}
+                          </span>
+                          <span style={{ color: '#555' }}> @ {a.territoryId}</span>
+                          {a.status !== 'stationed' && <span style={{ color: '#777' }}> [{a.status}]</span>}
+                        </div>
+                      ))
+                    : <span style={{ color: '#333' }}>—</span>}
+                </td>
                 <td style={td}>
                   <span style={{ color: n.mandateUsed >= n.mandateBudget ? '#ff6b6b' : '#ccc' }}>{n.mandateUsed}</span>
                   <span style={{ color: '#444' }}>/</span>

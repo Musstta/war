@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { WorldView } from '../api';
+import { WorldView, VisibilityTier } from '../api';
 
 // Fixed color per nation — matches INITIAL_NATIONS in server/src/world.ts
 const NATION_COLORS: Record<string, string> = {
@@ -12,9 +12,24 @@ const NATION_COLORS: Record<string, string> = {
   nation_panama:     '#F44336',
 };
 
+/** Desaturate a hex color for LightFog rendering. */
+function desaturate(hex: string, amount = 0.65): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+  const nr = Math.round(r + (gray - r) * amount);
+  const ng = Math.round(g + (gray - g) * amount);
+  const nb = Math.round(b + (gray - b) * amount);
+  return `#${nr.toString(16).padStart(2, '0')}${ng.toString(16).padStart(2, '0')}${nb.toString(16).padStart(2, '0')}`;
+}
+
 function ownerColor(ownerId: string | null): string {
   return ownerId ? (NATION_COLORS[ownerId] ?? '#607D8B') : '#546E7A';
 }
+
+/** TrueFog base color — muted grey, no owner information. */
+const TRUE_FOG_COLOR = '#2a2a35';
 
 interface GeoFeature {
   type: 'Feature';
@@ -81,7 +96,11 @@ export function GameMap({ world, selectedId, onSelect }: Props) {
             source: 'territories',
             paint: {
               'fill-color': ['get', 'fillColor'],
-              'fill-opacity': ['case', ['==', ['get', 'id'], selectedId ?? ''], 0.75, 0.45],
+              'fill-opacity': [
+                'case',
+                ['==', ['get', 'id'], selectedId ?? ''], 0.78,
+                ['get', 'fillOpacityBase'],
+              ],
             },
           });
 
@@ -90,9 +109,18 @@ export function GameMap({ world, selectedId, onSelect }: Props) {
             type: 'line',
             source: 'territories',
             paint: {
-              'line-color': '#fff',
+              'line-color': [
+                'case',
+                // TrueFog: very dim border so it doesn't distract
+                ['==', ['get', 'visibilityTier'], VisibilityTier.TrueFog], '#3a3a4a',
+                '#fff',
+              ],
               'line-width': ['case', ['==', ['get', 'id'], selectedId ?? ''], 2.5, 1],
-              'line-opacity': 0.8,
+              'line-opacity': [
+                'case',
+                ['==', ['get', 'visibilityTier'], VisibilityTier.TrueFog], 0.35,
+                0.8,
+              ],
             },
           });
 
@@ -131,7 +159,9 @@ export function GameMap({ world, selectedId, onSelect }: Props) {
     // Update selection highlight via paint property
     if (map.getLayer('territory-fill')) {
       map.setPaintProperty('territory-fill', 'fill-opacity', [
-        'case', ['==', ['get', 'id'], selectedId ?? ''], 0.75, 0.45,
+        'case',
+        ['==', ['get', 'id'], selectedId ?? ''], 0.78,
+        ['get', 'fillOpacityBase'],
       ]);
     }
     if (map.getLayer('territory-outline')) {
@@ -151,14 +181,41 @@ function enrichGeojson(base: GeoCollection, world: WorldView): GeoCollection {
     ...base,
     features: base.features.map((f) => {
       const t = world.territories[f.id];
+      const tier = t?.visibilityTier ?? VisibilityTier.TrueFog;
+
+      let fillColor: string;
+      let fillOpacityBase: number;
+      let labelVisible: boolean;
+
+      if (tier === VisibilityTier.TrueFog) {
+        // Muted grey — no political information.
+        fillColor = TRUE_FOG_COLOR;
+        fillOpacityBase = 0.55;
+        labelVisible = false;
+      } else if (tier === VisibilityTier.LightFog) {
+        // Desaturated owner color — owner identity only.
+        const base64Color = ownerColor(t?.ownerId ?? null);
+        fillColor = desaturate(base64Color);
+        fillOpacityBase = 0.45;
+        labelVisible = true;
+      } else {
+        // Clear — full owner color.
+        fillColor = ownerColor(t?.ownerId ?? null);
+        fillOpacityBase = 0.45;
+        labelVisible = true;
+      }
+
       return {
         ...f,
         properties: {
           ...f.properties,
+          visibilityTier: tier,
           ownerId: t?.ownerId ?? null,
           hasRoad: t?.hasRoad ?? false,
           hasPort: t?.hasPort ?? false,
-          fillColor: ownerColor(t?.ownerId ?? null),
+          fillColor,
+          fillOpacityBase,
+          labelVisible,
         },
       };
     }),

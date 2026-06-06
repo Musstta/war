@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 
-import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState, CulturalFamily, Treaty, Proposal, TreatyClause, ClauseType, InstantTrade, TradeRoute, InstantTradeStatus, TradeResource, ObjectiveClause, ObjectiveType, ObjectiveStatus, ResponsibleParty, War, WarType, WarStatus, OccupiedTerritory, PeaceDeal } from '@war/engine';
+import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState, CulturalFamily, Treaty, Proposal, TreatyClause, ClauseType, InstantTrade, TradeRoute, InstantTradeStatus, TradeResource, ObjectiveClause, ObjectiveType, ObjectiveStatus, ResponsibleParty, War, WarType, WarStatus, OccupiedTerritory, PeaceDeal, Army, ArmyStatus, TerritoryClaim, TerritoryModifier, BorderSkirmish, Embassy, EmbassyStatus } from '@war/engine';
+import { computePrestige, computeDominantNations, deriveTerritoryTraits, deterministicSeed } from '@war/engine';
 import { prisma } from './db';
 
 type TxClient = Prisma.TransactionClient;
@@ -48,6 +49,8 @@ export async function loadWorldState(
         localPopStock: s.localPopStock,
         localIndStock: s.localIndStock,
         localWltStock: s.localWltStock,
+        hasEmbassy: (s as any).hasEmbassy ?? false,
+        populationTransferShockTicksLeft: (s as any).populationTransferShockTicksLeft ?? 0,
       },
     };
   }
@@ -73,6 +76,10 @@ export async function loadWorldState(
       activityTier: (n as any).activityTier ?? 'active',
       caretakerPriorities: ((n as any).caretakerPriorities as string[]) ?? ['defense', 'roads', 'industry', 'expansion'],
       doctrineBlend: ((n as any).doctrineBlend as import('@war/engine').DoctrineBlend | null) ?? null,
+      completedTreatiesKept: (n as any).completedTreatiesKept ?? 0,
+      warsWon: (n as any).warsWon ?? 0,
+      foundedAtTick: (n as any).foundedAtTick ?? 0,
+      isDominant: (n as any).isDominant ?? false,
     };
   }
 
@@ -219,9 +226,76 @@ export async function loadWorldState(
     exhaustionByNation: ((w as any).exhaustionByNation as Record<string, number>) ?? {},
   }));
 
+  // Load armies.
+  const armyRows = await tx.army.findMany();
+  const armies: Army[] = armyRows.map((a) => ({
+    id: a.id,
+    nationId: a.nationId,
+    territoryId: a.territoryId,
+    size: a.size,
+    status: a.status as ArmyStatus,
+    destinationTerritoryId: a.destinationTerritoryId ?? null,
+    movedThisTick: a.movedThisTick,
+    transitPath: ((a as any).transitPath as string[]) ?? [],
+    transitTicksRemaining: (a as any).transitTicksRemaining ?? 0,
+  }));
+
+  // Load active territory claims.
+  const claimRows = await tx.territoryClaim.findMany();
+  const territoryClaims: TerritoryClaim[] = claimRows.map((c) => ({
+    id: c.id,
+    nationId: c.nationId,
+    territoryId: c.territoryId,
+    claimedAtTick: c.claimedAtTick,
+    pacificationProgress: c.pacificationProgress,
+  }));
+
+  // Load territory modifiers.
+  const modifierRows = await (tx as any).territoryModifier?.findMany?.() ?? [];
+  const territoryModifiers: TerritoryModifier[] = modifierRows.map((m: any) => ({
+    id: m.id,
+    territoryId: m.territoryId,
+    source: m.source,
+    movementMultiplier: m.movementMultiplier,
+    productionMultiplier: m.productionMultiplier,
+    unrestEquilibriumAdj: m.unrestEquilibriumAdj,
+    driftRateMultiplier: m.driftRateMultiplier,
+    defenseBonus: m.defenseBonus ?? 0,
+    startTick: m.startTick,
+    durationTicks: m.durationTicks ?? null,
+    expiresAtTick: m.expiresAtTick ?? null,
+  }));
+
+  // Load recent border skirmishes (last 20 ticks for CB window checks).
+  const skirmishRows = await (tx as any).borderSkirmish?.findMany?.({ orderBy: { tick: 'desc' }, take: 20 }) ?? [];
+  const borderSkirmishes: BorderSkirmish[] = skirmishRows.map((s: any) => ({
+    id: s.id,
+    tick: s.tick,
+    territoryId: s.territoryId,
+    nationAId: s.nationAId,
+    nationBId: s.nationBId,
+    armySizeA: s.armySizeA,
+    armySizeB: s.armySizeB,
+    winnerId: s.winnerId ?? null,
+    fullCasusBelli: s.fullCasusBelli ?? false,
+  }));
+
+  // Load active embassies (proposed, under_construction, active — skip expelled/destroyed).
+  const embassyRows = await (tx as any).embassy?.findMany?.({
+    where: { status: { in: ['proposed', 'under_construction', 'active'] } },
+  }) ?? [];
+  const embassies: Embassy[] = embassyRows.map((e: any) => ({
+    id: e.id,
+    ownerNationId: e.ownerNationId,
+    hostTerritoryId: e.hostTerritoryId,
+    status: e.status as EmbassyStatus,
+    constructionTicksLeft: e.constructionTicksLeft,
+    startedAtTick: e.startedAtTick,
+  }));
+
   // Event log is write-only from the engine's perspective; we don't need to load
   // history — resolveTick emits only the new entries for the current tick.
-  return { tick: meta.tick, rngSeed: meta.rngSeed, territories, nations, eventLog: [], treaties, proposals, instantTrades, tradeRoutes, wars };
+  return { tick: meta.tick, rngSeed: meta.rngSeed, territories, nations, eventLog: [], treaties, proposals, instantTrades, tradeRoutes, wars, armies, territoryClaims, territoryModifiers, borderSkirmishes, embassies };
 }
 
 // ── Saving ────────────────────────────────────────────────────────────────────
@@ -246,6 +320,10 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         activityTier: nation.activityTier,
         caretakerPriorities: nation.caretakerPriorities as Prisma.InputJsonValue,
         doctrineBlend: nation.doctrineBlend != null ? nation.doctrineBlend as unknown as Prisma.InputJsonValue : Prisma.JsonNull,
+        completedTreatiesKept: nation.completedTreatiesKept,
+        warsWon: nation.warsWon,
+        foundedAtTick: nation.foundedAtTick,
+        isDominant: nation.isDominant,
       },
     });
   }
@@ -330,8 +408,133 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         localPopStock: state.localPopStock,
         localIndStock: state.localIndStock,
         localWltStock: state.localWltStock,
+        hasEmbassy: state.hasEmbassy,
+        populationTransferShockTicksLeft: state.populationTransferShockTicksLeft,
       },
     });
+  }
+
+  // Persist army state (position, size, status, movedThisTick).
+  const persistedArmyIds = new Set(world.armies.map((a) => a.id));
+  for (const army of world.armies) {
+    if (army.id > 0) {
+      // Existing army — update.
+      await tx.army.update({
+        where: { id: army.id },
+        data: {
+          territoryId: army.territoryId,
+          size: army.size,
+          status: army.status,
+          destinationTerritoryId: army.destinationTerritoryId,
+          movedThisTick: army.movedThisTick,
+          transitPath: army.transitPath as Prisma.InputJsonValue,
+          transitTicksRemaining: army.transitTicksRemaining,
+        },
+      });
+    } else {
+      // New army spawned this tick (id <= 0 = harness-generated; won't occur in live server).
+    }
+  }
+  // Delete armies destroyed this tick (size=0 → removed from world.armies).
+  // The engine removed them from the array; delete from DB any that are now missing.
+  const existingArmyIds = (await tx.army.findMany({ select: { id: true } })).map((a) => a.id);
+  for (const existingId of existingArmyIds) {
+    if (!persistedArmyIds.has(existingId)) {
+      await tx.army.delete({ where: { id: existingId } });
+    }
+  }
+
+  // Persist territory claim progress changes.
+  for (const claim of world.territoryClaims) {
+    if (claim.id > 0) {
+      await tx.territoryClaim.update({
+        where: { id: claim.id },
+        data: { pacificationProgress: claim.pacificationProgress },
+      });
+    }
+  }
+  // Delete completed/void claims.
+  const persistedClaimIds = new Set(world.territoryClaims.map((c) => c.id));
+  const existingClaimIds = (await tx.territoryClaim.findMany({ select: { id: true } })).map((c) => c.id);
+  for (const existingId of existingClaimIds) {
+    if (!persistedClaimIds.has(existingId)) {
+      await tx.territoryClaim.delete({ where: { id: existingId } });
+    }
+  }
+
+  // Persist territory modifiers: upsert active, delete expired.
+  const tx_any = tx as any;
+  if (tx_any.territoryModifier) {
+    for (const mod of world.territoryModifiers) {
+      if (mod.id > 0) {
+        await tx_any.territoryModifier.update({
+          where: { id: mod.id },
+          data: { expiresAtTick: mod.expiresAtTick },
+        });
+      } else {
+        // New modifier — create.
+        await tx_any.territoryModifier.create({
+          data: {
+            territoryId: mod.territoryId,
+            source: mod.source,
+            movementMultiplier: mod.movementMultiplier,
+            productionMultiplier: mod.productionMultiplier,
+            unrestEquilibriumAdj: mod.unrestEquilibriumAdj,
+            driftRateMultiplier: mod.driftRateMultiplier,
+            defenseBonus: mod.defenseBonus,
+            startTick: mod.startTick,
+            durationTicks: mod.durationTicks,
+            expiresAtTick: mod.expiresAtTick,
+          },
+        });
+      }
+    }
+    // Delete expired modifiers (engine removed from array this tick).
+    const persistedModIds = new Set(world.territoryModifiers.filter((m) => m.id > 0).map((m) => m.id));
+    const existingModIds = (await tx_any.territoryModifier.findMany({ select: { id: true } })).map((m: any) => m.id);
+    for (const existingId of existingModIds) {
+      if (!persistedModIds.has(existingId)) {
+        await tx_any.territoryModifier.delete({ where: { id: existingId } });
+      }
+    }
+  }
+
+  // Persist new border skirmish records (engine appended to world.borderSkirmishes this tick).
+  if (tx_any.borderSkirmish) {
+    for (const s of world.borderSkirmishes) {
+      if (s.id <= 0) {
+        await tx_any.borderSkirmish.create({
+          data: {
+            tick: s.tick,
+            territoryId: s.territoryId,
+            nationAId: s.nationAId,
+            nationBId: s.nationBId,
+            armySizeA: s.armySizeA,
+            armySizeB: s.armySizeB,
+            winnerId: s.winnerId,
+            fullCasusBelli: s.fullCasusBelli,
+          },
+        });
+      }
+    }
+  }
+
+  // Persist embassy state changes: update status + constructionTicksLeft for existing rows.
+  if (tx_any.embassy) {
+    for (const emb of world.embassies) {
+      if (emb.id > 0) {
+        await tx_any.embassy.update({
+          where: { id: emb.id },
+          data: {
+            status: emb.status,
+            constructionTicksLeft: emb.constructionTicksLeft,
+            startedAtTick: emb.startedAtTick,
+          },
+        });
+      } else {
+        // New embassy created by engine (id <= 0 = harness-generated; won't occur in live server).
+      }
+    }
   }
 
   // Persist war state changes (occupied territories, status, army sizes already persisted via Nation).
@@ -444,64 +647,71 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
     await tx.eventLog.createMany({ data: world.eventLog });
   }
 
-  // ── Prestige computation ──────────────────────────────────────────────────────
+  // ── Prestige computation (full formula — replaces stub) ───────────────────────
   // Computed from fresh DB state after all other saves have committed.
-  // All weights [PLACEHOLDER] — tune once full action set exists.
-  const [allTerritories, allTreaties, allWars] = await Promise.all([
-    tx.territoryState.findMany({ select: { ownerId: true, unrest: true } }),
+  // All weights [PLACEHOLDER] — see engine/src/prestige.ts and tuning-notes.md.
+
+  const [allTerritories, allTreaties, allNationsForPrestige] = await Promise.all([
+    tx.territoryState.findMany({ select: { ownerId: true, unrest: true, hasRoad: true, hasPort: true, fortificationLevel: true } }),
     tx.treaty.findMany({ where: { status: { in: ['active', 'degraded'] } }, include: { parties: true } }),
-    tx.war.findMany({ where: { status: 'ended' }, select: { attackerId: true, defenderId: true, occupiedTerritories: true } }),
+    tx.nation.findMany({ select: { id: true, completedTreatiesKept: true, warsWon: true, foundedAtTick: true, trust: true } }),
   ]);
 
-  // Territory count + average unrest per nation.
+  // Territory count, average unrest, and infrastructure score per nation.
   const territoryCounts: Record<string, number> = {};
   const unrestSumByNation: Record<string, number> = {};
+  const infraScoreByNation: Record<string, number> = {};
   for (const t of allTerritories) {
     if (!t.ownerId) continue;
     territoryCounts[t.ownerId] = (territoryCounts[t.ownerId] ?? 0) + 1;
     unrestSumByNation[t.ownerId] = (unrestSumByNation[t.ownerId] ?? 0) + t.unrest;
+    const infraPoints = (t.hasRoad ? 1 : 0) + (t.hasPort ? 1 : 0) + t.fortificationLevel;
+    infraScoreByNation[t.ownerId] = (infraScoreByNation[t.ownerId] ?? 0) + infraPoints;
   }
 
-  // Active treaty count per nation.
+  // Active/degraded treaty count per nation (standing treaties).
   const treatyCountByNation: Record<string, number> = {};
   for (const treaty of allTreaties) {
     for (const party of treaty.parties) {
       treatyCountByNation[party.nationId] = (treatyCountByNation[party.nationId] ?? 0) + 1;
     }
   }
-  // Avoid double-counting (each treaty has 2 parties → counted twice, divide by 2 via distinct treaty).
-  // Actually each nation-party is stored separately so the count is correct as-is.
-  // But treaties with 2 parties each contribute 1 to each nation's count, which is correct.
 
-  // Wars won: ended wars where the nation was the attacker and gained territory
-  // (has non-empty occupiedTerritories that were transferred via cession).
-  // Simpler proxy: attacker of an ended war where they captured at least one territory
-  // (occupiedTerritories empty at end means capture resolved — use separate query).
-  // Best proxy available without richer data: count ended wars by attackerId.
-  const warsWonByNation: Record<string, number> = {};
-  for (const war of allWars) {
-    // A war win is when the attacker achieved something — check ended wars.
-    // [PLACEHOLDER] full "won" detection deferred; for now: attacker of any ended war.
-    warsWonByNation[war.attackerId] = (warsWonByNation[war.attackerId] ?? 0) + 1;
+  // Index the fresh nation rows by id for prestige inputs.
+  const nationPrestigeInputs = new Map(allNationsForPrestige.map((n) => [n.id, n]));
+
+  // Compute prestige for all nations; collect into a map for Dominant computation.
+  const prestigeByNation = new Map<string, number>();
+  for (const nation of Object.values(world.nations)) {
+    const inputs = nationPrestigeInputs.get(nation.id);
+    const tCount = territoryCounts[nation.id] ?? 0;
+    const avgUnrest = tCount > 0 ? (unrestSumByNation[nation.id] ?? 0) / tCount : 0;
+    const score = computePrestige({
+      nationId: nation.id,
+      territoryCount: tCount,
+      standingTreatyCount: treatyCountByNation[nation.id] ?? 0,
+      completedTreatiesKept: inputs?.completedTreatiesKept ?? 0,
+      warsWon: inputs?.warsWon ?? 0,
+      avgUnrest,
+      nationAgeTicks: world.tick - (inputs?.foundedAtTick ?? 0),
+      infrastructureScore: infraScoreByNation[nation.id] ?? 0,
+      trust: inputs?.trust ?? 50,
+    });
+    prestigeByNation.set(nation.id, score);
   }
 
-  // Compute and save prestige for each nation.
-  for (const nation of Object.values(world.nations)) {
-    const tCount = territoryCounts[nation.id] ?? 0;
-    const tTreaties = treatyCountByNation[nation.id] ?? 0;
-    const avgUnrest = tCount > 0 ? (unrestSumByNation[nation.id] ?? 0) / tCount : 0;
-    const warsWon = warsWonByNation[nation.id] ?? 0;
+  // Determine Dominant nations for this tick.
+  const dominantNationIds = computeDominantNations(prestigeByNation);
 
-    const prestige = Math.round(
-      tCount * 10 +                   // [PLACEHOLDER] territory weight
-      tTreaties * 5 +                  // [PLACEHOLDER] diplomacy weight
-      (avgUnrest < 0.3 ? 20 : 0) +    // [PLACEHOLDER] stability bonus
-      warsWon * 15,                    // [PLACEHOLDER] war-win weight
-    );
-
+  // Save prestige + isDominant + write PrestigeHistory row for each nation.
+  for (const [nationId, prestige] of prestigeByNation) {
+    const isDominant = dominantNationIds.has(nationId);
     await tx.nation.update({
-      where: { id: nation.id },
-      data: { prestige },
+      where: { id: nationId },
+      data: { prestige, isDominant },
+    });
+    await tx.prestigeHistory.create({
+      data: { nationId, tick: world.tick, prestige },
     });
   }
 }
@@ -538,20 +748,57 @@ export async function ensureWorldInitialized(defs: TerritoryDef[]): Promise<void
           armySize: n.armySize,
           capitalTerritoryId: n.territories[0],
           inactivityTier: 'active',
+          foundedAtTick: 0,
         },
       });
       for (const tid of n.territories) ownerOf.set(tid, n.id);
     }
 
     for (const def of defs) {
+      // Initialization pipeline: derive principled traits from family + geography.
+      // If traitOverrides present in the def, those axes override the derived values.
+      const derived = deriveTerritoryTraits(
+        def.culturalFamily,
+        def.geography,
+        deterministicSeed(def.id), // [PLACEHOLDER callsite: deterministicSeed — stable per territory ID]
+      );
+
+      const traits = {
+        individualist: def.traitOverrides?.individualist ?? derived.traits.individualist,
+        progressive:   def.traitOverrides?.progressive   ?? derived.traits.progressive,
+        militaristic:  def.traitOverrides?.militaristic  ?? derived.traits.militaristic,
+        expansionist:  def.traitOverrides?.expansionist  ?? derived.traits.expansionist,
+      };
+
+      // Apply population and production modifiers from the pipeline to the base rates.
+      // The def's basePopulation is set to the derived startingPopulation; production
+      // rates are stored as-is in the def (the multipliers are applied at init only,
+      // not stored separately — they bake into the DB via the territory seed data).
+      // NOTE: we write the derived traits to TerritoryState (mutable); the def's
+      // valueTraits (static) is updated in-place here for the server's runtime def map
+      // by calling this before the def map is built. At harness load time, buildWorldState
+      // uses def.valueTraits directly (pipeline does not run there — byte-identical).
+
       await tx.territoryState.create({
         data: {
           id: def.id,
           ownerId: ownerOf.get(def.id) ?? null,
-          individualist: def.valueTraits.individualist,
-          progressive: def.valueTraits.progressive,
-          militaristic: def.valueTraits.militaristic,
-          expansionist: def.valueTraits.expansionist,
+          individualist: traits.individualist,
+          progressive:   traits.progressive,
+          militaristic:  traits.militaristic,
+          expansionist:  traits.expansionist,
+        },
+      });
+    }
+
+    // Seed one Army per nation stationed at its capital. // migrated from armySize
+    for (const n of INITIAL_NATIONS) {
+      await tx.army.create({
+        data: {
+          nationId: n.id,
+          territoryId: n.territories[0],
+          size: n.armySize,
+          status: 'stationed',
         },
       });
     }

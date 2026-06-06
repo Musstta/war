@@ -1,0 +1,54 @@
+{
+  "name": "embassy-lifecycle",
+  "description": "Full embassy lifecycle: propose → build → active → expel. Costa Rica proposes an embassy in nicaragua (T1), builds it (T2, enters under_construction). After EMBASSY_BUILD_TICKS=3 ticks it becomes active (T5). While active, assert_visibility shows CR sees nicaragua as Clear (embassy grant). At T7 Nicaragua expels the embassy (Trust penalty applied). At T8 the embassy is expelled, visibility drops — assert_visibility confirms nicaragua is no longer Clear for CR.",
+  "ticks": 10,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 0, "capitalTerritoryId": "costa_rica" },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 50, "capitalTerritoryId": "nicaragua" },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "propose_embassy",
+      "payload": { "ownerNationId": "nation_costa_rica", "hostTerritoryId": "nicaragua" }
+    },
+    {
+      "tick": 2,
+      "type": "build_embassy",
+      "payload": { "nationId": "nation_costa_rica", "embassyId": 9001 }
+    },
+    {
+      "tick": 5,
+      "type": "assert_visibility",
+      "payload": {
+        "observerNationId": "nation_costa_rica",
+        "territoryId": "nicaragua",
+        "expectedTier": 2
+      }
+    },
+    {
+      "tick": 7,
+      "type": "expel_embassy",
+      "payload": { "nationId": "nation_nicaragua", "embassyId": 9001 }
+    },
+    {
+      "tick": 8,
+      "type": "assert_visibility",
+      "payload": {
+        "observerNationId": "nation_costa_rica",
+        "territoryId": "nicaragua",
+        "expectedTier": 1
+      }
+    }
+  ],
+  "metrics": [
+    "unrest_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick"
+  ]
+}

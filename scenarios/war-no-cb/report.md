@@ -12,11 +12,11 @@
 
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
-| Costa Rica | costa_rica | 2.4% | 2.4% | 0 |
-| Nicaragua | nicaragua | 1.4% | 1.4% | 0 |
-| Honduras | honduras | 1.4% | 1.4% | 0 |
-| Guatemala | guatemala | 1.4% | 1.4% | 0 |
-| Panamá | panama | 1.4% | 1.4% | 0 |
+| Costa Rica | costa_rica | 6.3% | 6.3% | 0 |
+| Nicaragua | nicaragua | 4.0% | 4.0% | 0 |
+| Honduras | honduras | 3.9% | 3.9% | 0 |
+| Guatemala | guatemala | 3.9% | 3.9% | 0 |
+| Panamá | panama | 2.8% | 2.8% | 0 |
 
 ---
 
@@ -29,8 +29,13 @@
 | Tick | Event |
 |------|-------|
 | T1 | Costa Rica declared war on Nicaragua without justification. |
+| T1 | Honduras has become insolvent (wealth -2.0). |
+| T1 | Guatemala has become insolvent (wealth -1.1). |
+| T1 | Panamá has become insolvent (wealth -1.9). |
 | T2 | Nicaragua held Nicaragua against Costa Rica (att 55 vs def 60). Costa Rica −3. |
-| T3 | Nicaragua held Nicaragua against Costa Rica (att 58 vs def 60). Costa Rica −2. |
+| T3 | Costa Rica won a battle in Nicaragua (att 61 vs def 60). Siege begun. Casualties: Costa Rica −3, Nicaragua −6. |
+| T5 | Costa Rica has become insolvent (wealth -1.5). |
+| T5 | Nicaragua has become insolvent (wealth -2.3). |
 
 ---
 

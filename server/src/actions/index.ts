@@ -17,6 +17,12 @@ import { retreatArmyHandler } from './retreatArmy';
 import { proposePeaceHandler } from './proposePeace';
 import { acceptPeaceHandler } from './acceptPeace';
 import { declinePeaceHandler } from './declinePeace';
+import { moveArmyHandler } from './moveArmy';
+import { claimTerritoryHandler } from './claimTerritory';
+import { buildBarricadeHandler } from './buildBarricade';
+import { proposeEmbassyHandler } from './proposeEmbassy';
+import { buildEmbassyHandler } from './buildEmbassy';
+import { expelEmbassyHandler } from './expelEmbassy';
 
 /**
  * Registry of action handlers keyed by action type string.
@@ -42,6 +48,12 @@ export const actionRegistry: Record<string, ActionHandler> = {
   propose_peace:                 proposePeaceHandler,
   accept_peace:                  acceptPeaceHandler,
   decline_peace:                 declinePeaceHandler,
+  move_army:                     moveArmyHandler,
+  claim_territory:               claimTerritoryHandler,
+  build_barricade:               buildBarricadeHandler,
+  propose_embassy:               proposeEmbassyHandler,
+  build_embassy:                 buildEmbassyHandler,
+  expel_embassy:                 expelEmbassyHandler,
 };
 
 export type { ActionHandler, ActionContext, ValidateResult } from './types';

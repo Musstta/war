@@ -1,0 +1,44 @@
+{
+  "name": "movement-travel",
+  "description": "Tests multi-tick army transit via a 2-hop path. Nation A (el_salvador) moves its army to mexico_yucatan. Path: el_salvador→guatemala→mexico_yucatan. Per-leg costs: el_salvador→guatemala (mountainous, ×1.5→ceil=2 ticks first leg), then guatemala→mexico_yucatan (coastal, 1 tick). Total=3 ticks. At T2 the army is still at el_salvador (in transit, first leg not yet complete). mexico_yucatan is NOT adjacent to el_salvador → TrueFog. At T4 the army arrives at mexico_yucatan (first leg arrives at guatemala at T3, second leg arrives at mexico_yucatan at T4) → Clear. assert_visibility checks: T2 mexico_yucatan=TrueFog, T4 mexico_yucatan=Clear.",
+  "ticks": 6,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_a",         "name": "Nation A",    "territories": ["el_salvador"],    "armySize": 50, "capitalTerritoryId": "el_salvador" },
+      { "id": "nation_mexico",    "name": "Mexico",      "territories": ["mexico_yucatan"], "armySize": 50 },
+      { "id": "nation_guatemala", "name": "Guatemala",   "territories": ["guatemala"],      "armySize": 30 },
+      { "id": "nation_belize",    "name": "Belize",      "territories": ["belize"],         "armySize": 30 },
+      { "id": "nation_honduras",  "name": "Honduras",    "territories": ["honduras"],       "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "move_army",
+      "payload": { "nationId": "nation_a", "toTerritoryId": "mexico_yucatan" }
+    },
+    {
+      "tick": 2,
+      "type": "assert_visibility",
+      "payload": {
+        "observerNationId": "nation_a",
+        "territoryId": "mexico_yucatan",
+        "expectedTier": 0
+      }
+    },
+    {
+      "tick": 4,
+      "type": "assert_visibility",
+      "payload": {
+        "observerNationId": "nation_a",
+        "territoryId": "mexico_yucatan",
+        "expectedTier": 2
+      }
+    }
+  ],
+  "metrics": [
+    "unrest_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick"
+  ]
+}

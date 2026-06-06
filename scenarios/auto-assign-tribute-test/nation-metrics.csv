@@ -1,0 +1,13 @@
+tick,nation_id,pop_stock,ind_stock,wealth_stock,army_size,culture_individualist,culture_progressive,culture_militaristic,culture_expansionist,culture_family
+0,nation_costa_rica,0.00,0.00,20.00,,0.100000,0.300000,-0.800000,-0.600000,latin
+0,nation_honduras,0.00,0.00,30.00,,-0.338961,-0.280519,0.019481,-0.141558,latin
+1,nation_costa_rica,0.50,0.50,24.20,,0.100000,0.300000,-0.800000,-0.600000,latin
+1,nation_honduras,3.06,1.26,22.88,,-0.338959,-0.280515,0.019478,-0.141560,latin
+2,nation_costa_rica,1.00,1.00,28.40,,0.100000,0.300000,-0.800000,-0.600000,latin
+2,nation_honduras,6.12,2.52,15.76,,-0.338955,-0.280506,0.019472,-0.141563,latin
+3,nation_costa_rica,1.50,1.50,32.60,,0.100000,0.300000,-0.800000,-0.600000,latin
+3,nation_honduras,9.18,3.78,8.64,,-0.338948,-0.280492,0.019463,-0.141566,latin
+4,nation_costa_rica,2.00,2.00,36.80,,0.100000,0.300000,-0.800000,-0.600000,latin
+4,nation_honduras,12.24,5.04,1.52,,-0.338941,-0.280474,0.019452,-0.141570,latin
+5,nation_costa_rica,2.50,2.50,41.00,,0.100000,0.300000,-0.800000,-0.600000,latin
+5,nation_honduras,15.30,6.30,-5.60,,-0.338932,-0.280452,0.019439,-0.141575,latin

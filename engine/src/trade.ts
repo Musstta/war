@@ -133,6 +133,97 @@ export function isPathStale(
   return false;
 }
 
+// ── Geography → capacity and friction (2.3) ──────────────────────────────────
+
+/** Base trade route capacity before infrastructure modifiers. [PLACEHOLDER] */
+export const CAPACITY_BASE = 10; // [PLACEHOLDER]
+
+/** Sea route (port+port) capacity multiplier. [PLACEHOLDER] */
+export const SEA_CAPACITY_MULTIPLIER = 2.0; // [PLACEHOLDER]
+
+/** Land route with roads on both endpoints capacity multiplier. [PLACEHOLDER] */
+export const LAND_ROAD_CAPACITY_MULTIPLIER = 1.5; // [PLACEHOLDER]
+
+/** Land route with no road infrastructure on either endpoint. [PLACEHOLDER] */
+export const NO_INFRA_CAPACITY_MULTIPLIER = 0.7; // [PLACEHOLDER]
+
+/** Base friction per territory on the path. [PLACEHOLDER] */
+export const FRICTION_BASE = 0.05; // [PLACEHOLDER]
+
+/** Extra friction for mountainous territory on path. [PLACEHOLDER] */
+export const FRICTION_MOUNTAIN = 0.08; // [PLACEHOLDER]
+
+/** Extra friction for desert territory on path. [PLACEHOLDER] */
+export const FRICTION_DESERT = 0.06; // [PLACEHOLDER]
+
+/** Extra friction for crossing a territory owned by neither the source nor destination nation. [PLACEHOLDER] */
+export const FRICTION_HOSTILE_CROSSING = 0.10; // [PLACEHOLDER]
+
+/** Friction reduction for territories with a road on the path. [PLACEHOLDER] */
+export const FRICTION_ROAD_REDUCTION = 0.03; // [PLACEHOLDER]
+
+/**
+ * Computes the capacity for a trade route given endpoint territory state and whether
+ * it is a sea route. Capacity is the maximum flow per tick.
+ *
+ * Formula (design doc §14A.2, §2.3):
+ *   sea route (port+port):   baseCapacity × SEA_CAPACITY_MULTIPLIER
+ *   land route with roads:   baseCapacity × LAND_ROAD_CAPACITY_MULTIPLIER
+ *   no infrastructure:       baseCapacity × NO_INFRA_CAPACITY_MULTIPLIER
+ *
+ * All constants [PLACEHOLDER]. [2.3 callsite]
+ */
+export function computeTradeCapacity(
+  sourceTerr: Territory,
+  destTerr: Territory,
+  isSeaRoute: boolean,
+): number {
+  const baseCapacity = CAPACITY_BASE;
+  if (isSeaRoute && sourceTerr.state.hasPort && destTerr.state.hasPort) {
+    return baseCapacity * SEA_CAPACITY_MULTIPLIER; // [PLACEHOLDER callsite: SEA_CAPACITY_MULTIPLIER]
+  }
+  if (sourceTerr.state.hasRoad && destTerr.state.hasRoad) {
+    return baseCapacity * LAND_ROAD_CAPACITY_MULTIPLIER; // [PLACEHOLDER callsite: LAND_ROAD_CAPACITY_MULTIPLIER]
+  }
+  return baseCapacity * NO_INFRA_CAPACITY_MULTIPLIER; // [PLACEHOLDER callsite: NO_INFRA_CAPACITY_MULTIPLIER]
+}
+
+/**
+ * Computes the friction for a trade route given the path territories and their owners.
+ * Friction is the fraction of flow lost in transit (0 = no loss, 1 = total loss).
+ *
+ * Per-territory friction formula:
+ *   FRICTION_BASE
+ *   + (mountainous ? FRICTION_MOUNTAIN : 0)
+ *   + (desert ? FRICTION_DESERT : 0)
+ *   + (not owned by source or dest nation ? FRICTION_HOSTILE_CROSSING : 0)
+ *   - (hasRoad ? FRICTION_ROAD_REDUCTION : 0)
+ *
+ * totalFriction = sum(frictionPerTerritory for each territory on path).
+ * All constants [PLACEHOLDER]. [2.3 callsite]
+ */
+export function computeTradeFriction(
+  path: string[],
+  territories: Record<string, Territory>,
+  sourceNationId: string,
+  destNationId: string,
+): number {
+  let totalFriction = 0;
+  for (const tid of path) {
+    const t = territories[tid];
+    if (!t) continue;
+    let frictionHere = FRICTION_BASE; // [PLACEHOLDER callsite: FRICTION_BASE]
+    if (t.def.geography === 'mountainous') frictionHere += FRICTION_MOUNTAIN; // [PLACEHOLDER callsite: FRICTION_MOUNTAIN]
+    if (t.def.geography === 'desert') frictionHere += FRICTION_DESERT; // [PLACEHOLDER callsite: FRICTION_DESERT]
+    if (t.state.ownerId !== sourceNationId && t.state.ownerId !== destNationId) {
+      frictionHere += FRICTION_HOSTILE_CROSSING; // [PLACEHOLDER callsite: FRICTION_HOSTILE_CROSSING]
+    }
+    if (t.state.hasRoad) frictionHere -= FRICTION_ROAD_REDUCTION; // [PLACEHOLDER callsite: FRICTION_ROAD_REDUCTION]
+    totalFriction += frictionHere;
+  }
+  return totalFriction;
+}
+
 // ── Per-territory local stockpile helpers ─────────────────────────────────────
 
 export type LocalResource = 'localPopStock' | 'localIndStock' | 'localWltStock';

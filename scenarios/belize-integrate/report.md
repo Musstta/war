@@ -12,11 +12,11 @@
 
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
-| Costa Rica | belize, costa_rica | 11.2% | 20.3% | 0 |
-| Guatemala | guatemala | 2.0% | 2.0% | 0 |
-| Honduras | honduras | 2.0% | 2.0% | 0 |
-| Nicaragua | nicaragua | 2.0% | 2.0% | 0 |
-| Panamá | panama | 2.0% | 2.0% | 0 |
+| Costa Rica | belize, costa_rica | 15.2% | 26.3% | 0 |
+| Guatemala | guatemala | 5.5% | 5.5% | 0 |
+| Honduras | honduras | 5.5% | 5.5% | 0 |
+| Nicaragua | nicaragua | 4.0% | 4.0% | 0 |
+| Panamá | panama | 4.0% | 4.0% | 0 |
 
 ---
 
@@ -28,15 +28,15 @@
 |------|-------|--------|-----|-------|--------|-------|----------|
 | T0 | — | 0.0% | 0.0% | 0.000 | — | — | — |
 | T1 | nation_costa_rica | 7.2% | 71.5% | 0.335 | 0.737 | 0.000 | 0.160 |
-| T2 | nation_costa_rica | 12.8% | 59.3% | 0.299 | 0.737 | -0.080 | 0.160 |
-| T5 | nation_costa_rica | 24.4% | 49.0% | 0.211 | 0.738 | -0.080 | 0.160 |
-| T10 | nation_costa_rica | 30.4% | 31.1% | 0.098 | 0.740 | -0.120 | 0.160 |
-| T15 | nation_costa_rica | 29.2% | 24.5% | 0.043 | 0.741 | -0.120 | 0.160 |
-| T20 | nation_costa_rica | 26.7% | 22.0% | 0.018 | 0.743 | -0.120 | 0.160 |
-| T25 | nation_costa_rica | 24.6% | 20.9% | 0.008 | 0.744 | -0.120 | 0.160 |
-| T30 | nation_costa_rica | 22.9% | 20.3% | 0.003 | 0.745 | -0.120 | 0.160 |
-| T40 | nation_costa_rica | 21.1% | 19.9% | 0.001 | 0.748 | -0.120 | 0.160 |
-| T50 | nation_costa_rica | 20.3% | 19.8% | 0.000 | 0.749 | -0.120 | 0.160 |
+| T2 | nation_costa_rica | 14.5% | 59.5% | 0.300 | 0.737 | -0.080 | 0.160 |
+| T5 | nation_costa_rica | 28.7% | 49.3% | 0.214 | 0.738 | -0.080 | 0.160 |
+| T10 | nation_costa_rica | 36.8% | 37.2% | 0.120 | 0.740 | -0.080 | 0.160 |
+| T15 | nation_costa_rica | 36.3% | 30.7% | 0.065 | 0.742 | -0.080 | 0.160 |
+| T20 | nation_costa_rica | 33.8% | 27.6% | 0.035 | 0.743 | -0.080 | 0.160 |
+| T25 | nation_costa_rica | 31.4% | 25.9% | 0.019 | 0.745 | -0.080 | 0.160 |
+| T30 | nation_costa_rica | 29.5% | 25.0% | 0.010 | 0.746 | -0.080 | 0.160 |
+| T40 | nation_costa_rica | 27.2% | 24.1% | 0.003 | 0.748 | -0.080 | 0.160 |
+| T50 | nation_costa_rica | 26.3% | 23.8% | 0.001 | 0.750 | -0.080 | 0.160 |
 
 ---
 
@@ -44,9 +44,12 @@
 
 | Tick | Event |
 |------|-------|
+| T1 | Costa Rica has become insolvent (wealth -1.6). |
+| T1 | Guatemala has become insolvent (wealth -1.1). |
+| T1 | Honduras has become insolvent (wealth -2.0). |
+| T1 | Nicaragua has become insolvent (wealth -2.1). |
+| T1 | Panamá has become insolvent (wealth -1.9). |
 | T2 | Costa Rica built a road in Belize. |
-| T5 | Costa Rica began port construction in Belize. |
-| T7 | Costa Rica completed a port in Belize. |
 
 ---
 
