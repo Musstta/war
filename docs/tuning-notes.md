@@ -7,6 +7,18 @@ Do not touch constants in source until the harness can validate the change end-t
 
 ---
 
+## Phase 8 cleanup: 11 territories render as bounding-box rectangles
+
+**Affected territories:** `colombia_orinoquia`, `brazil_amazonia`, `brazil_nordeste`, `brazil_sul`, `peru_costa_sierra`, `peru_selva`, `argentina_pampa_norte`, `argentina_patagonia` (no Natural Earth polygon source); `mexico_norte`, `mexico_centro`, `mexico_sur` (NE 50m file has no Mexican state polygons).
+
+**Cause:** `scripts/generate-adjacency.mjs` uses hand-placed rectangular bounding boxes for these territories when no NE feature can be matched. Canada sub-regions and US regions use real dissolved province/state geometry (added v0.35); these 11 territories were never addressed. The rectangles are approximate and overlap with neighboring real geometries.
+
+**Impact:** Visual only. Adjacency, ownership, fog-of-war, and all engine logic use the territory IDs, not the displayed polygons — no gameplay impact. Territories can be selected and confirmed in territory selection regardless.
+
+**Fix (Phase 8):** Source or trace approximate real outlines for the 8 NE-missing territories. For Mexico, either obtain a more detailed NE file (`ne_10m_admin_1_states_provinces`) or hand-trace the three sub-region boundaries and store them directly in `HAND_PLACED_BBOX`.
+
+---
+
 ## Revolt suppression too fast
 
 **Observed:** A territory forced to unrest 0.9 (above REVOLT_THRESHOLD 0.80) self-corrected

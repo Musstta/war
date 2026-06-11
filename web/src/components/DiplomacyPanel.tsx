@@ -4,6 +4,7 @@ import { api, DiplomacyView, TreatyClauseInput, ClauseType, WorldView, Territory
 interface Props {
   world: WorldView;
   onActionQueued: () => void;
+  gameId: string;
   tradeRoutes?: TradeRouteAgreementView[];
 }
 
@@ -16,6 +17,7 @@ const clauseLabel: Record<ClauseType, string> = {
   military_access: 'Military Access',
   defense_pact:    'Defense Pact',
   objective:       'Objective',
+  trade_route:     'Trade Route',
 };
 
 const clauseNote: Partial<Record<ClauseType, string>> = {
@@ -87,7 +89,7 @@ const S = {
   }),
 };
 
-export function DiplomacyPanel({ world, onActionQueued, tradeRoutes = [] }: Props) {
+export function DiplomacyPanel({ world, onActionQueued, gameId, tradeRoutes = [] }: Props) {
   const [dipl, setDipl] = useState<DiplomacyView | null>(null);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
@@ -109,9 +111,9 @@ export function DiplomacyPanel({ world, onActionQueued, tradeRoutes = [] }: Prop
 
   const loadDipl = useCallback(async () => {
     try {
-      setDipl(await api.diplomacy());
+      setDipl(await api.gameDiplomacy(gameId));
     } catch { /* silent — panel still renders */ }
-  }, []);
+  }, [gameId]);
 
   useEffect(() => { loadDipl(); }, [loadDipl, world.tick]);
 
@@ -229,8 +231,8 @@ export function DiplomacyPanel({ world, onActionQueued, tradeRoutes = [] }: Prop
                 Collateral: {t.totalCollateral} · Partner Trust: {t.partnerTrust[0]?.trust.toFixed(1) ?? '?'}
               </div>
               <div style={{ marginTop: '0.25rem' }}>
-                <button style={S.btn('#4a2a2a')} onClick={() => doAction(() => api.breakTreaty(t.id))}>Break</button>
-                <button style={S.btn('#2a3a2a')} onClick={() => doAction(() => api.proposeRenewal(t.id))}>Renew</button>
+                <button style={S.btn('#4a2a2a')} onClick={() => doAction(() => api.breakTreaty(gameId, t.id))}>Break</button>
+                <button style={S.btn('#2a3a2a')} onClick={() => doAction(() => api.proposeRenewal(gameId, t.id))}>Renew</button>
               </div>
             </div>
           );
@@ -262,8 +264,8 @@ export function DiplomacyPanel({ world, onActionQueued, tradeRoutes = [] }: Prop
               Their collateral: {p.proposerCollateral} · Your collateral: {p.targetCollateral} · Expires T{p.expiresAtTick}
             </div>
             <div style={{ marginTop: '0.25rem' }}>
-              <button style={S.btn('#2a4a2a')} onClick={() => doAction(() => api.acceptTreaty(p.id))}>Accept</button>
-              <button style={S.btn('#4a2a2a')} onClick={() => doAction(() => api.declineTreaty(p.id))}>Decline</button>
+              <button style={S.btn('#2a4a2a')} onClick={() => doAction(() => api.acceptTreaty(gameId, p.id))}>Accept</button>
+              <button style={S.btn('#4a2a2a')} onClick={() => doAction(() => api.declineTreaty(gameId, p.id))}>Decline</button>
             </div>
           </div>
         ))}
@@ -290,8 +292,8 @@ export function DiplomacyPanel({ world, onActionQueued, tradeRoutes = [] }: Prop
             <div style={{ color: '#ddd' }}>From {t.proposerName}: {t.amount} {t.resource}</div>
             <div style={{ color: '#555', fontSize: '0.70rem' }}>Source: {t.sourceTerritoryId} · Expires T{t.expiresAtTick}</div>
             <div style={{ marginTop: '0.2rem' }}>
-              <button style={S.btn('#2a4a2a')} onClick={() => doAction(() => api.acceptInstantTrade(t.id))}>Accept</button>
-              <button style={S.btn('#4a2a2a')} onClick={() => doAction(() => api.declineInstantTrade(t.id))}>Decline</button>
+              <button style={S.btn('#2a4a2a')} onClick={() => doAction(() => api.acceptInstantTrade(gameId, t.id))}>Accept</button>
+              <button style={S.btn('#4a2a2a')} onClick={() => doAction(() => api.declineInstantTrade(gameId, t.id))}>Decline</button>
             </div>
           </div>
         ))}
@@ -360,7 +362,7 @@ export function DiplomacyPanel({ world, onActionQueued, tradeRoutes = [] }: Prop
                 style={{ ...S.btn('#2a4a3a'), width: '100%' }}
                 disabled={!itSourceTerr || !itTargetNation || itAmount <= 0}
                 onClick={() => doAction(async () => {
-                  await api.instantTrade(itResource, itAmount, itSourceTerr, itTargetNation);
+                  await api.instantTrade(gameId, itResource, itAmount, itSourceTerr, itTargetNation);
                   setShowInstantTrade(false);
                 })}
               >
@@ -521,7 +523,7 @@ export function DiplomacyPanel({ world, onActionQueued, tradeRoutes = [] }: Prop
               style={{ ...S.btn('#2a4a3a'), width: '100%' }}
               disabled={!propTarget || propClauses.length === 0 || propTerm < 3}
               onClick={() => doAction(async () => {
-                await api.proposeTreaty(propTarget, propTerm, propClauses, propMyCollateral, propTheirCollateral);
+                await api.proposeTreaty(gameId, propTarget, propTerm, propClauses, propMyCollateral, propTheirCollateral);
                 setShowPropose(false);
               })}
             >

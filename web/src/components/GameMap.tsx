@@ -83,13 +83,14 @@ export function GameMap({ world, selectedId, onSelect }: Props) {
         },
         layers: [{ id: 'carto-tiles', type: 'raster', source: 'carto' }],
       },
+      bounds: [[-170, -55], [-30, 75]],
+      fitBoundsOptions: { padding: 20 },
     });
     mapRef.current = map;
 
     map.addControl(new maplibregl.NavigationControl(), 'top-left');
 
     map.on('load', () => {
-      map.fitBounds([[-170, -55], [-30, 75]], { padding: 20, animate: false });
 
       // Load territories geojson then paint with current world state
       fetch('/territories.geojson')

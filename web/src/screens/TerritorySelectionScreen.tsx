@@ -39,12 +39,15 @@ export function TerritorySelectionScreen() {
   const loadState = useCallback(async () => {
     if (!gameId) return;
     try {
-      const [g, c] = await Promise.all([api.getGame(gameId), api.getCandidates(gameId)]);
+      const g = await api.getGame(gameId);
       setGame(g);
-      setCandidateState(c);
       if (g.status === 'active' || g.status === 'ended') {
         navigate(`/games/${gameId}/play`, { replace: true });
+        return;
       }
+      if (g.status !== 'territory_selection') return;
+      const c = await api.getCandidates(gameId);
+      setCandidateState(c);
     } catch {
       // Silently ignore poll errors
     }
@@ -75,12 +78,13 @@ export function TerritorySelectionScreen() {
         },
         layers: [{ id: 'carto-tiles', type: 'raster', source: 'carto' }],
       },
+      bounds: [[-120, -55], [-30, 75]],
+      fitBoundsOptions: { padding: 20 },
     });
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
     map.on('load', () => {
-      map.fitBounds([[-120, -55], [-30, 75]], { padding: 20, animate: false });
 
       fetch('/territories.geojson')
         .then((r) => r.json())

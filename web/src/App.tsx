@@ -32,6 +32,7 @@ import { InfoPanel } from './components/InfoPanel';
 import { DiplomacyPanel } from './components/DiplomacyPanel';
 import { PrestigeLeaderboard } from './components/PrestigeLeaderboard';
 import { WarCouncilPanel } from './components/WarCouncilPanel';
+import { GameSwitcher } from './components/GameSwitcher';
 
 // ── Auth guard ─────────────────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ function RootRedirect() {
 const REFRESH_MS = 5_000;
 
 function GamePlayScreen() {
-  useParams<{ id: string }>();
+  const { id: gameId } = useParams<{ id: string }>();
   const { logout } = useAuth();
   const navigate = useNavigate();
 
@@ -75,14 +76,17 @@ function GamePlayScreen() {
 
   const loadWorld = useCallback(async () => {
     try {
-      const [meData, worldData] = await Promise.all([api.me(), api.world()]);
+      const [meData, worldData] = await Promise.all([
+        api.me(),
+        api.gameWorld(gameId ?? 'legacy-world'),
+      ]);
       setMe(meData);
       setWorld(worldData);
       setAuthState('logged-in');
     } catch {
       setAuthState('logged-out');
     }
-  }, []);
+  }, [gameId]);
 
   useEffect(() => { loadWorld().catch(() => setAuthState('logged-out')); }, [loadWorld]);
 
@@ -124,8 +128,9 @@ function GamePlayScreen() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       <PhaseBar world={world} myName={me.name} onLogout={handleLogout} />
+      <GameSwitcher currentGameId={gameId ?? 'legacy-world'} />
       <PrestigeLeaderboard nations={world.nations} myNationId={world.myNationId} currentTick={world.tick} />
-      <WarCouncilPanel world={world} />
+      <WarCouncilPanel world={world} gameId={gameId ?? 'legacy-world'} />
       <div style={{ position: 'fixed', bottom: '1rem', right: '1rem', zIndex: 100 }}>
         <button
           onClick={() => setShowDiplomacy((v) => !v)}
@@ -141,8 +146,8 @@ function GamePlayScreen() {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', marginRight: '13rem' }}>
         <GameMap world={world} selectedId={selectedTerritoryId} onSelect={setSelectedTerritoryId} />
         {showDiplomacy
-          ? <DiplomacyPanel world={world} onActionQueued={loadWorld} />
-          : <InfoPanel territoryId={selectedTerritoryId} world={world} defNames={defNames} onActionQueued={loadWorld} />
+          ? <DiplomacyPanel world={world} onActionQueued={loadWorld} gameId={gameId ?? 'legacy-world'} />
+          : <InfoPanel territoryId={selectedTerritoryId} world={world} defNames={defNames} onActionQueued={loadWorld} gameId={gameId ?? 'legacy-world'} />
         }
       </div>
       {world.recentEvents.length > 0 && (

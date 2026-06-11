@@ -479,71 +479,59 @@ export const api = {
 
   me: () => apiFetch<MeResponse>('/api/me'),
 
-  world: () => apiFetch<WorldView>('/api/world'),
+  gameWorld: (gameId: string) => apiFetch<WorldView>(`/api/games/${gameId}/world`),
 
-  warCouncil: (warId: number) => apiFetch<WarCouncilView>(`/api/war/${warId}/council`),
-
-  action: (type: string, payload: unknown) =>
-    apiFetch<{ ok: boolean }>('/api/action', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, payload }),
-    }),
-
-  // ── Diplomacy ─────────────────────────────────────────────────────────────
-  diplomacy: () => apiFetch<DiplomacyView>('/api/diplomacy'),
-
-  proposeTreaty: (targetNationId: string, termTicks: number, clauses: TreatyClauseInput[], proposerCollateral?: number, targetCollateral?: number) =>
-    apiFetch<{ ok: boolean }>('/api/action', {
+  proposeTreaty: (gameId: string, targetNationId: string, termTicks: number, clauses: TreatyClauseInput[], proposerCollateral?: number, targetCollateral?: number) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'propose_treaty', payload: { targetNationId, termTicks, clauses, proposerCollateral: proposerCollateral ?? 0, targetCollateral: targetCollateral ?? 0 } }),
     }),
 
-  acceptTreaty: (proposalId: number) =>
-    apiFetch<{ ok: boolean }>('/api/action', {
+  acceptTreaty: (gameId: string, proposalId: number) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'accept_treaty', payload: { proposalId } }),
     }),
 
-  declineTreaty: (proposalId: number) =>
-    apiFetch<{ ok: boolean }>('/api/action', {
+  declineTreaty: (gameId: string, proposalId: number) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'decline_treaty', payload: { proposalId } }),
     }),
 
-  breakTreaty: (treatyId: number) =>
-    apiFetch<{ ok: boolean }>('/api/action', {
+  breakTreaty: (gameId: string, treatyId: number) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'break_treaty', payload: { treatyId } }),
     }),
 
-  proposeRenewal: (treatyId: number, termTicks?: number) =>
-    apiFetch<{ ok: boolean }>('/api/action', {
+  proposeRenewal: (gameId: string, treatyId: number, termTicks?: number) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'propose_renewal', payload: { treatyId, ...(termTicks !== undefined ? { termTicks } : {}) } }),
     }),
 
-  instantTrade: (resource: 'population' | 'industry' | 'wealth', amount: number, sourceTerritoryId: string, targetNationId: string) =>
-    apiFetch<{ ok: boolean }>('/api/action', {
+  instantTrade: (gameId: string, resource: 'population' | 'industry' | 'wealth', amount: number, sourceTerritoryId: string, targetNationId: string) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'instant_trade', payload: { resource, amount, sourceTerritoryId, targetNationId } }),
     }),
 
-  acceptInstantTrade: (tradeId: number) =>
-    apiFetch<{ ok: boolean }>('/api/action', {
+  acceptInstantTrade: (gameId: string, tradeId: number) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'accept_instant_trade', payload: { tradeId } }),
     }),
 
-  declineInstantTrade: (tradeId: number) =>
-    apiFetch<{ ok: boolean }>('/api/action', {
+  declineInstantTrade: (gameId: string, tradeId: number) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'decline_instant_trade', payload: { tradeId } }),
@@ -620,42 +608,53 @@ export const api = {
   forceResolve: (gameId: string) =>
     apiFetch<{ ok: boolean }>(`/api/games/${gameId}/territory/force-resolve`, { method: 'POST' }),
 
-  // ── Dev endpoints (player1 only) ──────────────────────────────────────────
+  // ── Per-game player endpoints (v0.39+) ────────────────────────────────────
+  gameAction: (gameId: string, type: string, payload: unknown) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, payload }),
+    }),
+
+  gameDiplomacy: (gameId: string) => apiFetch<DiplomacyView>(`/api/games/${gameId}/diplomacy`),
+
+  gameWarCouncil: (gameId: string, warId: number) =>
+    apiFetch<WarCouncilView>(`/api/games/${gameId}/war/${warId}/council`),
+
+  // ── Dev endpoints (member-authenticated, game-scoped) ─────────────────────
   dev: {
-    tick: () => apiFetch<{ ok: boolean; tick: number }>('/api/dev/tick', { method: 'POST' }),
-    setPhase: (phase?: 'main' | 'prep') =>
-      apiFetch<{ ok: boolean; phase: string }>(`/api/dev/set-phase${phase ? `?phase=${phase}` : ''}`, { method: 'POST' }),
-    resetWorld: () => apiFetch<{ ok: boolean }>('/api/dev/reset-world', { method: 'POST' }),
-    territory: (id: string) => apiFetch<TerritoryDevState>(`/api/dev/territory/${id}`),
-    setUnrest: (id: string, value: number) =>
-      apiFetch<{ ok: boolean }>(`/api/dev/territory/${id}/set-unrest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value }),
-      }),
-    setTrait: (id: string, trait: string, value: number) =>
-      apiFetch<{ ok: boolean }>(`/api/dev/territory/${id}/set-trait`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trait, value }),
-      }),
+    tick: (gameId: string) =>
+      apiFetch<{ ok: boolean; tick: number }>(`/api/dev/games/${gameId}/tick`, { method: 'POST' }),
+    setPhase: (gameId: string, phase?: 'main' | 'prep') =>
+      apiFetch<{ ok: boolean; phase: string }>(
+        `/api/dev/games/${gameId}/set-phase${phase ? `?phase=${phase}` : ''}`,
+        { method: 'POST' },
+      ),
+    resetWorld: (gameId: string) =>
+      apiFetch<{ ok: boolean }>(`/api/dev/games/${gameId}/reset-world`, { method: 'POST' }),
   },
 
   // ── Admin endpoints (X-Admin-Key gated) ──────────────────────────────────
   // [DEFERRED SECURITY] Key lives in React state only — never in cookies/localStorage.
   // See docs §11 — disable before any public deployment.
   admin: {
-    world: (key: string) =>
-      apiFetch<AdminWorldFull>('/api/admin/world-full', { headers: adminHeaders(key) }),
-    tick: (key: string) =>
-      apiFetch<{ ok: boolean; tick: number }>('/api/admin/tick', { method: 'POST', headers: adminHeaders(key) }),
-    setPhase: (key: string, phase?: 'main' | 'prep') =>
-      apiFetch<{ ok: boolean; phase: string }>(
-        `/api/admin/set-phase${phase ? `?phase=${phase}` : ''}`,
+    world: (key: string, gameId = 'legacy-world') =>
+      apiFetch<AdminWorldFull>(`/api/admin/games/${gameId}/world-full`, { headers: adminHeaders(key) }),
+    tick: (key: string, gameId = 'legacy-world') =>
+      apiFetch<{ ok: boolean; tick: number }>(
+        `/api/admin/games/${gameId}/tick`,
         { method: 'POST', headers: adminHeaders(key) },
       ),
-    resetWorld: (key: string) =>
-      apiFetch<{ ok: boolean }>('/api/admin/reset-world', { method: 'POST', headers: adminHeaders(key) }),
+    setPhase: (key: string, phase?: 'main' | 'prep', gameId = 'legacy-world') =>
+      apiFetch<{ ok: boolean; phase: string }>(
+        `/api/admin/games/${gameId}/set-phase${phase ? `?phase=${phase}` : ''}`,
+        { method: 'POST', headers: adminHeaders(key) },
+      ),
+    resetWorld: (key: string, gameId = 'legacy-world') =>
+      apiFetch<{ ok: boolean }>(
+        `/api/admin/games/${gameId}/reset-world`,
+        { method: 'POST', headers: adminHeaders(key) },
+      ),
     setUnrest: (key: string, id: string, value: number) =>
       apiFetch<{ ok: boolean }>(`/api/admin/territory/${id}/set-unrest`, {
         method: 'POST',
@@ -709,7 +708,7 @@ export const api = {
 
     // ── Diplomacy admin ───────────────────────────────────────────────────
     diplomacy: (key: string) =>
-      apiFetch<{ treaties: unknown[]; proposals: unknown[]; nations: unknown[] }>('/api/admin/diplomacy', {
+      apiFetch<{ treaties: unknown[]; proposals: unknown[]; nations: unknown[]; instantTrades: unknown[]; tradeRoutes: unknown[] }>('/api/admin/diplomacy', {
         headers: adminHeaders(key),
       }),
     setTrust: (key: string, id: string, value: number) =>

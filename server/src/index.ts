@@ -30,7 +30,7 @@ function getSessionToken(request: FastifyRequest): string | null {
 async function getSession(request: FastifyRequest): Promise<string | null> {
   const token = getSessionToken(request);
   if (!token) return null;
-  return getSessionNationId(token);
+  return await getSessionNationId(token);
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -128,43 +128,47 @@ const start = async () => {
 
   // ── World state (fog-of-war filtered) ──────────────────────────────────────
 
-  app.get('/api/world', async (request, reply) => {
-    const nationId = await getSession(request);
-    if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
-
-    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
-    if (!meta) return reply.code(503).send({ error: 'World not initialized' });
-
+  // Shared helper: build the /api/world response for any (nationId, gameIdScope) pair.
+  // gameIdScope = 'legacy-world' for the old single-game endpoint; a real gameId for per-game.
+  async function buildWorldResponse(nationId: string, gameIdScope: string) {
     const prisma_any = prisma as any;
+    const meta = gameIdScope === 'legacy-world'
+      ? await prisma.worldMeta.findUnique({ where: { id: 1 } })
+      : await (prisma as any).worldMeta.findFirst({ where: { gameId: gameIdScope } });
+    if (!meta) return null;
+
+    const gf = gameIdScope === 'legacy-world' ? {} : { gameId: gameIdScope };
+
     const [nationRows, territoryRows, events, myQueued, armyRows, treatyRows, federationRows, prestigeHistoryRows, embassyRows] = await Promise.all([
-      prisma.nation.findMany(),
-      prisma.territoryState.findMany(),
-      prisma.eventLog.findMany({ orderBy: { id: 'desc' }, take: 10 }),
-      prisma.queuedAction.findMany({ where: { nationId } }),
-      prisma.army.findMany(),
+      prisma.nation.findMany({ where: gf }),
+      prisma.territoryState.findMany({ where: gf }),
+      prisma.eventLog.findMany({ where: gf, orderBy: { id: 'desc' }, take: 10 }),
+      prisma.queuedAction.findMany({ where: { ...gf, nationId } }),
+      prisma.army.findMany({ where: gf }),
       prisma.treaty.findMany({
-        where: { status: { in: ['active', 'degraded'] } },
+        where: { ...gf, status: { in: ['active', 'degraded'] } },
         include: { parties: true, clauses: { select: { type: true, clauseStatus: true } } },
       }),
       prisma.federationMember.findMany({
         where: { federation: { status: 'active' } },
         include: { federation: { include: { members: { select: { nationId: true } } } } },
       }),
-      // Last 20 ticks of history per nation for sparklines.
       prisma.prestigeHistory.findMany({
-        where: { tick: { gte: meta.tick - 19 } },
+        where: { ...gf, tick: { gte: meta.tick - 19 } },
         orderBy: { tick: 'asc' },
       }),
-      // §1.6 Active embassies for visibility grants.
-      prisma_any.embassy ? prisma_any.embassy.findMany({ where: { status: 'active' } }) : Promise.resolve([]),
+      prisma_any.embassy ? prisma_any.embassy.findMany({ where: { ...gf, status: 'active' } }) : Promise.resolve([]),
     ]);
+
+    // Per-game territory IDs are stored as "gameId::defId" — strip prefix for def lookups.
+    const stripPrefix = (id: string) => id.includes('::') ? id.split('::').slice(1).join('::') : id;
 
     // ── Build computeVisibility input ──────────────────────────────────────
 
     const visTerritories = territoryRows.map((t) => ({
       id: t.id,
       ownerId: t.ownerId,
-      adjacentIds: defById.get(t.id)?.adjacentIds ?? [],
+      adjacentIds: defById.get(stripPrefix(t.id))?.adjacentIds ?? [],
     }));
 
     const visArmies = armyRows.map((a) => ({ nationId: a.nationId, territoryId: a.territoryId }));
@@ -180,7 +184,6 @@ const start = async () => {
       const hasAccess = treaty.clauses.some(
         (c) => c.type === 'military_access' && c.clauseStatus === 'active',
       );
-      // §1.11 Collect outpost/sentry grants from active outpost clauses.
       const outpostGrants: Array<{ targetTerritoryId: string; type: 'sentry' | 'outpost'; grantedToNationId: string }> = [];
       for (const clause of treaty.clauses) {
         if (clause.type !== 'outpost' || clause.clauseStatus !== 'active') continue;
@@ -198,7 +201,6 @@ const start = async () => {
           if (hasAccess && !existing.hasActiveMilitaryAccess) {
             (existing as { hasActiveMilitaryAccess: boolean }).hasActiveMilitaryAccess = true;
           }
-          // Merge outpost grants.
           if (outpostGrants.length > 0) {
             const merged = [...(existing.outpostGrants ?? []), ...outpostGrants];
             (existing as { outpostGrants?: typeof outpostGrants }).outpostGrants = merged;
@@ -207,7 +209,7 @@ const start = async () => {
       }
     }
 
-    // Build federation inputs: each unique federation the requesting nation belongs to.
+    // Build federation inputs.
     const seenFedIds = new Set<number>();
     const visFederations: Array<{ memberNationIds: readonly string[] }> = [];
     for (const membership of federationRows) {
@@ -218,7 +220,6 @@ const start = async () => {
       visFederations.push({ memberNationIds: memberIds });
     }
 
-    // §1.6 Embassy visibility grants.
     const visEmbassies: VisEmbassyInput[] = (embassyRows as any[]).map((e) => ({
       ownerNationId: e.ownerNationId,
       hostTerritoryId: e.hostTerritoryId,
@@ -242,9 +243,9 @@ const start = async () => {
     );
     const allTerritories: Record<string, { def: TerritoryDef; state: TerritoryState }> = {};
     for (const row of territoryRows) {
-      const def = defById.get(row.id);
+      const def = defById.get(stripPrefix(row.id));
       if (!def) continue;
-      allTerritories[row.id] = {
+      allTerritories[stripPrefix(row.id)] = {
         def: row.culturalFamily ? { ...def, culturalFamily: row.culturalFamily as import('@war/engine').CulturalFamily } : def,
         state: {
           ownerId: row.ownerId,
@@ -269,12 +270,12 @@ const start = async () => {
 
     // Compute nation cultures.
     const nationCultures: Record<string, ReturnType<typeof computeNationCulture>> = {};
-    const capitalMap = Object.fromEntries(nationRows.map((n) => [n.id, n.capitalTerritoryId ?? null]));
+    const capitalMap = Object.fromEntries(nationRows.map((n) => [n.id, n.capitalTerritoryId ? stripPrefix(n.capitalTerritoryId) : null]));
     for (const n of nationRows) {
       nationCultures[n.id] = computeNationCulture(n.id, allTerritories, capitalMap[n.id]);
     }
 
-    // Territory counts + developed/fortified counts per nation (needed for mandate budget + unrest).
+    // Territory counts + developed/fortified counts per nation.
     const territoryCounts: Record<string, number> = {};
     const recentAcquiredCounts: Record<string, number> = {};
     const developedCounts: Record<string, number> = {};
@@ -297,7 +298,7 @@ const start = async () => {
       }
     }
 
-    // Armies grouped by territory (for Clear territory responses).
+    // Armies grouped by territory.
     const armiesByTerritory: Record<string, Array<{ id: number; nationId: string; size: number; status: string }>> = {};
     for (const a of armyRows) {
       if (!armiesByTerritory[a.territoryId]) armiesByTerritory[a.territoryId] = [];
@@ -307,28 +308,27 @@ const start = async () => {
     // ── Build filtered territory responses by tier ─────────────────────────
     const territories: Record<string, object> = {};
     for (const t of territoryRows) {
-      const def = defById.get(t.id);
+      const defId = stripPrefix(t.id);
+      const def = defById.get(defId);
       const tier = visMap.get(t.id) ?? VisibilityTier.TrueFog;
 
-      // TrueFog: only geography (static def data — no political info).
       if (tier === VisibilityTier.TrueFog) {
-        territories[t.id] = {
-          id: t.id,
+        territories[defId] = {
+          id: defId,
           visibilityTier: VisibilityTier.TrueFog,
           geography: def?.geography ?? null,
-          name: def?.name ?? t.id,
+          name: def?.name ?? defId,
         };
         continue;
       }
 
-      // LightFog: owner identity only.
       if (tier === VisibilityTier.LightFog) {
         const ownerRow = t.ownerId ? nationRows.find((n) => n.id === t.ownerId) : null;
-        territories[t.id] = {
-          id: t.id,
+        territories[defId] = {
+          id: defId,
           visibilityTier: VisibilityTier.LightFog,
           geography: def?.geography ?? null,
-          name: def?.name ?? t.id,
+          name: def?.name ?? defId,
           ownerId: t.ownerId,
           ownerName: ownerRow?.name ?? null,
           isCoastal: def?.isCoastal ?? false,
@@ -338,10 +338,10 @@ const start = async () => {
 
       // Clear: full state.
       const entry: Record<string, unknown> = {
-        id: t.id,
+        id: defId,
         visibilityTier: VisibilityTier.Clear,
         geography: def?.geography ?? null,
-        name: def?.name ?? t.id,
+        name: def?.name ?? defId,
         ownerId: t.ownerId,
         isCoastal: def?.isCoastal ?? false,
         hasRoad: t.hasRoad,
@@ -356,22 +356,20 @@ const start = async () => {
         armies: armiesByTerritory[t.id] ?? [],
       };
 
-      // Own territory extras: local stockpiles (trade source selection).
       if (t.ownerId === nationId) {
         entry.localPopStock = t.localPopStock;
         entry.localIndStock = t.localIndStock;
         entry.localWltStock = t.localWltStock;
       }
 
-      // Culture breakdown (Clear only — meaningful when territory has an owner).
       if (t.ownerId && nationCultures[t.ownerId] && def) {
         const nc = nationCultures[t.ownerId]!;
         const terrTraits = { individualist: t.individualist, progressive: t.progressive, militaristic: t.militaristic, expansionist: t.expansionist };
         const effectiveFamily = (t.culturalFamily ?? def.culturalFamily) as import('@war/engine').CulturalFamily;
         const compat = computeCompatibility(terrTraits, effectiveFamily, nc);
         const ownerRow = nationRows.find((n) => n.id === t.ownerId);
-        const capital = ownerRow?.capitalTerritoryId ?? null;
-        const hops = capital ? bfsDistance(adjacency, capital, t.id) : 0;
+        const capital = ownerRow?.capitalTerritoryId ? stripPrefix(ownerRow.capitalTerritoryId) : null;
+        const hops = capital ? bfsDistance(adjacency, capital, defId) : 0;
         const tcount = territoryCounts[t.ownerId] ?? 1;
         const causes = computeUnrestEquilibrium(
           compat, hops, t.hasRoad, t.hasPort, t.fortificationLevel,
@@ -381,34 +379,25 @@ const start = async () => {
         entry.unrestCauses = causes;
       }
 
-      territories[t.id] = entry;
+      territories[defId] = entry;
     }
 
-    // Build prestige history lookup: nationId → sorted array of { tick, prestige }.
+    // Prestige history.
     const prestigeHistoryByNation: Record<string, Array<{ tick: number; prestige: number }>> = {};
     for (const row of prestigeHistoryRows) {
       if (!prestigeHistoryByNation[row.nationId]) prestigeHistoryByNation[row.nationId] = [];
       prestigeHistoryByNation[row.nationId]!.push({ tick: row.tick, prestige: row.prestige });
     }
 
-    // All nations show name + culture + prestige + dominant status (public leaderboard).
-    // Own nation also shows stockpiles + secondary stats.
     const nations: Record<string, object> = {};
     const myNationRow = nationRows.find((n) => n.id === nationId);
     for (const n of nationRows) {
       const history = prestigeHistoryByNation[n.id] ?? [];
-      // Delta vs previous tick (one tick back from current).
       const prevEntry = history.length >= 2 ? history[history.length - 2] : null;
       const prestigeDelta = prevEntry != null ? n.prestige - prevEntry.prestige : 0;
-
-      // Secondary stats.
       const completedTreatiesKept = (n as any).completedTreatiesKept ?? 0;
       const warsWon = (n as any).warsWon ?? 0;
       const isDominant = (n as any).isDominant ?? false;
-
-      // Longest time at #1: count consecutive ticks from the end of history where this nation was top.
-      // Simplified: count ticks in the last 7 where prestige was highest among all nations (server would need all histories).
-      // For now we expose the raw history and let the client compute secondary stats from it.
 
       const entry: Record<string, unknown> = {
         id: n.id,
@@ -430,9 +419,9 @@ const start = async () => {
       nations[n.id] = entry;
     }
 
-    // Expose active war IDs involving this nation for the War Council panel.
     const myActiveWarRows = await prisma.war.findMany({
       where: {
+        ...gf,
         status: { in: ['active', 'peace_negotiation'] },
         OR: [{ attackerId: nationId }, { defenderId: nationId }],
       },
@@ -452,13 +441,32 @@ const start = async () => {
       myQueuedActions: myQueued.map((a) => ({ type: a.type, payload: a.payload })),
       myActiveWarIds,
     };
+  }
+
+  // Per-game world state — used by /games/:id/play.
+  app.get('/api/games/:id/world', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+    const { id: gameId } = request.params as { id: string };
+    const membership = await prisma.gameMembership.findFirst({ where: { gameId, userId } });
+    if (!membership) return reply.code(403).send({ error: 'Not a member of this game' });
+    if (!membership.nationId) return reply.code(503).send({ error: 'Nation not yet assigned' });
+    const result = await buildWorldResponse(membership.nationId, gameId);
+    if (!result) return reply.code(503).send({ error: 'World not initialized' });
+    return result;
   });
 
-  // ── Queue action ───────────────────────────────────────────────────────────
+  // ── Per-game scoped action endpoint ───────────────────────────────────────
 
-  app.post('/api/action', async (request, reply) => {
-    const nationId = await getSession(request);
-    if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
+  // POST /api/games/:id/action — scoped action queue; validates membership + nationId.
+  app.post('/api/games/:id/action', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+    const { id: gameId } = request.params as { id: string };
+    const membership = await prisma.gameMembership.findFirst({ where: { gameId, userId } });
+    if (!membership) return reply.code(403).send({ error: 'Not a member of this game' });
+    if (!membership.nationId) return reply.code(503).send({ error: 'Nation not yet assigned' });
+    const nationId = membership.nationId;
 
     const body = request.body as { type?: string; payload?: unknown };
     const { type, payload } = body;
@@ -467,7 +475,9 @@ const start = async () => {
     const handler = actionRegistry[type];
     if (!handler) return reply.code(400).send({ error: `Unknown action type: ${type}` });
 
-    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
+    const meta = gameId === 'legacy-world'
+      ? await prisma.worldMeta.findUnique({ where: { id: 1 } })
+      : await (prisma as any).worldMeta.findFirst({ where: { gameId } });
     if (!meta) return reply.code(503).send({ error: 'World not initialized' });
 
     const allowedPhase = ACTION_PHASE[type];
@@ -496,23 +506,15 @@ const start = async () => {
     };
 
     const result = await handler.validate(ctx);
-
     if (result.ok === 'queued') return { ok: true };
-
     if (result.ok === 'error') return reply.code(result.status).send({ error: result.reason });
 
-    // result.ok === 'ready' — normal path: mandate check then queue
     let { cost, finalPayload } = result;
-    // Insolvency mandate surcharge: +1 Mandate on actions costing 2+ while wealthStock < 0 or debtBalance > 0.
-    // [PLACEHOLDER] revisit if this makes diplomacy during war too punishing.
     const isInsolvent = nation.wealthStock < 0 || (nation as any).debtBalance > 0;
     if (isInsolvent && cost >= 2) cost += 1;
 
-    // §1.6 Embassy Mandate discount: −1 (min 1) on diplomatic actions toward nations
-    // where there is an active embassy between the two parties. [PLACEHOLDER]
     if (cost >= 2) {
       const prisma_action_any = prisma as any;
-      // Determine the target nation from the payload (treaty/instant-trade actions have targetId or targetNationId).
       const actionPayload = payload as Record<string, unknown>;
       const targetNationIdForDiscount: string | null =
         (actionPayload.targetNationId as string | null) ??
@@ -537,7 +539,6 @@ const start = async () => {
     }
 
     await handler.queue(ctx, cost, finalPayload);
-    // Stamp lastActiveAt on any queued action — resets inactivity clock.
     await prisma.nation.update({
       where: { id: nationId },
       data: { lastActiveAt: new Date(), activityTier: 'active' } as any,
@@ -545,7 +546,305 @@ const start = async () => {
     return { ok: true };
   });
 
+  // GET /api/games/:id/diplomacy — scoped diplomacy state for a specific game's nation.
+  app.get('/api/games/:id/diplomacy', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+    const { id: gameId } = request.params as { id: string };
+    const membership = await prisma.gameMembership.findFirst({ where: { gameId, userId } });
+    if (!membership) return reply.code(403).send({ error: 'Not a member of this game' });
+    if (!membership.nationId) return reply.code(503).send({ error: 'Nation not yet assigned' });
+    const nationId = membership.nationId;
+
+    const gf = gameId === 'legacy-world' ? {} : { gameId };
+
+    const [
+      myNation,
+      activeTreaties,
+      incomingProposals,
+      outgoingProposals,
+      allNations,
+      incomingInstantTrades,
+      outgoingInstantTrades,
+    ] = await Promise.all([
+      prisma.nation.findUnique({ where: { id: nationId } }),
+      prisma.treaty.findMany({
+        where: { ...gf, status: { in: ['active', 'degraded'] }, parties: { some: { nationId } } },
+        include: { parties: true, clauses: { include: { tradeRoute: true, objectiveClause: true } }, proposal: { select: { proposerId: true, targetId: true } } },
+      }),
+      prisma.proposal.findMany({
+        where: { ...gf, targetId: nationId, status: 'pending' },
+        include: { clauses: true },
+      }),
+      prisma.proposal.findMany({
+        where: { ...gf, proposerId: nationId, status: 'pending' },
+        include: { clauses: true },
+      }),
+      prisma.nation.findMany({ where: gf, select: { id: true, name: true, trust: true } }),
+      prisma.instantTrade.findMany({ where: { ...gf, targetNationId: nationId, status: 'pending' } }),
+      prisma.instantTrade.findMany({ where: { ...gf, proposerNationId: nationId, status: 'pending' } }),
+    ]);
+
+    if (!myNation) return reply.code(404).send({ error: 'Nation not found' });
+
+    const nationNameMap = Object.fromEntries(allNations.map((n) => [n.id, n.name]));
+    const nationTrustMap = Object.fromEntries(allNations.map((n) => [n.id, n.trust]));
+
+    return {
+      myTrust: myNation.trust,
+      inactivityTier: myNation.inactivityTier,
+      treaties: activeTreaties.map((t) => ({
+        id: t.id,
+        status: t.status,
+        termTicks: t.termTicks,
+        tickStarted: t.tickStarted,
+        tickEnds: t.tickEnds,
+        totalCollateral: t.totalCollateral,
+        parties: t.parties.map((p) => ({
+          nationId: p.nationId,
+          nationName: nationNameMap[p.nationId] ?? p.nationId,
+          collateralDeposited: p.collateralDeposited,
+          escrowAmount: p.escrowAmount,
+          refundRemaining: p.refundRemaining,
+        })),
+        clauses: t.clauses.map((c) => ({
+          id: c.id,
+          clauseIndex: c.clauseIndex,
+          type: c.type,
+          collateral: c.collateral,
+          payload: c.payload,
+          clauseStatus: c.clauseStatus,
+          missedPayments: c.missedPayments,
+          tradeRoute: (c as any).tradeRoute ? {
+            path: (c as any).tradeRoute.path,
+            isSeaRoute: (c as any).tradeRoute.isSeaRoute,
+            pathStale: (c as any).tradeRoute.pathStale,
+            capacity: (c as any).tradeRoute.capacity,
+            friction: (c as any).tradeRoute.friction,
+          } : null,
+          objectiveClause: (c as any).objectiveClause ?? null,
+        })),
+        partnerTrust: t.parties
+          .filter((p) => p.nationId !== nationId)
+          .map((p) => ({ nationId: p.nationId, trust: nationTrustMap[p.nationId] ?? 50 })),
+      })),
+      incomingProposals: incomingProposals.map((p) => ({
+        id: p.id,
+        proposerId: p.proposerId,
+        proposerName: nationNameMap[p.proposerId] ?? p.proposerId,
+        proposerTrust: nationTrustMap[p.proposerId] ?? 50,
+        termTicks: p.termTicks,
+        proposerCollateral: p.proposerCollateral,
+        targetCollateral: p.targetCollateral,
+        tickProposed: p.tickProposed,
+        expiresAtTick: p.expiresAtTick,
+        clauses: p.clauses.map((c) => ({ type: c.type, collateral: c.collateral, payload: c.payload })),
+      })),
+      outgoingProposals: outgoingProposals.map((p) => ({
+        id: p.id,
+        targetId: p.targetId,
+        targetName: nationNameMap[p.targetId] ?? p.targetId,
+        termTicks: p.termTicks,
+        proposerCollateral: p.proposerCollateral,
+        targetCollateral: p.targetCollateral,
+        tickProposed: p.tickProposed,
+        expiresAtTick: p.expiresAtTick,
+        clauses: p.clauses.map((c) => ({ type: c.type, collateral: c.collateral, payload: c.payload })),
+      })),
+      nationTrust: Object.fromEntries(allNations.map((n) => [n.id, { name: n.name, trust: n.trust }])),
+      incomingInstantTrades: incomingInstantTrades.map((t) => ({
+        id: t.id,
+        proposerNationId: t.proposerNationId,
+        proposerName: allNations.find((n) => n.id === t.proposerNationId)?.name ?? t.proposerNationId,
+        resource: t.resource,
+        amount: t.amount,
+        sourceTerritoryId: t.sourceTerritoryId,
+        tickProposed: t.tickProposed,
+        expiresAtTick: t.expiresAtTick,
+      })),
+      outgoingInstantTrades: outgoingInstantTrades.map((t) => ({
+        id: t.id,
+        targetNationId: t.targetNationId,
+        targetName: allNations.find((n) => n.id === t.targetNationId)?.name ?? t.targetNationId,
+        resource: t.resource,
+        amount: t.amount,
+        sourceTerritoryId: t.sourceTerritoryId,
+        tickProposed: t.tickProposed,
+        expiresAtTick: t.expiresAtTick,
+      })),
+    };
+  });
+
+  // GET /api/games/:id/war/:warId/council — scoped war council; verifies warId belongs to game :id.
+  app.get('/api/games/:id/war/:warId/council', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+    const { id: gameId, warId: warIdStr } = request.params as { id: string; warId: string };
+    const membership = await prisma.gameMembership.findFirst({ where: { gameId, userId } });
+    if (!membership) return reply.code(403).send({ error: 'Not a member of this game' });
+    if (!membership.nationId) return reply.code(503).send({ error: 'Nation not yet assigned' });
+    const nationId = membership.nationId;
+
+    const warId = parseInt(warIdStr, 10);
+    if (isNaN(warId)) return reply.code(400).send({ error: 'Invalid warId' });
+
+    const gf = gameId === 'legacy-world' ? {} : { gameId };
+    const meta = gameId === 'legacy-world'
+      ? await prisma.worldMeta.findUnique({ where: { id: 1 } })
+      : await (prisma as any).worldMeta.findFirst({ where: { gameId } });
+    const currentTick = meta?.tick ?? 0;
+
+    const war = await prisma.war.findFirst({ where: { id: warId, ...gf } });
+    if (!war) return reply.code(404).send({ error: 'War not found' });
+    if (war.status === 'ended') return reply.code(400).send({ error: 'War has ended' });
+
+    const isAttacker = war.attackerId === nationId;
+    const isDefender = war.defenderId === nationId;
+    const allCouncils = await prisma.warCouncil.findMany({ where: { warId } });
+    const myCouncil = allCouncils.find((c) => {
+      const members = (c.memberNationIds as string[]) ?? [];
+      return members.includes(nationId);
+    });
+
+    if (!myCouncil && !isAttacker && !isDefender) {
+      return reply.code(403).send({ error: 'You are not a party to this war' });
+    }
+
+    const council = myCouncil ?? allCouncils.find((c) =>
+      c.side === (isAttacker ? 'attacker' : 'defender'),
+    );
+    if (!council) {
+      return reply.code(404).send({ error: 'Council not found — war may have just started' });
+    }
+
+    const memberNationIds = (council.memberNationIds as string[]) ?? [];
+
+    const memberNations = await prisma.nation.findMany({
+      where: { id: { in: memberNationIds } },
+      select: { id: true, name: true },
+    });
+
+    const councilActions = await prisma.councilQueuedAction.findMany({
+      where: { councilId: council.id, tick: currentTick },
+      orderBy: { id: 'asc' },
+    });
+
+    const memberArmies = await prisma.army.findMany({
+      where: { nationId: { in: memberNationIds } },
+    });
+
+    const occupiedTerritories = (war.occupiedTerritories as Array<{
+      territoryId: string;
+      occupyingNationId: string;
+      siegeProgress: number;
+      siegeStartTick: number;
+    }>) ?? [];
+
+    const contestedTerritoryIds = new Set(occupiedTerritories.map((o) => o.territoryId));
+    for (const army of memberArmies) {
+      if (army.status === 'besieging') contestedTerritoryIds.add(army.territoryId);
+      if (army.status === 'moving' && army.destinationTerritoryId) {
+        contestedTerritoryIds.add(army.destinationTerritoryId);
+      }
+    }
+
+    const contestedTerritories = [...contestedTerritoryIds].map((terrId) => {
+      const def = defById.get(terrId);
+      const armiesPresent = memberArmies
+        .filter((a) => a.territoryId === terrId || (a.status === 'moving' && a.destinationTerritoryId === terrId))
+        .map((a) => ({ nationId: a.nationId, size: a.size, status: a.status }));
+      const occ = occupiedTerritories.find((o) => o.territoryId === terrId);
+      return {
+        territoryId: terrId,
+        name: def?.name ?? terrId,
+        siegeProgress: occ?.siegeProgress ?? null,
+        occupyingNationId: occ?.occupyingNationId ?? null,
+        councilArmiesPresent: armiesPresent,
+      };
+    });
+
+    const activeTreaties = await prisma.treaty.findMany({
+      where: {
+        ...gf,
+        status: { in: ['active', 'degraded'] },
+        parties: { some: { nationId: { in: memberNationIds } } },
+      },
+      include: {
+        parties: true,
+        clauses: { include: { objectiveClause: true } },
+      },
+    });
+
+    const jointInvasionObjectives: Array<{
+      treatyId: number;
+      clauseIndex: number;
+      targetTerritoryId: string | null;
+      status: string;
+      deadlineTicks: number;
+      checklist: Array<{ nationId: string; name: string; hasQueuedAttack: boolean }>;
+    }> = [];
+
+    for (const treaty of activeTreaties) {
+      for (const clause of treaty.clauses) {
+        const obj = (clause as any).objectiveClause;
+        if (!obj || obj.objectiveType !== 'joint_invasion') continue;
+        if (obj.status !== 'pending') continue;
+        const attacksOnTarget = councilActions.filter(
+          (a) => a.actionType === 'attack_territory' && a.targetTerritoryId === obj.targetTerritoryId,
+        );
+        const attackingNationIds = new Set(attacksOnTarget.map((a) => a.nationId));
+        const checklist = memberNations
+          .filter((n) => treaty.parties.some((p) => p.nationId === n.id))
+          .map((n) => ({ nationId: n.id, name: n.name, hasQueuedAttack: attackingNationIds.has(n.id) }));
+        jointInvasionObjectives.push({
+          treatyId: treaty.id,
+          clauseIndex: clause.clauseIndex,
+          targetTerritoryId: obj.targetTerritoryId ?? null,
+          status: obj.status,
+          deadlineTicks: obj.deadlineTicks,
+          checklist,
+        });
+      }
+    }
+
+    const membersWithActions = memberNations.map((n) => {
+      const actions = councilActions
+        .filter((a) => a.nationId === n.id)
+        .map((a) => ({ actionType: a.actionType, targetTerritoryId: a.targetTerritoryId }));
+      return {
+        nationId: n.id,
+        name: n.name,
+        isMe: n.id === nationId,
+        hasQueuedMilitary: actions.length > 0,
+        queuedActions: actions,
+      };
+    });
+
+    return {
+      warId,
+      warStatus: war.status,
+      councilSide: council.side,
+      tick: currentTick,
+      members: membersWithActions,
+      contestedTerritories,
+      jointInvasionObjectives,
+    };
+  });
+
   // ── Admin endpoints ────────────────────────────────────────────────────────
+  // NOTE: /api/action was here — removed in v0.39. Use /api/games/:id/action.
+  // NOTE: /api/diplomacy was here — removed in v0.39. Use /api/games/:id/diplomacy.
+  // NOTE: /api/war/:warId/council was here — removed in v0.39. Use /api/games/:id/war/:warId/council.
+
+  app.post('/admin/tick', async (request, reply) => {
+    const key = (request.headers as Record<string, string>)['x-admin-key'];
+    if (key !== ADMIN_KEY) return reply.code(401).send({ error: 'unauthorized' });
+    try {
+      return { ok: true, tick: (await runTick(defs)).tick };
+    } catch (err: unknown) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
 
   app.post('/admin/tick', async (request, reply) => {
     const key = (request.headers as Record<string, string>)['x-admin-key'];
@@ -1111,31 +1410,170 @@ const start = async () => {
     return { count: territories.length, territories };
   });
 
-  // ── Dev endpoints (session-gated to player1 / nation_costa_rica) ───────────
-  // [DEV-ONLY] Session-gated wrappers so the web UI can call admin functions
-  // without the admin key ever reaching the browser.
-  // [DEFERRED SECURITY] Remove or replace with real RBAC before production. §11.
+  // ── Admin game-scoped endpoints (v0.39) ──────────────────────────────────────
+  // All /api/admin/games/:gameId/* endpoints. Pass gameId='legacy-world' for the
+  // legacy single-game world. Territory IDs for per-game worlds are stored as
+  // "gameId::defId" in the DB — callers are responsible for passing the full ID.
 
-  const DEV_NATION_ID = 'nation_costa_rica';
-  const CULTURE_TRAITS = ['individualist', 'progressive', 'militaristic', 'expansionist'] as const;
-
-  async function requireDev(request: FastifyRequest, reply: FastifyReply): Promise<string | null> {
-    const nationId = await getSession(request);
-    if (nationId !== DEV_NATION_ID) {
-      void reply.code(403).send({ error: 'Dev endpoints require the player1 session' });
-      return null;
+  // GET /api/admin/games/:gameId/world-full — scoped world inspector.
+  app.get('/api/admin/games/:gameId/world-full', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { gameId } = request.params as { gameId: string };
+    const gf = gameId === 'legacy-world' ? {} : { gameId };
+    const meta = gameId === 'legacy-world'
+      ? await prisma.worldMeta.findUnique({ where: { id: 1 } })
+      : await (prisma as any).worldMeta.findFirst({ where: { gameId } });
+    if (!meta) return reply.code(503).send({ error: 'World not initialized' });
+    const [nationRows, territoryRows, events] = await Promise.all([
+      prisma.nation.findMany({ where: gf }),
+      prisma.territoryState.findMany({ where: gf }),
+      prisma.eventLog.findMany({ where: gf, orderBy: { id: 'desc' }, take: 50 }),
+    ]);
+    // Reuse the same nation/territory shaping logic from the unscoped endpoint above.
+    const stripPrefix = (id: string) => id.includes('::') ? id.split('::').slice(1).join('::') : id;
+    const adjacency: Record<string, readonly string[]> = Object.fromEntries(defs.map((d) => [d.id, d.adjacentIds]));
+    const allTerritories: Record<string, { def: TerritoryDef; state: TerritoryState }> = {};
+    for (const row of territoryRows) {
+      const def = defById.get(stripPrefix(row.id));
+      if (!def) continue;
+      allTerritories[stripPrefix(row.id)] = {
+        def: row.culturalFamily ? { ...def, culturalFamily: row.culturalFamily as import('@war/engine').CulturalFamily } : def,
+        state: {
+          ownerId: row.ownerId, fortificationLevel: row.fortificationLevel,
+          hasRoad: row.hasRoad, hasPort: row.hasPort, hasMarket: row.hasMarket, unrest: row.unrest,
+          isInRevolt: row.isInRevolt,
+          valueTraits: { individualist: row.individualist, progressive: row.progressive, militaristic: row.militaristic, expansionist: row.expansionist },
+          constructionType: (row.constructionType ?? null) as TerritoryState['constructionType'],
+          constructionTicksLeft: row.constructionTicksLeft ?? null,
+          pendingConstructionType: (row.pendingConstructionType ?? null) as TerritoryState['pendingConstructionType'],
+          ownershipShock: row.ownershipShock, acquiredTick: row.acquiredTick ?? null,
+          localPopStock: row.localPopStock, localIndStock: row.localIndStock, localWltStock: row.localWltStock,
+        },
+      };
     }
-    return nationId;
-  }
-
-  app.post('/api/dev/tick', async (request, reply) => {
-    if (!requireDev(request, reply)) return;
-    try { return { ok: true, tick: (await runTick(defs)).tick }; }
-    catch (err: unknown) { return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) }); }
+    const adminCapitalMap: Record<string, string | null> = {};
+    for (const n of nationRows) adminCapitalMap[n.id] = n.capitalTerritoryId ? stripPrefix(n.capitalTerritoryId) : null;
+    const nationCultures: Record<string, ReturnType<typeof computeNationCulture>> = {};
+    for (const n of nationRows) nationCultures[n.id] = computeNationCulture(n.id, allTerritories, adminCapitalMap[n.id] ?? null);
+    const territoryCounts: Record<string, number> = {};
+    const adminRecentAcquired: Record<string, number> = {};
+    const adminDevCounts: Record<string, number> = {};
+    const adminFullCounts: Record<string, number> = {};
+    for (const row of territoryRows) {
+      if (!row.ownerId) continue;
+      territoryCounts[row.ownerId] = (territoryCounts[row.ownerId] ?? 0) + 1;
+      if (row.acquiredTick !== null) {
+        const age = meta.tick - row.acquiredTick;
+        if (age <= RECENT_ACQUISITION_WINDOW) {
+          const weight = Math.max(0, 1 - age / RECENT_ACQUISITION_WINDOW);
+          adminRecentAcquired[row.ownerId] = (adminRecentAcquired[row.ownerId] ?? 0) + weight;
+        }
+      }
+      if (row.hasRoad && (row.hasPort || row.hasMarket) && row.fortificationLevel >= 1)
+        adminDevCounts[row.ownerId] = (adminDevCounts[row.ownerId] ?? 0) + 1;
+      if (row.hasRoad && (row.hasPort || row.hasMarket) && row.fortificationLevel >= 3)
+        adminFullCounts[row.ownerId] = (adminFullCounts[row.ownerId] ?? 0) + 1;
+    }
+    const nationNameMap = Object.fromEntries(nationRows.map((n) => [n.id, n.name]));
+    const territories = territoryRows.map((t) => {
+      const defId = stripPrefix(t.id);
+      const def = defById.get(defId);
+      const nc = t.ownerId ? nationCultures[t.ownerId] : null;
+      const ownerRow = t.ownerId ? nationRows.find((n) => n.id === t.ownerId) : null;
+      let compatibility = null, unrestCauses = null;
+      if (t.ownerId && nc && def) {
+        const terrTraits = { individualist: t.individualist, progressive: t.progressive, militaristic: t.militaristic, expansionist: t.expansionist };
+        const effectiveFamily = (t.culturalFamily ?? def.culturalFamily) as import('@war/engine').CulturalFamily;
+        compatibility = computeCompatibility(terrTraits, effectiveFamily, nc);
+        const capitalId = ownerRow?.capitalTerritoryId ? stripPrefix(ownerRow.capitalTerritoryId) : null;
+        const hops = capitalId ? bfsDistance(adjacency, capitalId, defId) : 0;
+        unrestCauses = computeUnrestEquilibrium(
+          compatibility, hops, t.hasRoad, t.hasPort, t.fortificationLevel,
+          territoryCounts[t.ownerId!] ?? 1, t.ownershipShock, adminRecentAcquired[t.ownerId!] ?? 0,
+        );
+      }
+      return {
+        id: t.id, defId, name: def?.name ?? defId,
+        ownerId: t.ownerId, ownerName: t.ownerId ? (nationNameMap[t.ownerId] ?? null) : null,
+        unrest: t.unrest, unrestCauses, isInRevolt: t.isInRevolt,
+        fortificationLevel: t.fortificationLevel, hasRoad: t.hasRoad, hasPort: t.hasPort, hasMarket: t.hasMarket,
+        portLevel: (t as any).portLevel ?? 1,
+        isCoastal: def?.isCoastal ?? false,
+        constructionType: t.constructionType ?? null,
+        constructionTicksLeft: t.constructionTicksLeft ?? null,
+        pendingConstructionType: t.pendingConstructionType ?? null,
+        compatibility,
+        culture: {
+          individualist: t.individualist, progressive: t.progressive,
+          militaristic: t.militaristic, expansionist: t.expansionist,
+          family: t.culturalFamily ?? def?.culturalFamily ?? 'unknown',
+        },
+        fragmentationRisk: (() => {
+          if (!t.ownerId) return null;
+          const ownerNation = nationRows.find((n) => n.id === t.ownerId);
+          if (!ownerNation || (ownerNation as any).activityTier !== 'abandoned') return null;
+          const aAt = (ownerNation as any).abandonedAt as Date | null;
+          if (!aAt) return null;
+          return fragmentationRisk(t.unrest, aAt);
+        })(),
+      };
+    });
+    const nations = nationRows.map((n) => ({
+      id: n.id, name: n.name, isAI: n.isAI,
+      stockpiles: { population: n.popStock, industry: n.indStock, wealth: n.wealthStock },
+      armySize: n.armySize, mandateBudget: mandateBudget(adminDevCounts[n.id] ?? 0, adminFullCounts[n.id] ?? 0), mandateUsed: n.mandateUsed,
+      capital: n.capitalTerritoryId, culture: nationCultures[n.id] ?? null,
+      activityTier: (n as any).activityTier ?? 'active',
+      lastActiveAt: (n as any).lastActiveAt ?? null,
+      abandonedAt: (n as any).abandonedAt ?? null,
+    }));
+    const armyRows = await prisma.army.findMany({ where: gf });
+    const armiesByNation: Record<string, Array<{ id: number; territoryId: string; size: number; status: string }>> = {};
+    for (const a of armyRows) {
+      if (!armiesByNation[a.nationId]) armiesByNation[a.nationId] = [];
+      armiesByNation[a.nationId]!.push({ id: a.id, territoryId: a.territoryId, size: a.size, status: a.status });
+    }
+    const nationsWithArmies = nations.map((n) => ({ ...n, armies: armiesByNation[n.id] ?? [] }));
+    const routeRows = await (prisma as any).tradeRouteAgreement?.findMany?.({
+      where: { status: { in: ['active', 'suspended'] } },
+      include: { shipments: true },
+    }) ?? [];
+    const tradeRouteAgreements = routeRows.map((r: any) => ({
+      id: r.id, treatyClauseId: r.treatyClauseId ?? null,
+      ownerNationId: r.ownerNationId, partnerNationId: r.partnerNationId ?? null,
+      type: r.type, sourceTerritoryId: r.sourceTerritoryId, destinationTerritoryId: r.destinationTerritoryId,
+      portLevel: r.portLevel, baseCapacity: r.baseCapacity, currentCapacity: r.currentCapacity,
+      growthCap: r.growthCap, cyclesCompleted: r.cyclesCompleted, profitMultiplier: r.profitMultiplier,
+      upkeepPerTick: r.currentCapacity * r.upkeepRate, status: r.status, startedAtTick: r.startedAtTick,
+      shipments: (r.shipments ?? []).map((s: any) => ({
+        id: s.id, routeId: s.routeId, transitTicksRemaining: s.transitTicksRemaining,
+        cargoAmount: s.cargoAmount, cargoResource: s.cargoResource, departedAtTick: s.departedAtTick,
+      })),
+    }));
+    return {
+      tick: meta.tick, phase: currentPhase(), nations: nationsWithArmies, territories,
+      recentEvents: events.map((e) => ({ tick: e.tick, message: e.message })),
+      tradeRouteAgreements,
+    };
   });
 
-  app.post('/api/dev/set-phase', async (request, reply) => {
-    if (!requireDev(request, reply)) return;
+  // POST /api/admin/games/:gameId/tick — trigger one tick for the specified game.
+  app.post('/api/admin/games/:gameId/tick', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { gameId } = request.params as { gameId: string };
+    try {
+      if (gameId === 'legacy-world') {
+        return { ok: true, tick: (await runTick(defs)).tick };
+      }
+      return { ok: true, tick: (await runGameTick(gameId, defs)).tick };
+    } catch (err: unknown) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/admin/games/:gameId/set-phase — phase override for a game.
+  app.post('/api/admin/games/:gameId/set-phase', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
     const { phase } = request.query as { phase?: string };
     if (phase !== undefined && phase !== 'main' && phase !== 'prep') {
       return reply.code(400).send({ error: 'phase must be "main" or "prep" (omit to clear)' });
@@ -1144,8 +1582,94 @@ const start = async () => {
     return { ok: true, phase: currentPhase(), override: getPhaseOverride() };
   });
 
-  app.post('/api/dev/reset-world', async (request, reply) => {
-    if (!requireDev(request, reply)) return;
+  // POST /api/admin/games/:gameId/reset-world — wipe and re-init a game's world.
+  app.post('/api/admin/games/:gameId/reset-world', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { gameId } = request.params as { gameId: string };
+    const gf = gameId === 'legacy-world' ? {} : { gameId };
+    await prisma.$transaction([
+      prisma.councilQueuedAction.deleteMany(),
+      prisma.warCouncil.deleteMany(),
+      prisma.queuedAction.deleteMany({ where: gf }),
+      prisma.eventLog.deleteMany({ where: gf }),
+      prisma.instantTrade.deleteMany({ where: gf }),
+      prisma.tradeRoute.deleteMany({ where: gf }),
+      prisma.objectiveClause.deleteMany(),
+      prisma.treatyClause.deleteMany(),
+      prisma.treatyParty.deleteMany(),
+      prisma.treatyHistory.deleteMany({ where: gf }),
+      prisma.treaty.deleteMany({ where: gf }),
+      prisma.proposalClause.deleteMany(),
+      prisma.proposal.deleteMany({ where: gf }),
+      prisma.war.deleteMany({ where: gf }),
+      prisma.embassy.deleteMany({ where: gf }),
+      prisma.army.deleteMany({ where: gf }),
+      prisma.territoryModifier.deleteMany({ where: gf }),
+      prisma.borderSkirmish.deleteMany({ where: gf }),
+      prisma.territoryClaim.deleteMany({ where: gf }),
+      prisma.federationMember.deleteMany(),
+      prisma.federation.deleteMany(),
+      prisma.prestigeHistory.deleteMany({ where: gf }),
+      prisma.territoryState.deleteMany({ where: gf }),
+      prisma.nation.deleteMany({ where: gf }),
+      prisma.worldMeta.deleteMany({ where: gf }),
+    ]);
+    if (gameId === 'legacy-world') {
+      await ensureWorldInitialized(defs);
+    } else {
+      await ensureGameWorldInitialized(gameId, defs);
+    }
+    return { ok: true, message: `World reset to tick 0 for game ${gameId}.` };
+  });
+
+  // ── Dev endpoints (game-scoped, v0.39) ────────────────────────────────────────
+  // Session-gated: user must be a member of the game. Replaces the old /api/dev/*
+  // player1-only variants. Requires membership, not the legacy DEV_NATION_ID check.
+
+  // POST /api/dev/games/:gameId/tick — trigger one tick (member-only).
+  app.post('/api/dev/games/:gameId/tick', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+    const { gameId } = request.params as { gameId: string };
+    if (gameId !== 'legacy-world') {
+      const membership = await prisma.gameMembership.findFirst({ where: { gameId, userId } });
+      if (!membership) return reply.code(403).send({ error: 'Not a member of this game' });
+    }
+    try {
+      if (gameId === 'legacy-world') {
+        return { ok: true, tick: (await runTick(defs)).tick };
+      }
+      return { ok: true, tick: (await runGameTick(gameId, defs)).tick };
+    } catch (err: unknown) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/dev/games/:gameId/set-phase — phase override (member-only).
+  app.post('/api/dev/games/:gameId/set-phase', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+    const { gameId } = request.params as { gameId: string };
+    if (gameId !== 'legacy-world') {
+      const membership = await prisma.gameMembership.findFirst({ where: { gameId, userId } });
+      if (!membership) return reply.code(403).send({ error: 'Not a member of this game' });
+    }
+    const { phase } = request.query as { phase?: string };
+    if (phase !== undefined && phase !== 'main' && phase !== 'prep') {
+      return reply.code(400).send({ error: 'phase must be "main" or "prep" (omit to clear)' });
+    }
+    setPhaseOverride(phase === 'main' ? 'main' : phase === 'prep' ? 'prep' : null);
+    return { ok: true, phase: currentPhase(), override: getPhaseOverride() };
+  });
+
+  // POST /api/dev/games/:gameId/reset-world — wipe and re-init (member-only, legacy-world only for safety).
+  app.post('/api/dev/games/:gameId/reset-world', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+    const { gameId } = request.params as { gameId: string };
+    if (gameId !== 'legacy-world') {
+      return reply.code(403).send({ error: 'Reset is only allowed for legacy-world via dev endpoint; use admin endpoint for per-game resets' });
+    }
     await prisma.$transaction([
       prisma.queuedAction.deleteMany(),
       prisma.eventLog.deleteMany(),
@@ -1160,346 +1684,9 @@ const start = async () => {
     return { ok: true, message: 'World reset to tick 0.' };
   });
 
-  app.get('/api/dev/territory/:id', async (request, reply) => {
-    if (!requireDev(request, reply)) return;
-    const { id } = request.params as { id: string };
-    const t = await prisma.territoryState.findUnique({ where: { id } });
-    if (!t) return reply.code(404).send({ error: 'Territory not found' });
-    return t;
-  });
-
-  app.post('/api/dev/territory/:id/set-unrest', async (request, reply) => {
-    if (!requireDev(request, reply)) return;
-    const { id } = request.params as { id: string };
-    const { value } = request.body as { value?: number };
-    if (typeof value !== 'number' || value < 0 || value > 1) {
-      return reply.code(400).send({ error: 'value must be 0.0–1.0' });
-    }
-    await prisma.territoryState.update({ where: { id }, data: { unrest: value } });
-    return { ok: true };
-  });
-
-  app.post('/api/dev/territory/:id/set-trait', async (request, reply) => {
-    if (!requireDev(request, reply)) return;
-    const { id } = request.params as { id: string };
-    const { trait, value } = request.body as { trait?: string; value?: number };
-    if (!trait || !CULTURE_TRAITS.includes(trait as typeof CULTURE_TRAITS[number])) {
-      return reply.code(400).send({ error: `trait must be one of: ${CULTURE_TRAITS.join(', ')}` });
-    }
-    if (typeof value !== 'number' || value < -1 || value > 1) {
-      return reply.code(400).send({ error: 'value must be −1.0–+1.0' });
-    }
-    await prisma.territoryState.update({ where: { id }, data: { [trait]: value } });
-    return { ok: true };
-  });
-
-  // ── War Council API ────────────────────────────────────────────────────────
-
-  // GET /api/war/:warId/council
-  // Returns the requesting nation's side of the war council: members, their queued
-  // military actions this tick, contested territory status, and joint_invasion objectives.
-  // Strictly limited to the requesting nation's own side — never exposes enemy plans.
-  app.get('/api/war/:warId/council', async (request, reply) => {
-    const nationId = await getSession(request);
-    if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
-
-    const { warId: warIdStr } = request.params as { warId: string };
-    const warId = parseInt(warIdStr, 10);
-    if (isNaN(warId)) return reply.code(400).send({ error: 'Invalid warId' });
-
-    const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
-    const currentTick = meta?.tick ?? 0;
-
-    const war = await prisma.war.findUnique({ where: { id: warId } });
-    if (!war) return reply.code(404).send({ error: 'War not found' });
-    if (war.status === 'ended') return reply.code(400).send({ error: 'War has ended' });
-
-    // Determine which side this nation is on.
-    const isAttacker = war.attackerId === nationId;
-    const isDefender = war.defenderId === nationId;
-    // Also check if they are in a council for this war.
-    const allCouncils = await prisma.warCouncil.findMany({ where: { warId } });
-    const myCouncil = allCouncils.find((c) => {
-      const members = (c.memberNationIds as string[]) ?? [];
-      return members.includes(nationId);
-    });
-
-    if (!myCouncil && !isAttacker && !isDefender) {
-      return reply.code(403).send({ error: 'You are not a party to this war' });
-    }
-
-    // Fall back to the appropriate council based on direct attacker/defender status
-    // if council rows haven't been created yet (race condition: declaration same tick).
-    const council = myCouncil ?? allCouncils.find((c) =>
-      c.side === (isAttacker ? 'attacker' : 'defender'),
-    );
-    if (!council) {
-      return reply.code(404).send({ error: 'Council not found — war may have just started' });
-    }
-
-    const memberNationIds = (council.memberNationIds as string[]) ?? [];
-
-    // Load member nation names.
-    const memberNations = await prisma.nation.findMany({
-      where: { id: { in: memberNationIds } },
-      select: { id: true, name: true },
-    });
-
-    // Load queued military actions for this tick from council mirrors.
-    const councilActions = await prisma.councilQueuedAction.findMany({
-      where: { councilId: council.id, tick: currentTick },
-      orderBy: { id: 'asc' },
-    });
-
-    // Load armies for all council members (for "army present/moving toward" status).
-    const memberArmies = await prisma.army.findMany({
-      where: { nationId: { in: memberNationIds } },
-    });
-
-    // Build contested territory status: war's occupiedTerritories + besieging armies.
-    const occupiedTerritories = (war.occupiedTerritories as Array<{
-      territoryId: string;
-      occupyingNationId: string;
-      siegeProgress: number;
-      siegeStartTick: number;
-    }>) ?? [];
-
-    // For each contested territory, list which council members have armies present or moving toward it.
-    const contestedTerritoryIds = new Set(occupiedTerritories.map((o) => o.territoryId));
-    // Also include any territory that a council member's army is besieging or moving to.
-    for (const army of memberArmies) {
-      if (army.status === 'besieging') contestedTerritoryIds.add(army.territoryId);
-      if (army.status === 'moving' && army.destinationTerritoryId) {
-        contestedTerritoryIds.add(army.destinationTerritoryId);
-      }
-    }
-
-    const contestedTerritories = [...contestedTerritoryIds].map((terrId) => {
-      const def = defById.get(terrId);
-      const armiesPresent = memberArmies
-        .filter((a) => a.territoryId === terrId || (a.status === 'moving' && a.destinationTerritoryId === terrId))
-        .map((a) => ({ nationId: a.nationId, size: a.size, status: a.status }));
-
-      const occ = occupiedTerritories.find((o) => o.territoryId === terrId);
-
-      return {
-        territoryId: terrId,
-        name: def?.name ?? terrId,
-        siegeProgress: occ?.siegeProgress ?? null,
-        occupyingNationId: occ?.occupyingNationId ?? null,
-        councilArmiesPresent: armiesPresent,
-      };
-    });
-
-    // Load joint_invasion objective clauses for this council's side.
-    // Find active treaties between council members and check for joint_invasion objectives.
-    const activeTreaties = await prisma.treaty.findMany({
-      where: {
-        status: { in: ['active', 'degraded'] },
-        parties: { some: { nationId: { in: memberNationIds } } },
-      },
-      include: {
-        parties: true,
-        clauses: { include: { objectiveClause: true } },
-      },
-    });
-
-    const jointInvasionObjectives: Array<{
-      treatyId: number;
-      clauseIndex: number;
-      targetTerritoryId: string | null;
-      status: string;
-      deadlineTicks: number;
-      checklist: Array<{ nationId: string; name: string; hasQueuedAttack: boolean }>;
-    }> = [];
-
-    for (const treaty of activeTreaties) {
-      for (const clause of treaty.clauses) {
-        const obj = (clause as any).objectiveClause;
-        if (!obj || obj.objectiveType !== 'joint_invasion') continue;
-        if (obj.status !== 'pending') continue;
-
-        // Check which council members have already queued an attack on the target this tick.
-        const attacksOnTarget = councilActions.filter(
-          (a) => a.actionType === 'attack_territory' && a.targetTerritoryId === obj.targetTerritoryId,
-        );
-        const attackingNationIds = new Set(attacksOnTarget.map((a) => a.nationId));
-
-        // Checklist: all responsible parties (from the treaty parties on this council).
-        const checklist = memberNations
-          .filter((n) => {
-            // Include if they are a party to the treaty.
-            return treaty.parties.some((p) => p.nationId === n.id);
-          })
-          .map((n) => ({
-            nationId: n.id,
-            name: n.name,
-            hasQueuedAttack: attackingNationIds.has(n.id),
-          }));
-
-        jointInvasionObjectives.push({
-          treatyId: treaty.id,
-          clauseIndex: clause.clauseIndex,
-          targetTerritoryId: obj.targetTerritoryId ?? null,
-          status: obj.status,
-          deadlineTicks: obj.deadlineTicks,
-          checklist,
-        });
-      }
-    }
-
-    // Build the members-with-actions response.
-    const membersWithActions = memberNations.map((n) => {
-      const actions = councilActions
-        .filter((a) => a.nationId === n.id)
-        .map((a) => ({ actionType: a.actionType, targetTerritoryId: a.targetTerritoryId }));
-      const hasQueuedMilitary = actions.length > 0;
-      return {
-        nationId: n.id,
-        name: n.name,
-        isMe: n.id === nationId,
-        hasQueuedMilitary,
-        queuedActions: actions,
-      };
-    });
-
-    return {
-      warId,
-      warStatus: war.status,
-      councilSide: council.side,
-      tick: currentTick,
-      members: membersWithActions,
-      contestedTerritories,
-      jointInvasionObjectives,
-    };
-  });
-
-  // ── Diplomacy API ──────────────────────────────────────────────────────────
-
-  // GET /api/diplomacy — returns the calling nation's diplomacy state:
-  // active treaties, incoming/outgoing proposals, their Trust, partner Trust values.
-  app.get('/api/diplomacy', async (request, reply) => {
-    const nationId = await getSession(request);
-    if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
-
-    const [
-      myNation,
-      activeTreaties,
-      incomingProposals,
-      outgoingProposals,
-      allNations,
-      incomingInstantTrades,
-      outgoingInstantTrades,
-    ] = await Promise.all([
-      prisma.nation.findUnique({ where: { id: nationId } }),
-      prisma.treaty.findMany({
-        where: { status: { in: ['active', 'degraded'] }, parties: { some: { nationId } } },
-        include: { parties: true, clauses: { include: { tradeRoute: true, objectiveClause: true } }, proposal: { select: { proposerId: true, targetId: true } } },
-      }),
-      prisma.proposal.findMany({
-        where: { targetId: nationId, status: 'pending' },
-        include: { clauses: true },
-      }),
-      prisma.proposal.findMany({
-        where: { proposerId: nationId, status: 'pending' },
-        include: { clauses: true },
-      }),
-      prisma.nation.findMany({ select: { id: true, name: true, trust: true } }),
-      prisma.instantTrade.findMany({ where: { targetNationId: nationId, status: 'pending' } }),
-      prisma.instantTrade.findMany({ where: { proposerNationId: nationId, status: 'pending' } }),
-    ]);
-
-    if (!myNation) return reply.code(404).send({ error: 'Nation not found' });
-
-    const nationNameMap = Object.fromEntries(allNations.map((n) => [n.id, n.name]));
-    const nationTrustMap = Object.fromEntries(allNations.map((n) => [n.id, n.trust]));
-
-    return {
-      myTrust: myNation.trust,
-      inactivityTier: myNation.inactivityTier,
-      treaties: activeTreaties.map((t) => ({
-        id: t.id,
-        status: t.status,
-        termTicks: t.termTicks,
-        tickStarted: t.tickStarted,
-        tickEnds: t.tickEnds,
-        totalCollateral: t.totalCollateral,
-        parties: t.parties.map((p) => ({
-          nationId: p.nationId,
-          nationName: nationNameMap[p.nationId] ?? p.nationId,
-          collateralDeposited: p.collateralDeposited,
-          escrowAmount: p.escrowAmount,
-          refundRemaining: p.refundRemaining,
-        })),
-        clauses: t.clauses.map((c) => ({
-          id: c.id,
-          clauseIndex: c.clauseIndex,
-          type: c.type,
-          collateral: c.collateral,
-          payload: c.payload,
-          clauseStatus: c.clauseStatus,
-          missedPayments: c.missedPayments,
-          tradeRoute: (c as any).tradeRoute ? {
-            path: (c as any).tradeRoute.path,
-            isSeaRoute: (c as any).tradeRoute.isSeaRoute,
-            pathStale: (c as any).tradeRoute.pathStale,
-            capacity: (c as any).tradeRoute.capacity,
-            friction: (c as any).tradeRoute.friction,
-          } : null,
-          objectiveClause: (c as any).objectiveClause ?? null,
-        })),
-        partnerTrust: t.parties
-          .filter((p) => p.nationId !== nationId)
-          .map((p) => ({ nationId: p.nationId, trust: nationTrustMap[p.nationId] ?? 50 })),
-      })),
-      incomingProposals: incomingProposals.map((p) => ({
-        id: p.id,
-        proposerId: p.proposerId,
-        proposerName: nationNameMap[p.proposerId] ?? p.proposerId,
-        proposerTrust: nationTrustMap[p.proposerId] ?? 50,
-        termTicks: p.termTicks,
-        proposerCollateral: p.proposerCollateral,
-        targetCollateral: p.targetCollateral,
-        tickProposed: p.tickProposed,
-        expiresAtTick: p.expiresAtTick,
-        clauses: p.clauses.map((c) => ({ type: c.type, collateral: c.collateral, payload: c.payload })),
-      })),
-      outgoingProposals: outgoingProposals.map((p) => ({
-        id: p.id,
-        targetId: p.targetId,
-        targetName: nationNameMap[p.targetId] ?? p.targetId,
-        termTicks: p.termTicks,
-        proposerCollateral: p.proposerCollateral,
-        targetCollateral: p.targetCollateral,
-        tickProposed: p.tickProposed,
-        expiresAtTick: p.expiresAtTick,
-        clauses: p.clauses.map((c) => ({ type: c.type, collateral: c.collateral, payload: c.payload })),
-      })),
-      nationTrust: Object.fromEntries(allNations.map((n) => [n.id, { name: n.name, trust: n.trust }])),
-      incomingInstantTrades: incomingInstantTrades.map((t) => ({
-        id: t.id,
-        proposerNationId: t.proposerNationId,
-        proposerName: allNations.find((n) => n.id === t.proposerNationId)?.name ?? t.proposerNationId,
-        resource: t.resource,
-        amount: t.amount,
-        sourceTerritoryId: t.sourceTerritoryId,
-        tickProposed: t.tickProposed,
-        expiresAtTick: t.expiresAtTick,
-      })),
-      outgoingInstantTrades: outgoingInstantTrades.map((t) => ({
-        id: t.id,
-        targetNationId: t.targetNationId,
-        targetName: allNations.find((n) => n.id === t.targetNationId)?.name ?? t.targetNationId,
-        resource: t.resource,
-        amount: t.amount,
-        sourceTerritoryId: t.sourceTerritoryId,
-        tickProposed: t.tickProposed,
-        expiresAtTick: t.expiresAtTick,
-      })),
-    };
-  });
-
   // ── Admin diplomacy endpoints ──────────────────────────────────────────────
+  // NOTE: /api/war/:warId/council removed in v0.39 — use /api/games/:id/war/:warId/council.
+  // NOTE: /api/diplomacy removed in v0.39 — use /api/games/:id/diplomacy.
 
   // GET /api/admin/diplomacy — full treaty + trade inspector (god's-eye view)
   app.get('/api/admin/diplomacy', async (request, reply) => {

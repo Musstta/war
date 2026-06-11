@@ -3,6 +3,7 @@ import { api, WarCouncilView, WorldView } from '../api';
 
 interface Props {
   world: WorldView;
+  gameId: string;
 }
 
 const panel: React.CSSProperties = {
@@ -42,7 +43,7 @@ function actionLabel(actionType: string, targetTerritoryId: string | null): stri
   return actionType;
 }
 
-export function WarCouncilPanel({ world }: Props) {
+export function WarCouncilPanel({ world, gameId }: Props) {
   const [council, setCouncil] = useState<WarCouncilView | null>(null);
   const [activeWarId, setActiveWarId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,13 +68,13 @@ export function WarCouncilPanel({ world }: Props) {
     const warId = myActiveWarIds[0]!;
     setActiveWarId(warId);
     try {
-      const data = await api.warCouncil(warId);
+      const data = await api.gameWarCouncil(gameId, warId);
       setCouncil(data);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load council');
     }
-  }, [myActiveWarIds.join(',')]);
+  }, [myActiveWarIds.join(','), gameId]);
 
   useEffect(() => {
     fetchCouncil();

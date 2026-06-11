@@ -6,9 +6,10 @@ import { WorldView, api } from '../api';
 interface Props {
   world: WorldView;
   onRefresh: () => void;
+  gameId: string;
 }
 
-export function DevToolbar({ world, onRefresh }: Props) {
+export function DevToolbar({ world, onRefresh, gameId }: Props) {
   if (world.myNationId !== 'nation_costa_rica') return null;
 
   const [busy, setBusy] = useState(false);
@@ -28,13 +29,13 @@ export function DevToolbar({ world, onRefresh }: Props) {
       <span style={{ color: '#f0a500', fontWeight: 'bold', marginRight: '0.6rem', fontSize: '0.7rem' }}>DEV</span>
 
       <span style={groupLabel}>Phase ({phaseLabel}):</span>
-      <Btn label="→ Main" onClick={() => run(() => api.dev.setPhase('main'))} busy={busy} />
-      <Btn label="→ Prep" onClick={() => run(() => api.dev.setPhase('prep'))} busy={busy} />
-      <Btn label="→ Clock" onClick={() => run(() => api.dev.setPhase())} busy={busy} title="Clear override, return to real clock" />
+      <Btn label="→ Main" onClick={() => run(() => api.dev.setPhase(gameId, 'main'))} busy={busy} />
+      <Btn label="→ Prep" onClick={() => run(() => api.dev.setPhase(gameId, 'prep'))} busy={busy} />
+      <Btn label="→ Clock" onClick={() => run(() => api.dev.setPhase(gameId))} busy={busy} title="Clear override, return to real clock" />
 
       <Sep />
 
-      <Btn label="⚡ Tick" onClick={() => run(() => api.dev.tick())} busy={busy} highlight />
+      <Btn label="⚡ Tick" onClick={() => run(() => api.dev.tick(gameId))} busy={busy} highlight />
 
       <Sep />
 
@@ -44,7 +45,7 @@ export function DevToolbar({ world, onRefresh }: Props) {
         danger
         onClick={() => {
           if (!confirm('Wipe all game data and restart from tick 0?')) return;
-          run(() => api.dev.resetWorld());
+          run(() => api.dev.resetWorld(gameId));
         }}
       />
     </div>

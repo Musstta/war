@@ -121,14 +121,14 @@ curl -X POST "http://localhost:3001/admin/set-phase?phase=main" \
   -H "X-Admin-Key: dev-only-insecure-key"
 
 # 2. Log in via the web UI and queue a build_road action on one of your territories.
-#    (Or POST /api/action directly if testing without the UI.)
+#    (Or POST /api/games/legacy-world/action directly if testing without the UI.)
 
 # 3. Resolve it
 curl -X POST http://localhost:3001/admin/tick \
   -H "X-Admin-Key: dev-only-insecure-key"
 
 # 4. Confirm: the territory's hasRoad flips to true, recentEvents shows the build,
-#    and the map reflects on the next /api/world poll.
+#    and the map reflects on the next /api/games/legacy-world/world poll.
 ```
 
 ---
@@ -162,14 +162,14 @@ for i in $(seq 6); do
 done
 
 # 3. Queue build_port on a coastal territory (costa_rica is coastal)
-curl -X POST http://localhost:3001/api/action \
+curl -X POST http://localhost:3001/api/games/legacy-world/action \
   -H "Content-Type: application/json" \
   -b <session-cookie> \
   -d '{"type":"build_port","payload":{"territoryId":"costa_rica"}}'
 # → {"ok":true}
 
 # 4. Try to double-queue (should be rejected)
-curl -X POST http://localhost:3001/api/action \
+curl -X POST http://localhost:3001/api/games/legacy-world/action \
   -H "Content-Type: application/json" \
   -b <session-cookie> \
   -d '{"type":"build_fort","payload":{"territoryId":"costa_rica"}}'
@@ -178,14 +178,14 @@ curl -X POST http://localhost:3001/api/action \
 # 5. Tick — construction starts (ticksLeft set to BUILD_TICKS - 1 after first tick)
 curl -X POST http://localhost:3001/admin/tick \
   -H "X-Admin-Key: dev-only-insecure-key"
-# /api/world → constructionType=port, constructionTicksLeft=2
+# /api/games/legacy-world/world → constructionType=port, constructionTicksLeft=2
 
 # 6. Run 2 more ticks — construction completes
 for i in 1 2; do
   curl -s -X POST http://localhost:3001/admin/tick \
     -H "X-Admin-Key: dev-only-insecure-key" > /dev/null
 done
-# /api/world → constructionType=null, hasPort=true
+# /api/games/legacy-world/world → constructionType=null, hasPort=true
 # recentEvents → "... completed a port in ..."
 ```
 
@@ -195,42 +195,30 @@ done
 
 ## 11. Admin functions
 
-All dev and admin functions now live at `/admin` behind the admin key. The DevToolbar and InfoPanel dev section were removed from the player view. See §12 for the admin panel and its curl equivalents.
+All dev and admin functions are now game-scoped. Use `legacy-world` as the `gameId` for the default single-server game. See §12 for the admin panel (which uses `legacy-world` by default) and its curl equivalents.
 
-The `/api/dev/*` session-cookie endpoints below remain valid for scripting (session-gated to `nation_costa_rica`):
+The `/api/dev/games/:gameId/*` member-authenticated endpoints allow any game member to drive game state (useful for scripting during solo testing):
 
 ```bash
 # First log in to get a session cookie
-curl -c /tmp/war.cookies -X POST http://localhost:3001/api/login \
+curl -c /tmp/war.cookies -X POST http://localhost:3001/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"player1","password":"war1"}'
 
-# Force phase
-curl -b /tmp/war.cookies -X POST "http://localhost:3001/api/dev/set-phase?phase=main"
-curl -b /tmp/war.cookies -X POST "http://localhost:3001/api/dev/set-phase?phase=prep"
-curl -b /tmp/war.cookies -X POST "http://localhost:3001/api/dev/set-phase"  # clear
+# Force phase (replace legacy-world with a gameId if needed)
+curl -b /tmp/war.cookies -X POST "http://localhost:3001/api/dev/games/legacy-world/set-phase?phase=main"
+curl -b /tmp/war.cookies -X POST "http://localhost:3001/api/dev/games/legacy-world/set-phase?phase=prep"
+curl -b /tmp/war.cookies -X POST "http://localhost:3001/api/dev/games/legacy-world/set-phase"  # clear
 
 # Manual tick
-curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/tick
+curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/games/legacy-world/tick
 # → {"ok":true,"tick":N}
 
-# Reset world
-curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/reset-world
-
-# Inspect territory state (unrest + culture traits + construction)
-curl -b /tmp/war.cookies http://localhost:3001/api/dev/territory/costa_rica
-
-# Set unrest on a territory
-curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/territory/costa_rica/set-unrest \
-  -H "Content-Type: application/json" -d '{"value":0.8}'
-
-# Set a culture trait (range: −1.00 to +1.00)
-curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/territory/costa_rica/set-trait \
-  -H "Content-Type: application/json" -d '{"trait":"militaristic","value":0.9}'
-# trait: individualist | progressive | militaristic | expansionist
+# Reset world (legacy-world only for safety)
+curl -b /tmp/war.cookies -X POST http://localhost:3001/api/dev/games/legacy-world/reset-world
 ```
 
-> **Security note:** `/api/dev/*` endpoints are session-gated to `nation_costa_rica`. They must be removed or replaced with real RBAC before the game goes beyond local + tunnel testing. See `docs/persistent-world-tech-stack.md` §11.
+> **Security note:** `/api/dev/games/*` endpoints require a valid game membership session. Replace with real RBAC before exposing beyond local + tunnel testing. See `docs/persistent-world-tech-stack.md` §11.
 
 ---
 
@@ -264,27 +252,29 @@ The panel auto-refreshes every 5 seconds.
 
 ### Equivalent curl commands (admin-key auth)
 
+All admin game-state routes are now scoped to a `gameId`. Use `legacy-world` for the default single-server game.
+
 ```bash
-# God's-eye world view
-curl http://localhost:3001/api/admin/world-full \
+# God's-eye world view (legacy-world)
+curl "http://localhost:3001/api/admin/games/legacy-world/world-full" \
   -H "X-Admin-Key: dev-only-insecure-key" | jq .
 
 # Advance tick
-curl -X POST http://localhost:3001/api/admin/tick \
+curl -X POST "http://localhost:3001/api/admin/games/legacy-world/tick" \
   -H "X-Admin-Key: dev-only-insecure-key"
 
 # Run 10 ticks
 for i in $(seq 10); do
-  curl -s -X POST http://localhost:3001/api/admin/tick \
+  curl -s -X POST "http://localhost:3001/api/admin/games/legacy-world/tick" \
     -H "X-Admin-Key: dev-only-insecure-key" > /dev/null
 done
 
 # Set phase
-curl -X POST "http://localhost:3001/api/admin/set-phase?phase=main" \
+curl -X POST "http://localhost:3001/api/admin/games/legacy-world/set-phase?phase=main" \
   -H "X-Admin-Key: dev-only-insecure-key"
 
 # Reset world
-curl -X POST http://localhost:3001/api/admin/reset-world \
+curl -X POST "http://localhost:3001/api/admin/games/legacy-world/reset-world" \
   -H "X-Admin-Key: dev-only-insecure-key"
 
 # Set unrest
@@ -362,7 +352,7 @@ Immediately sets `status: ended`, clears occupied territories, logs the event. U
 
 ```bash
 # 1. Force Main Phase
-curl -X POST "http://localhost:3001/api/admin/set-phase?phase=main" \
+curl -X POST "http://localhost:3001/api/admin/games/legacy-world/set-phase?phase=main" \
   -H "X-Admin-Key: dev-only-insecure-key"
 
 # 2. Declare war (admin shortcut — no mandate cost)
@@ -373,21 +363,21 @@ curl -X POST http://localhost:3001/api/admin/declare-war \
 
 # 3. Log in as Costa Rica and queue an attack
 #    (guatemala is adjacent to costa_rica — land adjacency satisfied)
-curl -c /tmp/war.cookies -X POST http://localhost:3001/api/login \
+curl -c /tmp/war.cookies -X POST http://localhost:3001/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"player1","password":"war1"}'
 
-curl -b /tmp/war.cookies -X POST http://localhost:3001/api/action \
+curl -b /tmp/war.cookies -X POST http://localhost:3001/api/games/legacy-world/action \
   -H "Content-Type: application/json" \
   -d '{"type":"attack_territory","payload":{"targetTerritoryId":"guatemala"}}'
 # → {"ok":true}
 
 # 4. Resolve tick — battle fires, event log shows outcome
-curl -X POST http://localhost:3001/api/admin/tick \
+curl -X POST "http://localhost:3001/api/admin/games/legacy-world/tick" \
   -H "X-Admin-Key: dev-only-insecure-key"
 
 # 5. Check event log
-curl http://localhost:3001/api/admin/world-full \
+curl "http://localhost:3001/api/admin/games/legacy-world/world-full" \
   -H "X-Admin-Key: dev-only-insecure-key" | jq '.recentEvents[:5]'
 ```
 
@@ -447,12 +437,12 @@ curl -X POST http://localhost:3001/api/admin/nation/nation_costa_rica/set-tier \
 
 # 2. Run a few ticks — fragmentation risk climbs as unrest accumulates
 for i in $(seq 5); do
-  curl -s -X POST http://localhost:3001/api/admin/tick \
+  curl -s -X POST "http://localhost:3001/api/admin/games/legacy-world/tick" \
     -H "X-Admin-Key: dev-only-insecure-key" > /dev/null
 done
 
 # 3. Check fragmentation risk per territory in world-full
-curl http://localhost:3001/api/admin/world-full \
+curl "http://localhost:3001/api/admin/games/legacy-world/world-full" \
   -H "X-Admin-Key: dev-only-insecure-key" | jq '.territories[] | select(.fragmentationRisk != null) | {id, fragmentationRisk}'
 
 # 4. Convert to AI if desired
@@ -634,7 +624,7 @@ curl -c /tmp/war.cookies -X POST http://localhost:3001/api/auth/login \
   -d '{"username":"player1","password":"war1"}'
 
 # 2. Queue an action
-curl -b /tmp/war.cookies -X POST http://localhost:3001/api/action \
+curl -b /tmp/war.cookies -X POST http://localhost:3001/api/games/legacy-world/action \
   -H "Content-Type: application/json" \
   -d '{"type":"build_road","payload":{"territoryId":"costa_rica"}}'
 # → {"ok":true}

@@ -64,7 +64,7 @@ interface DiplomacySectionProps {
 }
 
 function DiplomacySection({ nations, adminKey, onRefresh }: DiplomacySectionProps) {
-  const [diplData, setDiplData] = useState<{ treaties: any[]; proposals: any[]; nations: any[] } | null>(null);
+  const [diplData, setDiplData] = useState<{ treaties: any[]; proposals: any[]; nations: any[]; instantTrades: any[]; tradeRoutes: any[] } | null>(null);
   const [loadErr, setLoadErr] = useState('');
 
   const loadDipl = useCallback(async () => {

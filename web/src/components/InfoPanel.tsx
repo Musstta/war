@@ -7,6 +7,7 @@ interface Props {
   world: WorldView;
   defNames: Record<string, string>;
   onActionQueued: () => void;
+  gameId: string;
 }
 
 const FORT_MANDATE_COSTS: Record<number, number> = { 1: 2, 2: 3, 3: 4 };
@@ -73,7 +74,7 @@ function UnrestPanel({ unrest, causes }: { unrest: number; causes: UnrestCauses 
         </span>
       </div>
       {causeKeys.map((k) => {
-        const v = causes[k];
+        const v = causes[k] ?? 0;
         if (v === 0) return null;
         return (
           <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', padding: '0.05rem 0' }}>
@@ -112,7 +113,7 @@ function CompatPanel({ compat }: { compat: CompatibilityBreakdown }) {
   );
 }
 
-export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Props) {
+export function InfoPanel({ territoryId, world, defNames, onActionQueued, gameId }: Props) {
   const [confirming, setConfirming] = useState<ConfirmState | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -243,7 +244,7 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
                     costLine: `Refunds mandate + industry for ${CONSTRUCTION_NAMES[pending] ?? pending}`,
                     timingLine: 'Takes effect immediately',
                     execute: async () => {
-                      await api.action('cancel_pending_construction', { territoryId });
+                      await api.gameAction(gameId, 'cancel_pending_construction', { territoryId });
                       onActionQueued();
                     },
                   })}
@@ -372,7 +373,7 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
               timingLine: isDeferred
                 ? `Starts after ${CONSTRUCTION_NAMES[constructing!] ?? constructing} completes`
                 : 'Instant — resolves at next tick',
-              execute: async () => { await api.action('build_road', { territoryId }); onActionQueued(); },
+              execute: async () => { await api.gameAction(gameId, 'build_road', { territoryId }); onActionQueued(); },
             })}
             disabled={!canBuildRoad}
             title={
@@ -396,7 +397,7 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
                 timingLine: isDeferred
                   ? `Starts after ${CONSTRUCTION_NAMES[constructing!] ?? constructing} completes · ${BUILD_TICKS['port']} ticks to build`
                   : `${BUILD_TICKS['port']} ticks to complete`,
-                execute: async () => { await api.action('build_port', { territoryId }); onActionQueued(); },
+                execute: async () => { await api.gameAction(gameId, 'build_port', { territoryId }); onActionQueued(); },
               })}
               disabled={!canBuildPort}
               title={
@@ -422,7 +423,7 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
                 timingLine: isDeferred
                   ? `Starts after ${CONSTRUCTION_NAMES[constructing!] ?? constructing} completes · ${BUILD_TICKS['market']} ticks to build`
                   : `${BUILD_TICKS['market']} ticks to complete`,
-                execute: async () => { await api.action('build_market', { territoryId }); onActionQueued(); },
+                execute: async () => { await api.gameAction(gameId, 'build_market', { territoryId }); onActionQueued(); },
               })}
               disabled={!canBuildMarket}
               title={
@@ -449,7 +450,7 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
                 timingLine: isDeferred
                   ? `Starts after ${CONSTRUCTION_NAMES[constructing!] ?? constructing} completes · ${BUILD_TICKS[`fort_l${nextFortLevel}`] ?? '?'} ticks to build`
                   : `${BUILD_TICKS[`fort_l${nextFortLevel}`] ?? '?'} ticks to complete`,
-                execute: async () => { await api.action('build_fort', { territoryId }); onActionQueued(); },
+                execute: async () => { await api.gameAction(gameId, 'build_fort', { territoryId }); onActionQueued(); },
               })}
               disabled={!canBuildFort}
               title={
