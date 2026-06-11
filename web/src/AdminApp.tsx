@@ -677,7 +677,7 @@ export default function AdminApp() {
 
   const loadWorld = useCallback(async (k: string) => {
     try {
-      const data = await api.admin.world(k);
+      const data = await api.admin.world(k, 'legacy-world');
       setWorld(data);
       setError(null);
     } catch (err) {
@@ -689,7 +689,7 @@ export default function AdminApp() {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.admin.world(keyInput);
+      const data = await api.admin.world(keyInput, 'legacy-world');
       setWorld(data);
       setKey(keyInput);
     } catch (err) {
@@ -713,7 +713,7 @@ export default function AdminApp() {
   const runNTicks = async () => {
     setRunning(true);
     try {
-      for (let i = 0; i < nTicks; i++) await api.admin.tick(key);
+      for (let i = 0; i < nTicks; i++) await api.admin.tick(key, 'legacy-world');
       await loadWorld(key);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Tick failed');
@@ -761,11 +761,11 @@ export default function AdminApp() {
         <span style={{ color: '#f0a500', marginRight: '0.75rem', letterSpacing: '0.08em' }}>WAR ADMIN</span>
         <span style={{ color: '#555', marginRight: '0.75rem' }}>T{world.tick} · {world.phase.toUpperCase()}</span>
 
-        <button style={btn} onClick={() => withRefresh(() => api.admin.setPhase(key, 'main'))}>→ Main</button>
-        <button style={btn} onClick={() => withRefresh(() => api.admin.setPhase(key, 'prep'))}>→ Prep</button>
-        <button style={btn} onClick={() => withRefresh(() => api.admin.setPhase(key))}>→ Clock</button>
+        <button style={btn} onClick={() => withRefresh(() => api.admin.setPhase(key, 'main', 'legacy-world'))}>→ Main</button>
+        <button style={btn} onClick={() => withRefresh(() => api.admin.setPhase(key, 'prep', 'legacy-world'))}>→ Prep</button>
+        <button style={btn} onClick={() => withRefresh(() => api.admin.setPhase(key, undefined, 'legacy-world'))}>→ Clock</button>
 
-        <button style={btn} onClick={() => withRefresh(() => api.admin.tick(key))}>⚡ Tick</button>
+        <button style={btn} onClick={() => withRefresh(() => api.admin.tick(key, 'legacy-world'))}>⚡ Tick</button>
 
         <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
           <input
@@ -782,7 +782,7 @@ export default function AdminApp() {
 
         <button
           style={dangerBtn}
-          onClick={() => { if (window.confirm('Reset world to tick 0? This destroys all data.')) withRefresh(() => api.admin.resetWorld(key)); }}
+          onClick={() => { if (window.confirm('Reset world to tick 0? This destroys all data.')) withRefresh(() => api.admin.resetWorld(key, 'legacy-world')); }}
         >
           ↺ Reset
         </button>

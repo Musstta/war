@@ -638,19 +638,19 @@ export const api = {
   // [DEFERRED SECURITY] Key lives in React state only — never in cookies/localStorage.
   // See docs §11 — disable before any public deployment.
   admin: {
-    world: (key: string, gameId = 'legacy-world') =>
+    world: (key: string, gameId: string) =>
       apiFetch<AdminWorldFull>(`/api/admin/games/${gameId}/world-full`, { headers: adminHeaders(key) }),
-    tick: (key: string, gameId = 'legacy-world') =>
+    tick: (key: string, gameId: string) =>
       apiFetch<{ ok: boolean; tick: number }>(
         `/api/admin/games/${gameId}/tick`,
         { method: 'POST', headers: adminHeaders(key) },
       ),
-    setPhase: (key: string, phase?: 'main' | 'prep', gameId = 'legacy-world') =>
+    setPhase: (key: string, phase: 'main' | 'prep' | undefined, gameId: string) =>
       apiFetch<{ ok: boolean; phase: string }>(
         `/api/admin/games/${gameId}/set-phase${phase ? `?phase=${phase}` : ''}`,
         { method: 'POST', headers: adminHeaders(key) },
       ),
-    resetWorld: (key: string, gameId = 'legacy-world') =>
+    resetWorld: (key: string, gameId: string) =>
       apiFetch<{ ok: boolean }>(
         `/api/admin/games/${gameId}/reset-world`,
         { method: 'POST', headers: adminHeaders(key) },
