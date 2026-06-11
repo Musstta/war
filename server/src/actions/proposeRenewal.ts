@@ -66,11 +66,25 @@ export const proposeRenewalHandler: ActionHandler = {
           tickProposed: ctx.currentTick,
           expiresAtTick: ctx.currentTick + PROPOSAL_EXPIRY_TICKS,
           clauses: {
-            create: treaty.clauses.map((c) => ({
-              type: c.type,
-              collateral: c.collateral,
-              payload: c.payload as Prisma.InputJsonValue,
-            })),
+            create: treaty.clauses.map((c) => {
+              // For trade_route clauses, embed the prior route's grown state so acceptTreaty
+              // can carry forward currentCapacity and cyclesCompleted instead of resetting.
+              if (c.type === 'trade_route') {
+                return {
+                  type: c.type,
+                  collateral: c.collateral,
+                  payload: {
+                    ...(c.payload as object),
+                    _renewalFromClauseId: c.id,
+                  } as Prisma.InputJsonValue,
+                };
+              }
+              return {
+                type: c.type,
+                collateral: c.collateral,
+                payload: c.payload as Prisma.InputJsonValue,
+              };
+            }),
           },
         },
       });

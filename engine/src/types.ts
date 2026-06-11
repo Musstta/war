@@ -72,6 +72,10 @@ export interface UnrestCauses {
   progressiveStagnation: number;
   /** Temporary spike from a population transfer affecting this territory. [PLACEHOLDER] */
   populationTransferShock: number;
+  /** Positive stability from an active grown trade route flowing through/to this territory. [PLACEHOLDER] */
+  tradeRouteStability: number;
+  /** Temporary spike when a grown trade route is severed. [PLACEHOLDER] */
+  tradeRouteLossSpike: number;
   /** Clamped sum [0, 1]. This is the target unrest asymptotes toward. */
   equilibrium: number;
 }
@@ -110,6 +114,12 @@ export interface TerritoryDef {
    * the rest are still derived.
    */
   traitOverrides?: Partial<ValueTraits>;
+  /**
+   * Read-only quality tier (1–3). Derived at data-authoring time from basePopulation,
+   * baseIndustry, baseWealth, and isCoastal. Never mutated at runtime. See tuning-notes §Quality Tiers.
+   * 1 = low, 2 = medium, 3 = high.
+   */
+  qualityTier?: 1 | 2 | 3;
 }
 
 /** Mutable per-territory game state. */
@@ -118,20 +128,23 @@ export interface TerritoryState {
   fortificationLevel: number; // 0–3
   hasRoad: boolean;
   hasPort: boolean;
+  /** Port upgrade level; 0 if no port. Used for trade route capacity and range. [PLACEHOLDER stub: 1 for all ports] */
+  portLevel: number;
+  hasMarket: boolean;
   unrest: number; // 0.0–1.0
   /** True when unrest crosses REVOLT_THRESHOLD; territory stops producing. */
   isInRevolt: boolean;
   /** Mutable copy of value traits; drift rules applied here each tick (design doc §7.5). */
   valueTraits: ValueTraits;
   /** Phase 4: single construction slot — ports and forts occupy this slot; roads are immediate. */
-  constructionType: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | null;
+  constructionType: 'port' | 'market' | 'fort_l1' | 'fort_l2' | 'fort_l3' | null;
   constructionTicksLeft: number | null;
   /**
    * Next build queued to start automatically when constructionType completes.
    * Mandate + industry are already deducted at queue time.
-   * 'road' is instant when it fires; 'port'/'fort_*' start multi-tick construction.
+   * 'road' is instant when it fires; 'port'/'market'/'fort_*' start multi-tick construction.
    */
-  pendingConstructionType: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | 'road' | null;
+  pendingConstructionType: 'port' | 'market' | 'fort_l1' | 'fort_l2' | 'fort_l3' | 'road' | null;
   /**
    * Temporary unrest component applied when a territory changes owner (design doc §12.1).
    * Starts at CONQUEST_SHOCK_INITIAL and decays each tick toward 0.
@@ -251,7 +264,8 @@ export type ClauseType =
   | 'territory_cession'   // §1.5 — transfer a territory at a scheduled tick (embassy required)
   | 'army_lending'        // §1.1 — loan troops to another nation for a fixed duration
   | 'population_transfer' // §1.2 — one-time population transfer with cultural drift effect
-  | 'outpost';            // §1.11 — visibility grant via a constructed outpost/sentry
+  | 'outpost'             // §1.11 — visibility grant via a constructed outpost/sentry
+  | 'trade_route';        // §11 — shipment-based trade route with growth, upkeep, and cultural feedback
 
 /**
  * V1 objective types.
@@ -383,6 +397,54 @@ export interface TradeRoute {
   /** [PLACEHOLDER] Fraction of flow lost in transit. null until friction formula is specified. */
   friction: number | null;
   isSeaRoute: boolean;
+}
+
+export type TradeRouteType = 'domestic' | 'international_market' | 'international_port';
+
+/**
+ * A shipment-based trade route with capacity growth, upkeep, and cultural feedback (design doc §11).
+ * Distinct from the flat-flow TradeRoute (§14A legacy), which is not modified.
+ */
+export interface TradeRouteAgreement {
+  id: number;
+  /** Null for domestic routes; foreign key to TreatyClause.id for international. */
+  treatyClauseId: number | null;
+  /** Initiating nation (domestic: only party; international: treaty proposer). */
+  ownerNationId: string;
+  /** Null for domestic routes. */
+  partnerNationId: string | null;
+  type: TradeRouteType;
+  sourceTerritoryId: string;
+  destinationTerritoryId: string;
+  /** BFS-computed ordered territory IDs from source to destination. */
+  path: string[];
+  pathComputedAtTick: number;
+  /** Port level of the relevant endpoint; 1 for market-tier. */
+  portLevel: number;
+  baseCapacity: number;
+  currentCapacity: number;
+  growthCap: number;
+  cyclesCompleted: number;
+  /** 1.0 for domestic/market-tier; > 1.0 for port-tier based on hop distance. */
+  profitMultiplier: number;
+  /** Fraction of currentCapacity deducted per tick as upkeep. */
+  upkeepRate: number;
+  status: 'active' | 'suspended' | 'ended';
+  startedAtTick: number;
+  /** In-transit shipments belonging to this route. */
+  shipments: TradeShipment[];
+}
+
+export interface TradeShipment {
+  id: number;
+  routeId: number;
+  /** Remaining path segments (pops front territory on each advancement). */
+  path: string[];
+  transitTicksRemaining: number;
+  cargoAmount: number;
+  cargoResource: TradeResource;
+  direction: 'forward';
+  departedAtTick: number;
 }
 
 // ── War ───────────────────────────────────────────────────────────────────────
@@ -562,6 +624,8 @@ export interface WorldState {
   proposals: Proposal[];
   instantTrades: InstantTrade[];
   tradeRoutes: TradeRoute[];
+  /** Shipment-based trade routes (v0.33 system). Distinct from legacy flat-flow tradeRoutes. */
+  tradeRouteAgreements: TradeRouteAgreement[];
   wars: War[];
   /** All active armies, indexed by id. */
   armies: Army[];

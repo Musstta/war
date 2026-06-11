@@ -165,5 +165,22 @@ export function captureSnapshot(
     }
   }
 
-  return { tick, territories, nations, wars, diplomacy, events, fragmentationData };
+  const tradeRoutes: TickSnapshot['tradeRoutes'] = (world.tradeRouteAgreements ?? []).map((r) => ({
+    routeId: r.id,
+    type: r.type,
+    ownerNationId: r.ownerNationId,
+    partnerNationId: r.partnerNationId ?? null,
+    sourceTerritoryId: r.sourceTerritoryId,
+    destinationTerritoryId: r.destinationTerritoryId,
+    baseCapacity: r.baseCapacity,
+    currentCapacity: r.currentCapacity,
+    growthCap: r.growthCap,
+    cyclesCompleted: r.cyclesCompleted,
+    profitMultiplier: r.profitMultiplier,
+    upkeepPerTick: r.currentCapacity * r.upkeepRate,
+    shipmentCount: r.shipments.length,
+    status: r.status,
+  }));
+
+  return { tick, territories, nations, wars, diplomacy, events, fragmentationData, tradeRoutes };
 }

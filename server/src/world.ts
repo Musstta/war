@@ -1,8 +1,9 @@
 import { Prisma } from '@prisma/client';
 
-import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState, CulturalFamily, Treaty, Proposal, TreatyClause, ClauseType, InstantTrade, TradeRoute, InstantTradeStatus, TradeResource, ObjectiveClause, ObjectiveType, ObjectiveStatus, ResponsibleParty, War, WarType, WarStatus, OccupiedTerritory, PeaceDeal, Army, ArmyStatus, TerritoryClaim, TerritoryModifier, BorderSkirmish, Embassy, EmbassyStatus } from '@war/engine';
-import { computePrestige, computeDominantNations, deriveTerritoryTraits, deterministicSeed } from '@war/engine';
+import type { TerritoryDef, TerritoryState, Territory, Nation, WorldState, CulturalFamily, Treaty, Proposal, TreatyClause, ClauseType, InstantTrade, TradeRoute, InstantTradeStatus, TradeResource, ObjectiveClause, ObjectiveType, ObjectiveStatus, ResponsibleParty, War, WarType, WarStatus, OccupiedTerritory, PeaceDeal, Army, ArmyStatus, TerritoryClaim, TerritoryModifier, BorderSkirmish, Embassy, EmbassyStatus, TradeRouteAgreement, TradeShipment, TradeRouteType } from '@war/engine';
+import { computePrestige, computeDominantNations, deriveTerritoryTraits, deterministicSeed, PRESTIGE_PER_TRADE_CAPACITY } from '@war/engine';
 import { prisma } from './db';
+import { ensureUsersInitialized } from './auth';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -11,12 +12,20 @@ type TxClient = Prisma.TransactionClient;
 export async function loadWorldState(
   tx: TxClient,
   defs: TerritoryDef[],
+  gameId?: string,
 ): Promise<WorldState> {
-  const meta = await tx.worldMeta.findUniqueOrThrow({ where: { id: 1 } });
-  const nationRows = await tx.nation.findMany();
-  const stateRows = await tx.territoryState.findMany();
+  const effectiveGameId = gameId ?? 'legacy-world';
+  const meta = effectiveGameId === 'legacy-world'
+    ? await tx.worldMeta.findUniqueOrThrow({ where: { id: 1 } })
+    : await (tx as any).worldMeta.findFirstOrThrow({ where: { gameId: effectiveGameId } });
+  const nationRows = await tx.nation.findMany({ where: { gameId: effectiveGameId } });
+  const stateRows = await tx.territoryState.findMany({ where: { gameId: effectiveGameId } });
 
-  const stateById = new Map(stateRows.map((s) => [s.id, s]));
+  // For multi-game rows, strip the "gameId::" prefix to get the canonical def.id used by the engine.
+  const stateById = new Map(stateRows.map((s) => {
+    const defId = s.id.includes('::') ? s.id.split('::').slice(1).join('::') : s.id;
+    return [defId, s];
+  }));
 
   const territories: Record<string, Territory> = {};
   for (const def of defs) {
@@ -33,6 +42,7 @@ export async function loadWorldState(
         fortificationLevel: s.fortificationLevel,
         hasRoad: s.hasRoad,
         hasPort: s.hasPort,
+        hasMarket: s.hasMarket,
         unrest: s.unrest,
         isInRevolt: s.isInRevolt,
         valueTraits: {
@@ -85,7 +95,7 @@ export async function loadWorldState(
 
   // Load active/degraded treaties and their parties/clauses (including objective clauses).
   const treatyRows = await tx.treaty.findMany({
-    where: { status: { in: ['active', 'degraded'] } },
+    where: { status: { in: ['active', 'degraded'] }, gameId: effectiveGameId },
     include: { parties: true, clauses: { include: { objectiveClause: true } } },
   });
   const treaties: Treaty[] = treatyRows.map((t) => {
@@ -145,7 +155,7 @@ export async function loadWorldState(
 
   // Load pending proposals.
   const proposalRows = await tx.proposal.findMany({
-    where: { status: 'pending' },
+    where: { status: 'pending', gameId: effectiveGameId },
     include: { clauses: true },
   });
   const proposals: Proposal[] = proposalRows.map((p) => ({
@@ -174,7 +184,7 @@ export async function loadWorldState(
   }));
 
   // Load pending instant trades (proposer queued, recipient hasn't responded yet).
-  const itRows = await tx.instantTrade.findMany({ where: { status: 'pending' } });
+  const itRows = await tx.instantTrade.findMany({ where: { status: 'pending', gameId: effectiveGameId } });
   const instantTrades: InstantTrade[] = itRows.map((r) => ({
     id: r.id,
     proposerNationId: r.proposerNationId,
@@ -209,7 +219,7 @@ export async function loadWorldState(
 
   // Load active wars (and recently-ended wars that may still have occupied territories).
   const warRows = await tx.war.findMany({
-    where: { status: { in: ['active', 'peace_negotiation'] } },
+    where: { status: { in: ['active', 'peace_negotiation'] }, gameId: effectiveGameId },
   });
   const wars: War[] = warRows.map((w) => ({
     id: w.id,
@@ -227,34 +237,37 @@ export async function loadWorldState(
   }));
 
   // Load armies.
-  const armyRows = await tx.army.findMany();
+  const armyRows = await tx.army.findMany({ where: { gameId: effectiveGameId } });
+  const stripPrefix = (tid: string | null) =>
+    tid && effectiveGameId !== 'legacy-world' && tid.startsWith(`${effectiveGameId}::`)
+      ? tid.slice(`${effectiveGameId}::`.length) : (tid ?? null);
   const armies: Army[] = armyRows.map((a) => ({
     id: a.id,
     nationId: a.nationId,
-    territoryId: a.territoryId,
+    territoryId: stripPrefix(a.territoryId) as string,
     size: a.size,
     status: a.status as ArmyStatus,
-    destinationTerritoryId: a.destinationTerritoryId ?? null,
+    destinationTerritoryId: stripPrefix(a.destinationTerritoryId),
     movedThisTick: a.movedThisTick,
-    transitPath: ((a as any).transitPath as string[]) ?? [],
+    transitPath: ((a as any).transitPath as string[]).map((t) => stripPrefix(t) as string) ?? [],
     transitTicksRemaining: (a as any).transitTicksRemaining ?? 0,
   }));
 
   // Load active territory claims.
-  const claimRows = await tx.territoryClaim.findMany();
+  const claimRows = await tx.territoryClaim.findMany({ where: { gameId: effectiveGameId } });
   const territoryClaims: TerritoryClaim[] = claimRows.map((c) => ({
     id: c.id,
     nationId: c.nationId,
-    territoryId: c.territoryId,
+    territoryId: stripPrefix(c.territoryId) as string,
     claimedAtTick: c.claimedAtTick,
     pacificationProgress: c.pacificationProgress,
   }));
 
   // Load territory modifiers.
-  const modifierRows = await (tx as any).territoryModifier?.findMany?.() ?? [];
+  const modifierRows = await (tx as any).territoryModifier?.findMany?.({ where: { gameId: effectiveGameId } }) ?? [];
   const territoryModifiers: TerritoryModifier[] = modifierRows.map((m: any) => ({
     id: m.id,
-    territoryId: m.territoryId,
+    territoryId: stripPrefix(m.territoryId) as string,
     source: m.source,
     movementMultiplier: m.movementMultiplier,
     productionMultiplier: m.productionMultiplier,
@@ -267,11 +280,11 @@ export async function loadWorldState(
   }));
 
   // Load recent border skirmishes (last 20 ticks for CB window checks).
-  const skirmishRows = await (tx as any).borderSkirmish?.findMany?.({ orderBy: { tick: 'desc' }, take: 20 }) ?? [];
+  const skirmishRows = await (tx as any).borderSkirmish?.findMany?.({ where: { gameId: effectiveGameId }, orderBy: { tick: 'desc' }, take: 20 }) ?? [];
   const borderSkirmishes: BorderSkirmish[] = skirmishRows.map((s: any) => ({
     id: s.id,
     tick: s.tick,
-    territoryId: s.territoryId,
+    territoryId: stripPrefix(s.territoryId) as string,
     nationAId: s.nationAId,
     nationBId: s.nationBId,
     armySizeA: s.armySizeA,
@@ -282,26 +295,70 @@ export async function loadWorldState(
 
   // Load active embassies (proposed, under_construction, active — skip expelled/destroyed).
   const embassyRows = await (tx as any).embassy?.findMany?.({
-    where: { status: { in: ['proposed', 'under_construction', 'active'] } },
+    where: { status: { in: ['proposed', 'under_construction', 'active'] }, gameId: effectiveGameId },
   }) ?? [];
   const embassies: Embassy[] = embassyRows.map((e: any) => ({
     id: e.id,
     ownerNationId: e.ownerNationId,
-    hostTerritoryId: e.hostTerritoryId,
+    hostTerritoryId: stripPrefix(e.hostTerritoryId) as string,
     status: e.status as EmbassyStatus,
     constructionTicksLeft: e.constructionTicksLeft,
     startedAtTick: e.startedAtTick,
   }));
 
+  // Load active trade route agreements with their in-transit shipments.
+  const tx_any_load = tx as any;
+  const tradeRouteAgreementRows = tx_any_load.tradeRouteAgreement
+    ? await tx_any_load.tradeRouteAgreement.findMany({
+        where: { status: { in: ['active', 'suspended'] }, gameId: effectiveGameId },
+        include: { shipments: true },
+      })
+    : [];
+  const tradeRouteAgreements: TradeRouteAgreement[] = tradeRouteAgreementRows.map((r: any) => ({
+    id: r.id,
+    treatyClauseId: r.treatyClauseId ?? null,
+    ownerNationId: r.ownerNationId,
+    partnerNationId: r.partnerNationId ?? null,
+    type: r.type as TradeRouteType,
+    sourceTerritoryId: r.sourceTerritoryId,
+    destinationTerritoryId: r.destinationTerritoryId,
+    path: r.path as string[],
+    pathComputedAtTick: r.pathComputedAtTick,
+    portLevel: r.portLevel,
+    baseCapacity: r.baseCapacity,
+    currentCapacity: r.currentCapacity,
+    growthCap: r.growthCap,
+    cyclesCompleted: r.cyclesCompleted,
+    profitMultiplier: r.profitMultiplier,
+    upkeepRate: r.upkeepRate,
+    status: r.status as 'active' | 'suspended' | 'ended',
+    startedAtTick: r.startedAtTick,
+    shipments: r.shipments.map((s: any): TradeShipment => ({
+      id: s.id,
+      routeId: s.routeId,
+      path: s.path as string[],
+      transitTicksRemaining: s.transitTicksRemaining,
+      cargoAmount: s.cargoAmount,
+      cargoResource: s.cargoResource as TradeResource,
+      direction: 'forward',
+      departedAtTick: s.departedAtTick,
+    })),
+  }));
+
   // Event log is write-only from the engine's perspective; we don't need to load
   // history — resolveTick emits only the new entries for the current tick.
-  return { tick: meta.tick, rngSeed: meta.rngSeed, territories, nations, eventLog: [], treaties, proposals, instantTrades, tradeRoutes, wars, armies, territoryClaims, territoryModifiers, borderSkirmishes, embassies };
+  return { tick: meta.tick, rngSeed: meta.rngSeed, territories, nations, eventLog: [], treaties, proposals, instantTrades, tradeRoutes, wars, armies, territoryClaims, territoryModifiers, borderSkirmishes, embassies, tradeRouteAgreements };
 }
 
 // ── Saving ────────────────────────────────────────────────────────────────────
 
-export async function saveWorldState(tx: TxClient, world: WorldState): Promise<void> {
-  await tx.worldMeta.update({ where: { id: 1 }, data: { tick: world.tick } });
+export async function saveWorldState(tx: TxClient, world: WorldState, gameId?: string): Promise<void> {
+  const effectiveGameId = gameId ?? 'legacy-world';
+  if (effectiveGameId === 'legacy-world') {
+    await tx.worldMeta.update({ where: { id: 1 }, data: { tick: world.tick } });
+  } else {
+    await tx.worldMeta.updateMany({ where: { gameId: effectiveGameId }, data: { tick: world.tick } });
+  }
 
   for (const nation of Object.values(world.nations)) {
     await tx.nation.update({
@@ -387,13 +444,15 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
   }
 
   for (const [id, { state }] of Object.entries(world.territories)) {
+    const dbId = effectiveGameId === 'legacy-world' ? id : `${effectiveGameId}::${id}`;
     await tx.territoryState.update({
-      where: { id },
+      where: { id: dbId },
       data: {
         ownerId: state.ownerId,
         fortificationLevel: state.fortificationLevel,
         hasRoad: state.hasRoad,
         hasPort: state.hasPort,
+        hasMarket: state.hasMarket,
         unrest: state.unrest,
         isInRevolt: state.isInRevolt,
         individualist: state.valueTraits.individualist,
@@ -410,11 +469,64 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         localWltStock: state.localWltStock,
         hasEmbassy: state.hasEmbassy,
         populationTransferShockTicksLeft: state.populationTransferShockTicksLeft,
+        portLevel: (state as any).portLevel ?? 1,
       },
     });
   }
 
+  // Persist trade route agreement state changes (capacity growth, status, ended routes).
+  const tx_any_save = tx as any;
+  if (tx_any_save.tradeRouteAgreement) {
+    for (const route of world.tradeRouteAgreements) {
+      if (route.id > 0) {
+        await tx_any_save.tradeRouteAgreement.update({
+          where: { id: route.id },
+          data: {
+            currentCapacity: route.currentCapacity,
+            cyclesCompleted: route.cyclesCompleted,
+            status: route.status,
+          },
+        });
+        // Upsert shipments: delete arrived ones (not in route.shipments), create new ones.
+        if (tx_any_save.tradeShipment) {
+          const persistedShipmentIds = new Set(route.shipments.filter((s) => s.id > 0).map((s) => s.id));
+          const existingShipmentIds = (await tx_any_save.tradeShipment.findMany({
+            where: { routeId: route.id },
+            select: { id: true },
+          })).map((s: any) => s.id);
+          for (const existingId of existingShipmentIds) {
+            if (!persistedShipmentIds.has(existingId)) {
+              await tx_any_save.tradeShipment.delete({ where: { id: existingId } });
+            }
+          }
+          for (const shipment of route.shipments) {
+            if (shipment.id > 0) {
+              await tx_any_save.tradeShipment.update({
+                where: { id: shipment.id },
+                data: { transitTicksRemaining: shipment.transitTicksRemaining, path: shipment.path as any },
+              });
+            } else {
+              await tx_any_save.tradeShipment.create({
+                data: {
+                  routeId: route.id,
+                  path: shipment.path as any,
+                  transitTicksRemaining: shipment.transitTicksRemaining,
+                  cargoAmount: shipment.cargoAmount,
+                  cargoResource: shipment.cargoResource,
+                  direction: shipment.direction,
+                  departedAtTick: shipment.departedAtTick,
+                },
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Persist army state (position, size, status, movedThisTick).
+  const addPrefix = (tid: string | null) =>
+    tid && effectiveGameId !== 'legacy-world' ? `${effectiveGameId}::${tid}` : (tid ?? null);
   const persistedArmyIds = new Set(world.armies.map((a) => a.id));
   for (const army of world.armies) {
     if (army.id > 0) {
@@ -422,12 +534,12 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
       await tx.army.update({
         where: { id: army.id },
         data: {
-          territoryId: army.territoryId,
+          territoryId: addPrefix(army.territoryId) as string,
           size: army.size,
           status: army.status,
-          destinationTerritoryId: army.destinationTerritoryId,
+          destinationTerritoryId: addPrefix(army.destinationTerritoryId),
           movedThisTick: army.movedThisTick,
-          transitPath: army.transitPath as Prisma.InputJsonValue,
+          transitPath: army.transitPath.map((t) => addPrefix(t) as string) as Prisma.InputJsonValue,
           transitTicksRemaining: army.transitTicksRemaining,
         },
       });
@@ -437,7 +549,7 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
   }
   // Delete armies destroyed this tick (size=0 → removed from world.armies).
   // The engine removed them from the array; delete from DB any that are now missing.
-  const existingArmyIds = (await tx.army.findMany({ select: { id: true } })).map((a) => a.id);
+  const existingArmyIds = (await tx.army.findMany({ where: { gameId: effectiveGameId }, select: { id: true } })).map((a) => a.id);
   for (const existingId of existingArmyIds) {
     if (!persistedArmyIds.has(existingId)) {
       await tx.army.delete({ where: { id: existingId } });
@@ -455,7 +567,7 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
   }
   // Delete completed/void claims.
   const persistedClaimIds = new Set(world.territoryClaims.map((c) => c.id));
-  const existingClaimIds = (await tx.territoryClaim.findMany({ select: { id: true } })).map((c) => c.id);
+  const existingClaimIds = (await tx.territoryClaim.findMany({ where: { gameId: effectiveGameId }, select: { id: true } })).map((c) => c.id);
   for (const existingId of existingClaimIds) {
     if (!persistedClaimIds.has(existingId)) {
       await tx.territoryClaim.delete({ where: { id: existingId } });
@@ -475,7 +587,8 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
         // New modifier — create.
         await tx_any.territoryModifier.create({
           data: {
-            territoryId: mod.territoryId,
+            gameId: effectiveGameId,
+            territoryId: addPrefix(mod.territoryId) as string,
             source: mod.source,
             movementMultiplier: mod.movementMultiplier,
             productionMultiplier: mod.productionMultiplier,
@@ -491,7 +604,7 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
     }
     // Delete expired modifiers (engine removed from array this tick).
     const persistedModIds = new Set(world.territoryModifiers.filter((m) => m.id > 0).map((m) => m.id));
-    const existingModIds = (await tx_any.territoryModifier.findMany({ select: { id: true } })).map((m: any) => m.id);
+    const existingModIds = (await tx_any.territoryModifier.findMany({ where: { gameId: effectiveGameId }, select: { id: true } })).map((m: any) => m.id);
     for (const existingId of existingModIds) {
       if (!persistedModIds.has(existingId)) {
         await tx_any.territoryModifier.delete({ where: { id: existingId } });
@@ -505,8 +618,9 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
       if (s.id <= 0) {
         await tx_any.borderSkirmish.create({
           data: {
+            gameId: effectiveGameId,
             tick: s.tick,
-            territoryId: s.territoryId,
+            territoryId: addPrefix(s.territoryId) as string,
             nationAId: s.nationAId,
             nationBId: s.nationBId,
             armySizeA: s.armySizeA,
@@ -644,7 +758,7 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
   }
 
   if (world.eventLog.length > 0) {
-    await tx.eventLog.createMany({ data: world.eventLog });
+    await tx.eventLog.createMany({ data: world.eventLog.map((e) => ({ ...e, gameId: effectiveGameId })) });
   }
 
   // ── Prestige computation (full formula — replaces stub) ───────────────────────
@@ -652,9 +766,9 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
   // All weights [PLACEHOLDER] — see engine/src/prestige.ts and tuning-notes.md.
 
   const [allTerritories, allTreaties, allNationsForPrestige] = await Promise.all([
-    tx.territoryState.findMany({ select: { ownerId: true, unrest: true, hasRoad: true, hasPort: true, fortificationLevel: true } }),
-    tx.treaty.findMany({ where: { status: { in: ['active', 'degraded'] } }, include: { parties: true } }),
-    tx.nation.findMany({ select: { id: true, completedTreatiesKept: true, warsWon: true, foundedAtTick: true, trust: true } }),
+    tx.territoryState.findMany({ where: { gameId: effectiveGameId }, select: { ownerId: true, unrest: true, hasRoad: true, hasPort: true, fortificationLevel: true } }),
+    tx.treaty.findMany({ where: { status: { in: ['active', 'degraded'] }, gameId: effectiveGameId }, include: { parties: true } }),
+    tx.nation.findMany({ where: { gameId: effectiveGameId }, select: { id: true, completedTreatiesKept: true, warsWon: true, foundedAtTick: true, trust: true } }),
   ]);
 
   // Territory count, average unrest, and infrastructure score per nation.
@@ -665,7 +779,7 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
     if (!t.ownerId) continue;
     territoryCounts[t.ownerId] = (territoryCounts[t.ownerId] ?? 0) + 1;
     unrestSumByNation[t.ownerId] = (unrestSumByNation[t.ownerId] ?? 0) + t.unrest;
-    const infraPoints = (t.hasRoad ? 1 : 0) + (t.hasPort ? 1 : 0) + t.fortificationLevel;
+    const infraPoints = (t.hasRoad ? 1 : 0) + (t.hasPort || t.hasMarket ? 1 : 0) + t.fortificationLevel;
     infraScoreByNation[t.ownerId] = (infraScoreByNation[t.ownerId] ?? 0) + infraPoints;
   }
 
@@ -679,6 +793,16 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
 
   // Index the fresh nation rows by id for prestige inputs.
   const nationPrestigeInputs = new Map(allNationsForPrestige.map((n) => [n.id, n]));
+
+  // Trade route score per nation: sum of currentCapacity for active routes.
+  const tradeRouteScoreByNation: Record<string, number> = {};
+  for (const route of world.tradeRouteAgreements) {
+    if (route.status !== 'active') continue;
+    tradeRouteScoreByNation[route.ownerNationId] = (tradeRouteScoreByNation[route.ownerNationId] ?? 0) + route.currentCapacity;
+    if (route.partnerNationId) {
+      tradeRouteScoreByNation[route.partnerNationId] = (tradeRouteScoreByNation[route.partnerNationId] ?? 0) + route.currentCapacity;
+    }
+  }
 
   // Compute prestige for all nations; collect into a map for Dominant computation.
   const prestigeByNation = new Map<string, number>();
@@ -696,6 +820,7 @@ export async function saveWorldState(tx: TxClient, world: WorldState): Promise<v
       nationAgeTicks: world.tick - (inputs?.foundedAtTick ?? 0),
       infrastructureScore: infraScoreByNation[nation.id] ?? 0,
       trust: inputs?.trust ?? 50,
+      tradeRouteScore: tradeRouteScoreByNation[nation.id] ?? 0,
     });
     prestigeByNation.set(nation.id, score);
   }
@@ -741,6 +866,19 @@ const INITIAL_AI_NATIONS = [
 ] as const;
 
 export async function ensureWorldInitialized(defs: TerritoryDef[]): Promise<void> {
+  // Always ensure User rows exist (idempotent) — must run even on restart.
+  await ensureUsersInitialized();
+
+  // Ensure the legacy-world Game row exists (idempotent).
+  const prisma_any = prisma as any;
+  if (prisma_any.game) {
+    await prisma_any.game.upsert({
+      where: { id: 'legacy-world' },
+      update: {},
+      create: { id: 'legacy-world', name: 'Legacy World', status: 'active' },
+    });
+  }
+
   const existing = await prisma.worldMeta.findUnique({ where: { id: 1 } });
   if (existing) return;
 
@@ -809,4 +947,136 @@ export async function ensureWorldInitialized(defs: TerritoryDef[]): Promise<void
   });
 
   console.log('[world] World initialized at tick 0.');
+}
+
+// ── Per-game world initialization (v0.36) ─────────────────────────────────────
+// Creates a complete fresh world scoped to the given gameId.
+// Nation IDs are prefixed with the gameId to avoid collisions across games.
+// Slot → nation assignment is done here using the player order from GameMembership.
+
+export async function ensureGameWorldInitialized(
+  gameId: string,
+  defs: TerritoryDef[],
+  // v0.37: per-slot capital overrides from territory selection. Falls back to SLOT_CAPITALS if absent.
+  capitalsBySlot: Record<number, string> = {},
+): Promise<void> {
+  const existing = await prisma.worldMeta.findFirst({ where: { gameId } });
+  if (existing) return;
+
+  console.log(`[world] Initializing game ${gameId}...`);
+
+  // Load membership rows to determine which slots are human vs AI.
+  const memberships = await prisma.gameMembership.findMany({
+    where: { gameId },
+    orderBy: { slotIndex: 'asc' },
+    include: { user: { select: { id: true, username: true } } },
+  });
+
+  const game = await prisma.game.findUniqueOrThrow({ where: { id: gameId } });
+  const aiSlots = new Set<number>((game.aiSlots as number[]) ?? []);
+  const removedSlots = new Set<number>((game.removedSlots as number[]) ?? []);
+
+  // Build nation list: one per slot (maxPlayers total).
+  // Slots filled by a human → nationId = game_{gameId}_slot_{i}
+  // AI slots → isAI = true, same naming
+  // Removed slots → skipped (no nation)
+  const allNations: Array<{
+    id: string;
+    name: string;
+    isAI: boolean;
+    armySize: number;
+    capitalTerritoryId: string;
+    userId?: number;
+  }> = [];
+
+  // Fallback capitals used when no territory-selection override is provided (v0.36 games or AI slots).
+  const SLOT_CAPITALS = [
+    'costa_rica', 'guatemala', 'honduras', 'nicaragua', 'panama',
+    'caribbean_west', 'mexico_norte', 'brazil_sul', 'colombia_andes', 'argentina_pampa_norte',
+  ];
+
+  for (let i = 0; i < game.maxPlayers; i++) {
+    if (removedSlots.has(i)) continue;
+
+    const membership = memberships.find((m) => m.slotIndex === i);
+    const isAI = !membership || aiSlots.has(i);
+    // Use player-confirmed territory (v0.37) if available; fall back to round-robin default.
+    const capital = capitalsBySlot[i] ?? SLOT_CAPITALS[i % SLOT_CAPITALS.length]!;
+    const nationId = `${gameId}_slot_${i}`;
+    const name = isAI ? `AI Nation (Slot ${i})` : (membership!.user.username ?? `Player ${i}`);
+
+    allNations.push({ id: nationId, name, isAI, armySize: 50, capitalTerritoryId: capital, userId: membership?.userId });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // Create a WorldMeta row for this game (next available integer id).
+    const maxMeta = await tx.worldMeta.aggregate({ _max: { id: true } });
+    const nextId = (maxMeta._max.id ?? 1) + 1;
+    await tx.worldMeta.create({ data: { id: nextId, tick: 0, rngSeed: 42, gameId } });
+
+    const ownerOf = new Map<string, string>();
+    for (const n of allNations) {
+      await tx.nation.create({
+        data: {
+          id: n.id,
+          gameId,
+          name: n.name,
+          isAI: n.isAI,
+          armySize: n.armySize,
+          capitalTerritoryId: n.capitalTerritoryId,
+          inactivityTier: 'active',
+          foundedAtTick: 0,
+        },
+      });
+      ownerOf.set(n.capitalTerritoryId, n.id);
+    }
+
+    // Write nationId back to GameMembership rows.
+    for (const n of allNations) {
+      if (!n.userId) continue;
+      await tx.gameMembership.updateMany({
+        where: { gameId, userId: n.userId },
+        data: { nationId: n.id },
+      });
+    }
+
+    for (const def of defs) {
+      const derived = deriveTerritoryTraits(
+        def.culturalFamily,
+        def.geography,
+        deterministicSeed(def.id),
+      );
+      const traits = {
+        individualist: def.traitOverrides?.individualist ?? derived.traits.individualist,
+        progressive:   def.traitOverrides?.progressive   ?? derived.traits.progressive,
+        militaristic:  def.traitOverrides?.militaristic  ?? derived.traits.militaristic,
+        expansionist:  def.traitOverrides?.expansionist  ?? derived.traits.expansionist,
+      };
+      await tx.territoryState.create({
+        data: {
+          id: `${gameId}::${def.id}`,
+          gameId,
+          ownerId: ownerOf.get(def.id) ?? null,
+          individualist: traits.individualist,
+          progressive:   traits.progressive,
+          militaristic:  traits.militaristic,
+          expansionist:  traits.expansionist,
+        },
+      });
+    }
+
+    for (const n of allNations) {
+      await tx.army.create({
+        data: {
+          gameId,
+          nationId: n.id,
+          territoryId: `${gameId}::${n.capitalTerritoryId}`,
+          size: n.armySize,
+          status: 'stationed',
+        },
+      });
+    }
+  });
+
+  console.log(`[world] Game ${gameId} initialized at tick 0 with ${allNations.length} nations.`);
 }

@@ -11,4 +11,5 @@ export * from './visibility';
 export * from './prestige';
 export * from './initialization';
 export * from './diplomaticValue';
+export * from './tradeRoutes';
 

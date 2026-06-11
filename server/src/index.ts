@@ -4,11 +4,13 @@ import fastifyCookie from '@fastify/cookie';
 import { loadTerritoryDefs, computeNationCulture, computeCompatibility, computeUnrestEquilibrium, computeConquestShock, bfsDistance, CONQUEST_SHOCK_MIN, RECENT_ACQUISITION_WINDOW, computeVisibility, VisibilityTier, deriveTerritoryTraits, deterministicSeed, computeClauseWealthValue, computeClauseDiplomaticWeight, computeMinCollateral, maintainPeaceTrustMultiplier } from '@war/engine';
 import type { TerritoryDef, TerritoryState, ComputeVisibilityInput, VisTreatyInput, VisEmbassyInput } from '@war/engine';
 import { prisma } from './db';
-import { ensureWorldInitialized } from './world';
+import { ensureWorldInitialized, ensureGameWorldInitialized } from './world';
 import { runTick, startScheduler } from './tick';
+import { scheduleGameTick, deregisterGame, runGameTick, resumeActiveGames, scheduleSelectionDeadline } from './scheduler';
+import { rollCandidates, getCandidateViews, confirmCandidate, autoAssignUnconfirmed } from './territorySelection';
 import { fragmentationRisk } from './caretaker';
 import { ADMIN_KEY, DATA_FILE, PORT, SESSION_SECRET } from './config';
-import { authenticate } from './auth';
+import { loginUser, logoutUser, registerUser, getSessionNationId, PLAYER_NATION_MAP } from './auth';
 import { currentPhase, getPhaseOverride, setPhaseOverride, mandateBudget, ACTION_COSTS, ACTION_PHASE } from './phase';
 import { actionRegistry } from './actions';
 
@@ -18,11 +20,17 @@ const app = Fastify({ logger: true });
 // dev game; must move to HTTPS + encrypted session before any wider exposure.
 void app.register(fastifyCookie, { secret: SESSION_SECRET });
 
-function getSession(request: FastifyRequest): string | null {
+function getSessionToken(request: FastifyRequest): string | null {
   const raw = request.cookies['war_session'];
   if (!raw) return null;
   const result = request.unsignCookie(raw);
   return result.valid ? result.value : null;
+}
+
+async function getSession(request: FastifyRequest): Promise<string | null> {
+  const token = getSessionToken(request);
+  if (!token) return null;
+  return getSessionNationId(token);
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -34,33 +42,73 @@ app.get('/health', async () => {
 
 // ── Auth endpoints ────────────────────────────────────────────────────────────
 
+// Legacy login endpoint — kept for compatibility with existing web UI.
+// Now delegates to DB-backed loginUser. Sets token in signed cookie.
 app.post('/api/login', async (request, reply) => {
   const body = request.body as { username?: string; password?: string };
-  const player = authenticate(body.username ?? '', body.password ?? '');
-  if (!player) return reply.code(401).send({ error: 'Invalid credentials' });
-  reply.setCookie('war_session', player.nationId, {
+  const result = await loginUser(body.username ?? '', body.password ?? '');
+  if (!result.ok) return reply.code(401).send({ error: result.error });
+  reply.setCookie('war_session', result.token, {
     signed: true, httpOnly: true, path: '/', sameSite: 'strict',
   });
-  // Stamp lastActiveAt on login — resets inactivity clock.
-  await prisma.nation.update({
-    where: { id: player.nationId },
-    data: { lastActiveAt: new Date(), activityTier: 'active' } as any,
-  });
-  return { ok: true, nationId: player.nationId };
+  if (result.nationId) {
+    await prisma.nation.update({
+      where: { id: result.nationId },
+      data: { lastActiveAt: new Date(), activityTier: 'active' } as any,
+    });
+  }
+  return { ok: true, nationId: result.nationId };
 });
 
-app.post('/api/logout', async (_request, reply) => {
+app.post('/api/logout', async (request, reply) => {
+  const token = getSessionToken(request);
+  if (token) await logoutUser(token);
+  reply.clearCookie('war_session', { path: '/' });
+  return { ok: true };
+});
+
+// New auth endpoints — same semantics as /api/login but under /api/auth/* namespace.
+app.post('/api/auth/register', async (request, reply) => {
+  const body = request.body as { username?: string; password?: string };
+  const { username, password } = body;
+  if (!username || !password) return reply.code(400).send({ error: 'username and password required' });
+  if (username.length < 3 || username.length > 32) return reply.code(400).send({ error: 'username must be 3–32 characters' });
+  if (password.length < 4) return reply.code(400).send({ error: 'password must be at least 4 characters' });
+  const result = await registerUser(username, password);
+  if (!result.ok) return reply.code(409).send({ error: result.error });
+  return { ok: true, userId: result.userId };
+});
+
+app.post('/api/auth/login', async (request, reply) => {
+  const body = request.body as { username?: string; password?: string };
+  const result = await loginUser(body.username ?? '', body.password ?? '');
+  if (!result.ok) return reply.code(401).send({ error: result.error });
+  reply.setCookie('war_session', result.token, {
+    signed: true, httpOnly: true, path: '/', sameSite: 'strict',
+  });
+  if (result.nationId) {
+    await prisma.nation.update({
+      where: { id: result.nationId },
+      data: { lastActiveAt: new Date(), activityTier: 'active' } as any,
+    });
+  }
+  return { ok: true, nationId: result.nationId };
+});
+
+app.post('/api/auth/logout', async (request, reply) => {
+  const token = getSessionToken(request);
+  if (token) await logoutUser(token);
   reply.clearCookie('war_session', { path: '/' });
   return { ok: true };
 });
 
 app.get('/api/me', async (request, reply) => {
-  const nationId = getSession(request);
+  const nationId = await getSession(request);
   if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
   const [nation, devCount, fullCount] = await Promise.all([
     prisma.nation.findUnique({ where: { id: nationId } }),
-    prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, hasPort: true, fortificationLevel: { gte: 1 } } }),
-    prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, hasPort: true, fortificationLevel: 3 } }),
+    prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, OR: [{ hasPort: true }, { hasMarket: true }], fortificationLevel: { gte: 1 } } }),
+    prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, OR: [{ hasPort: true }, { hasMarket: true }], fortificationLevel: 3 } }),
   ]);
   if (!nation) return reply.code(404).send({ error: 'Nation not found' });
   return {
@@ -81,7 +129,7 @@ const start = async () => {
   // ── World state (fog-of-war filtered) ──────────────────────────────────────
 
   app.get('/api/world', async (request, reply) => {
-    const nationId = getSession(request);
+    const nationId = await getSession(request);
     if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
 
     const meta = await prisma.worldMeta.findUnique({ where: { id: 1 } });
@@ -203,6 +251,7 @@ const start = async () => {
           fortificationLevel: row.fortificationLevel,
           hasRoad: row.hasRoad,
           hasPort: row.hasPort,
+          hasMarket: row.hasMarket,
           unrest: row.unrest,
           isInRevolt: row.isInRevolt,
           valueTraits: { individualist: row.individualist, progressive: row.progressive, militaristic: row.militaristic, expansionist: row.expansionist },
@@ -240,10 +289,10 @@ const start = async () => {
           recentAcquiredCounts[row.ownerId] = (recentAcquiredCounts[row.ownerId] ?? 0) + weight;
         }
       }
-      if (row.hasRoad && row.hasPort && row.fortificationLevel >= 1) {
+      if (row.hasRoad && (row.hasPort || row.hasMarket) && row.fortificationLevel >= 1) {
         developedCounts[row.ownerId] = (developedCounts[row.ownerId] ?? 0) + 1;
       }
-      if (row.hasRoad && row.hasPort && row.fortificationLevel >= 3) {
+      if (row.hasRoad && (row.hasPort || row.hasMarket) && row.fortificationLevel >= 3) {
         fullyFortCounts[row.ownerId] = (fullyFortCounts[row.ownerId] ?? 0) + 1;
       }
     }
@@ -297,6 +346,7 @@ const start = async () => {
         isCoastal: def?.isCoastal ?? false,
         hasRoad: t.hasRoad,
         hasPort: t.hasPort,
+        hasMarket: t.hasMarket,
         isInRevolt: t.isInRevolt,
         fortificationLevel: t.fortificationLevel,
         unrest: t.unrest,
@@ -407,7 +457,7 @@ const start = async () => {
   // ── Queue action ───────────────────────────────────────────────────────────
 
   app.post('/api/action', async (request, reply) => {
-    const nationId = getSession(request);
+    const nationId = await getSession(request);
     if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
 
     const body = request.body as { type?: string; payload?: unknown };
@@ -427,8 +477,8 @@ const start = async () => {
 
     const [nation, myDevCount, myFullCount] = await Promise.all([
       prisma.nation.findUnique({ where: { id: nationId } }),
-      prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, hasPort: true, fortificationLevel: { gte: 1 } } }),
-      prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, hasPort: true, fortificationLevel: 3 } }),
+      prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, OR: [{ hasPort: true }, { hasMarket: true }], fortificationLevel: { gte: 1 } } }),
+      prisma.territoryState.count({ where: { ownerId: nationId, hasRoad: true, OR: [{ hasPort: true }, { hasMarket: true }], fortificationLevel: 3 } }),
     ]);
     if (!nation) return reply.code(404).send({ error: 'Nation not found' });
     const myBudget = mandateBudget(myDevCount, myFullCount);
@@ -637,7 +687,7 @@ const start = async () => {
         def: row.culturalFamily ? { ...def, culturalFamily: row.culturalFamily as import('@war/engine').CulturalFamily } : def,
         state: {
           ownerId: row.ownerId, fortificationLevel: row.fortificationLevel,
-          hasRoad: row.hasRoad, hasPort: row.hasPort, unrest: row.unrest,
+          hasRoad: row.hasRoad, hasPort: row.hasPort, hasMarket: row.hasMarket, unrest: row.unrest,
           isInRevolt: row.isInRevolt,
           valueTraits: { individualist: row.individualist, progressive: row.progressive, militaristic: row.militaristic, expansionist: row.expansionist },
           constructionType: (row.constructionType ?? null) as TerritoryState['constructionType'],
@@ -668,9 +718,9 @@ const start = async () => {
           adminRecentAcquired[row.ownerId] = (adminRecentAcquired[row.ownerId] ?? 0) + weight;
         }
       }
-      if (row.hasRoad && row.hasPort && row.fortificationLevel >= 1)
+      if (row.hasRoad && (row.hasPort || row.hasMarket) && row.fortificationLevel >= 1)
         adminDevCounts[row.ownerId] = (adminDevCounts[row.ownerId] ?? 0) + 1;
-      if (row.hasRoad && row.hasPort && row.fortificationLevel >= 3)
+      if (row.hasRoad && (row.hasPort || row.hasMarket) && row.fortificationLevel >= 3)
         adminFullCounts[row.ownerId] = (adminFullCounts[row.ownerId] ?? 0) + 1;
     }
     const nationNameMap = Object.fromEntries(nationRows.map((n) => [n.id, n.name]));
@@ -693,7 +743,8 @@ const start = async () => {
         id: t.id, name: def?.name ?? t.id,
         ownerId: t.ownerId, ownerName: t.ownerId ? (nationNameMap[t.ownerId] ?? null) : null,
         unrest: t.unrest, unrestCauses, isInRevolt: t.isInRevolt,
-        fortificationLevel: t.fortificationLevel, hasRoad: t.hasRoad, hasPort: t.hasPort,
+        fortificationLevel: t.fortificationLevel, hasRoad: t.hasRoad, hasPort: t.hasPort, hasMarket: t.hasMarket,
+        portLevel: (t as any).portLevel ?? 1,
         isCoastal: def?.isCoastal ?? false,
         constructionType: t.constructionType ?? null,
         constructionTicksLeft: t.constructionTicksLeft ?? null,
@@ -732,9 +783,45 @@ const start = async () => {
       armiesByNation[a.nationId]!.push({ id: a.id, territoryId: a.territoryId, size: a.size, status: a.status });
     }
     const nationsWithArmies = nations.map((n) => ({ ...n, armies: armiesByNation[n.id] ?? [] }));
+    // Load active trade route agreements for admin panel.
+    const routeRows = await (prisma as any).tradeRouteAgreement?.findMany?.({
+      where: { status: { in: ['active', 'suspended'] } },
+      include: { shipments: true },
+    }) ?? [];
+    const nationNameMapForRoutes = Object.fromEntries(nationRows.map((n) => [n.id, n.name]));
+    const terrNameMap = Object.fromEntries(territoryRows.map((t) => [t.id, defById.get(t.id)?.name ?? t.id]));
+    const tradeRouteAgreements = routeRows.map((r: any) => ({
+      id: r.id,
+      treatyClauseId: r.treatyClauseId ?? null,
+      ownerNationId: r.ownerNationId,
+      ownerNationName: nationNameMapForRoutes[r.ownerNationId] ?? r.ownerNationId,
+      partnerNationId: r.partnerNationId ?? null,
+      partnerNationName: r.partnerNationId ? (nationNameMapForRoutes[r.partnerNationId] ?? r.partnerNationId) : null,
+      type: r.type,
+      sourceTerritoryId: r.sourceTerritoryId,
+      sourceTerritoryName: terrNameMap[r.sourceTerritoryId] ?? r.sourceTerritoryId,
+      destinationTerritoryId: r.destinationTerritoryId,
+      destinationTerritoryName: terrNameMap[r.destinationTerritoryId] ?? r.destinationTerritoryId,
+      portLevel: r.portLevel,
+      baseCapacity: r.baseCapacity,
+      currentCapacity: r.currentCapacity,
+      growthCap: r.growthCap,
+      cyclesCompleted: r.cyclesCompleted,
+      profitMultiplier: r.profitMultiplier,
+      upkeepPerTick: r.currentCapacity * r.upkeepRate,
+      status: r.status,
+      startedAtTick: r.startedAtTick,
+      shipments: (r.shipments ?? []).map((s: any) => ({
+        id: s.id, routeId: s.routeId,
+        transitTicksRemaining: s.transitTicksRemaining,
+        cargoAmount: s.cargoAmount, cargoResource: s.cargoResource,
+        departedAtTick: s.departedAtTick,
+      })),
+    }));
     return {
       tick: meta.tick, phase: currentPhase(), nations: nationsWithArmies, territories,
       recentEvents: events.map((e) => ({ tick: e.tick, message: e.message })),
+      tradeRouteAgreements,
     };
   });
 
@@ -868,6 +955,61 @@ const start = async () => {
     return { ok: true, hasPort: !t.hasPort };
   });
 
+  app.post('/api/admin/territory/:id/toggle-market', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const t = await prisma.territoryState.findUnique({ where: { id } });
+    if (!t) return reply.code(404).send({ error: 'Territory not found' });
+    await prisma.territoryState.update({ where: { id }, data: { hasMarket: !t.hasMarket } });
+    return { ok: true, hasMarket: !t.hasMarket };
+  });
+
+  app.post('/api/admin/territory/:id/set-port-level', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const { portLevel } = request.body as { portLevel?: number };
+    if (typeof portLevel !== 'number' || portLevel < 0 || portLevel > 3) {
+      return reply.code(400).send({ error: 'portLevel must be 0–3' });
+    }
+    const t = await prisma.territoryState.findUnique({ where: { id } });
+    if (!t) return reply.code(404).send({ error: 'Territory not found' });
+    await (prisma as any).territoryState.update({ where: { id }, data: { portLevel } });
+    return { ok: true, portLevel };
+  });
+
+  // GET /api/admin/territory/:id/quality-tier
+  // Returns the precomputed quality tier (1–3) from the territory def, plus supporting values.
+  // Tier formula: score = pop×0.4 + ind×0.35 + wlt×0.25 + (isCoastal ? 1.5 : 0)
+  //   tier 3 (high)   = score ≥ 8.0  [PLACEHOLDER threshold]
+  //   tier 2 (medium) = score ≥ 5.0  [PLACEHOLDER threshold]
+  //   tier 1 (low)    = score < 5.0
+  app.get('/api/admin/territory/:id/quality-tier', async (request, reply) => {
+    if (!requireAdminKey(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const def = defById.get(id);
+    if (!def) return reply.code(404).send({ error: `Territory not found: ${id}` });
+    const pop = (def as any).basePopulation ?? 0;
+    const ind = (def as any).baseIndustry ?? 0;
+    const wlt = (def as any).baseWealth ?? 0;
+    const coastal = def.isCoastal ? 1.5 : 0;
+    const score = pop * 0.4 + ind * 0.35 + wlt * 0.25 + coastal;
+    const tier = score >= 8.0 ? 3 : score >= 5.0 ? 2 : 1;
+    return {
+      territoryId: id,
+      name: def.name,
+      qualityTier: tier,
+      score: Math.round(score * 100) / 100,
+      components: {
+        basePopulation: pop,
+        baseIndustry: ind,
+        baseWealth: wlt,
+        isCoastal: def.isCoastal,
+        coastalBonus: coastal,
+      },
+      thresholds: { tier3: 8.0, tier2: 5.0 },
+    };
+  });
+
   app.post('/api/admin/territory/:id/clear-construction', async (request, reply) => {
     if (!requireAdminKey(request, reply)) return;
     const { id } = request.params as { id: string };
@@ -977,10 +1119,10 @@ const start = async () => {
   const DEV_NATION_ID = 'nation_costa_rica';
   const CULTURE_TRAITS = ['individualist', 'progressive', 'militaristic', 'expansionist'] as const;
 
-  function requireDev(request: FastifyRequest, reply: FastifyReply): string | null {
-    const nationId = getSession(request);
+  async function requireDev(request: FastifyRequest, reply: FastifyReply): Promise<string | null> {
+    const nationId = await getSession(request);
     if (nationId !== DEV_NATION_ID) {
-      reply.code(403).send({ error: 'Dev endpoints require the player1 session' });
+      void reply.code(403).send({ error: 'Dev endpoints require the player1 session' });
       return null;
     }
     return nationId;
@@ -1058,7 +1200,7 @@ const start = async () => {
   // military actions this tick, contested territory status, and joint_invasion objectives.
   // Strictly limited to the requesting nation's own side — never exposes enemy plans.
   app.get('/api/war/:warId/council', async (request, reply) => {
-    const nationId = getSession(request);
+    const nationId = await getSession(request);
     if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
 
     const { warId: warIdStr } = request.params as { warId: string };
@@ -1237,7 +1379,7 @@ const start = async () => {
   // GET /api/diplomacy — returns the calling nation's diplomacy state:
   // active treaties, incoming/outgoing proposals, their Trust, partner Trust values.
   app.get('/api/diplomacy', async (request, reply) => {
-    const nationId = getSession(request);
+    const nationId = await getSession(request);
     if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
 
     const [
@@ -1387,7 +1529,7 @@ const start = async () => {
    *     clauses: Array<{ type: string, payload: object }> }
    */
   app.post('/api/treaty/preview', async (request, reply) => {
-    const nationId = getSession(request);
+    const nationId = await getSession(request);
     if (!nationId) return reply.code(401).send({ error: 'Not logged in' });
 
     const body = request.body as {
@@ -1963,6 +2105,399 @@ const start = async () => {
     return { ok: true };
   });
 
+  // ── Lobby: game lifecycle (v0.36) ─────────────────────────────────────────
+
+  // Helper: look up the userId for the current session token.
+  async function getSessionUserId(request: FastifyRequest): Promise<number | null> {
+    const token = getSessionToken(request);
+    if (!token) return null;
+    const session = await prisma.userSession.findFirst({
+      where: { token, expiresAt: { gt: new Date() } },
+      select: { userId: true },
+    });
+    return session?.userId ?? null;
+  }
+
+  // POST /api/games — create a new game lobby.
+  // Body: { name, maxPlayers?, tickIntervalSeconds? }
+  app.post('/api/games', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const body = request.body as { name?: string; maxPlayers?: number; tickIntervalSeconds?: number };
+    if (!body.name) return reply.code(400).send({ error: 'name required' });
+
+    const maxPlayers = Math.min(Math.max(body.maxPlayers ?? 5, 2), 10);
+    const tickIntervalSeconds = Math.max(body.tickIntervalSeconds ?? 86400, 10); // min 10s for testing
+
+    const gameId = `game_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    const [game] = await prisma.$transaction([
+      prisma.game.create({
+        data: { id: gameId, name: body.name, hostUserId: userId, maxPlayers, tickIntervalSeconds, status: 'lobby' },
+      }),
+      prisma.gameMembership.create({
+        data: { gameId, userId, slotIndex: 0 },
+      }),
+    ]);
+
+    return { ok: true, gameId: game.id, name: game.name };
+  });
+
+  // GET /api/games — list lobby-status games with membership counts.
+  app.get('/api/games', async () => {
+    const games = await prisma.game.findMany({
+      where: { status: 'lobby' },
+      include: { _count: { select: { memberships: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return games.map((g) => ({
+      id: g.id,
+      name: g.name,
+      maxPlayers: g.maxPlayers,
+      memberCount: g._count.memberships,
+      tickIntervalSeconds: g.tickIntervalSeconds,
+      createdAt: g.createdAt,
+      isHosted: true,
+    }));
+  });
+
+  // POST /api/games/:id/join — join an open lobby slot.
+  app.post('/api/games/:id/join', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({
+      where: { id: gameId },
+      include: { memberships: true },
+    });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+    if (game.status !== 'lobby') return reply.code(409).send({ error: 'Game is no longer in lobby' });
+
+    const alreadyIn = game.memberships.find((m) => m.userId === userId);
+    if (alreadyIn) return reply.code(409).send({ error: 'Already a member of this game' });
+
+    if (game.memberships.length >= game.maxPlayers) {
+      return reply.code(409).send({ error: 'Game is full' });
+    }
+
+    const usedSlots = new Set(game.memberships.map((m) => m.slotIndex));
+    let slotIndex = 0;
+    while (usedSlots.has(slotIndex)) slotIndex++;
+
+    await prisma.gameMembership.create({ data: { gameId, userId, slotIndex } });
+    return { ok: true, slotIndex };
+  });
+
+  // POST /api/games/:id/leave — leave a lobby (not allowed after active).
+  app.post('/api/games/:id/leave', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({ where: { id: gameId } });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+    if (game.status !== 'lobby') return reply.code(409).send({ error: 'Cannot leave an active game' });
+
+    await prisma.gameMembership.deleteMany({ where: { gameId, userId } });
+    return { ok: true };
+  });
+
+  // POST /api/games/:id/start — host-only.
+  // v0.37: transitions lobby → territory_selection. Does NOT init world or arm scheduler yet.
+  // Body: { emptySlotPolicy: 'open' | 'removed' | 'ai', slotResolutions?: Record<number, 'ai' | 'removed'> }
+  app.post('/api/games/:id/start', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({
+      where: { id: gameId },
+      include: { memberships: true },
+    });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+    if (game.hostUserId !== userId) return reply.code(403).send({ error: 'Only the host can start the game' });
+    if (game.status !== 'lobby') return reply.code(409).send({ error: 'Game already started' });
+
+    const body = request.body as {
+      emptySlotPolicy?: 'open' | 'removed' | 'ai';
+      slotResolutions?: Record<number, 'ai' | 'removed'>;
+    };
+    const policy = body.emptySlotPolicy ?? 'ai';
+    const perSlot = body.slotResolutions ?? {};
+
+    // Resolve empty slots.
+    const filledSlots = new Set(game.memberships.map((m) => m.slotIndex));
+    const aiSlots: number[] = [];
+    const removedSlots: number[] = [];
+
+    for (let i = 0; i < game.maxPlayers; i++) {
+      if (filledSlots.has(i)) continue;
+      const resolution = perSlot[i] ?? policy;
+      if (resolution === 'ai') aiSlots.push(i);
+      else removedSlots.push(i);
+    }
+
+    const now = new Date();
+    await prisma.game.update({
+      where: { id: gameId },
+      data: {
+        status: 'territory_selection',
+        aiSlots,
+        removedSlots,
+        territorySelectionStartedAt: now,
+        lastTickAt: now, // AFK deadline = lastTickAt + tickIntervalSeconds
+      },
+    });
+
+    // Schedule the AFK deadline (fires autoAssignUnconfirmed instead of a tick).
+    scheduleSelectionDeadline(gameId, defs, game.tickIntervalSeconds * 1000);
+
+    return { ok: true, gameId, aiSlots, removedSlots, phase: 'territory_selection' };
+  });
+
+  // POST /api/games/:id/end — host-only manual game end.
+  app.post('/api/games/:id/end', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({ where: { id: gameId } });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+    if (game.hostUserId !== userId) return reply.code(403).send({ error: 'Only the host can end the game' });
+    if (game.status === 'ended') return reply.code(409).send({ error: 'Game already ended' });
+
+    await prisma.game.update({
+      where: { id: gameId },
+      data: { status: 'ended', endedAt: new Date(), endReason: 'host_ended' },
+    });
+
+    deregisterGame(gameId);
+    return { ok: true };
+  });
+
+  // ── Territory selection endpoints (v0.37) ─────────────────────────────────
+
+  // POST /api/games/:id/territory/roll — roll 3 candidates for the calling player.
+  app.post('/api/games/:id/territory/roll', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({ where: { id: gameId }, include: { memberships: true } });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+    if (game.status !== 'territory_selection') return reply.code(409).send({ error: 'Game not in territory_selection phase' });
+
+    const membership = game.memberships.find((m) => m.userId === userId);
+    if (!membership) return reply.code(403).send({ error: 'Not a member of this game' });
+
+    // Reject if already confirmed.
+    if (membership.confirmedTerritoryId) return reply.code(409).send({ error: 'Already confirmed a territory' });
+
+    const candidates = await rollCandidates(gameId, userId, defs);
+    return { ok: true, candidates };
+  });
+
+  // GET /api/games/:id/territory/candidates — get current candidates for the calling player.
+  app.get('/api/games/:id/territory/candidates', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({ where: { id: gameId }, include: { memberships: true } });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+    if (game.status !== 'territory_selection') return reply.code(409).send({ error: 'Game not in territory_selection phase' });
+
+    const membership = game.memberships.find((m) => m.userId === userId);
+    if (!membership) return reply.code(403).send({ error: 'Not a member of this game' });
+
+    const candidates = await getCandidateViews(gameId, userId, defs);
+    const aiSlots = new Set<number>((game.aiSlots as number[]) ?? []);
+    const humanMembers = game.memberships.filter((m) => !aiSlots.has(m.slotIndex));
+
+    return {
+      candidates,
+      confirmedTerritoryId: membership.confirmedTerritoryId ?? null,
+      rerollUsed: membership.rerollUsed,
+      allConfirmed: humanMembers.every((m) => m.confirmedTerritoryId != null),
+      confirmedCount: humanMembers.filter((m) => m.confirmedTerritoryId != null).length,
+      totalHuman: humanMembers.length,
+    };
+  });
+
+  // POST /api/games/:id/territory/reroll — use the one-time reroll.
+  // Body: { slotIndex: number } — which candidate to replace.
+  app.post('/api/games/:id/territory/reroll', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({ where: { id: gameId }, include: { memberships: true } });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+    if (game.status !== 'territory_selection') return reply.code(409).send({ error: 'Game not in territory_selection phase' });
+
+    const membership = game.memberships.find((m) => m.userId === userId);
+    if (!membership) return reply.code(403).send({ error: 'Not a member of this game' });
+    if (membership.confirmedTerritoryId) return reply.code(409).send({ error: 'Already confirmed a territory' });
+    if (membership.rerollUsed) return reply.code(409).send({ error: 'Reroll already used' });
+
+    // Mark reroll used.
+    await prisma.gameMembership.updateMany({ where: { gameId, userId }, data: { rerollUsed: true } });
+
+    // Full re-roll of all 3 candidates.
+    const candidates = await rollCandidates(gameId, userId, defs);
+    return { ok: true, candidates };
+  });
+
+  // POST /api/games/:id/territory/confirm — lock in a candidate.
+  // Body: { slotIndex: number }
+  app.post('/api/games/:id/territory/confirm', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({ where: { id: gameId }, include: { memberships: true } });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+    if (game.status !== 'territory_selection') return reply.code(409).send({ error: 'Game not in territory_selection phase' });
+
+    const membership = game.memberships.find((m) => m.userId === userId);
+    if (!membership) return reply.code(403).send({ error: 'Not a member of this game' });
+    if (membership.confirmedTerritoryId) return reply.code(409).send({ error: 'Already confirmed a territory' });
+
+    const body = request.body as { slotIndex: number };
+    if (typeof body.slotIndex !== 'number') return reply.code(400).send({ error: 'slotIndex required' });
+
+    const result = await confirmCandidate(gameId, userId, body.slotIndex, defs);
+    return result;
+  });
+
+  // POST /api/games/:id/territory/force-resolve — host-only AFK resolution.
+  app.post('/api/games/:id/territory/force-resolve', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({ where: { id: gameId } });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+    if (game.hostUserId !== userId) return reply.code(403).send({ error: 'Only the host can force-resolve' });
+    if (game.status !== 'territory_selection') return reply.code(409).send({ error: 'Game not in territory_selection phase' });
+
+    deregisterGame(gameId); // Cancel the pending deadline timer.
+    await autoAssignUnconfirmed(gameId, defs);
+    return { ok: true };
+  });
+
+  // GET /api/games/:id — game detail with membership list.
+  app.get('/api/games/:id', async (request, reply) => {
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({
+      where: { id: gameId },
+      include: {
+        memberships: {
+          include: { user: { select: { id: true, username: true } } },
+          orderBy: { slotIndex: 'asc' },
+        },
+      },
+    });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+
+    const meta = await prisma.worldMeta.findFirst({ where: { gameId } });
+
+    return {
+      id: game.id,
+      name: game.name,
+      status: game.status,
+      maxPlayers: game.maxPlayers,
+      tickIntervalSeconds: game.tickIntervalSeconds,
+      lastTickAt: game.lastTickAt,
+      endedAt: game.endedAt,
+      endReason: game.endReason,
+      tick: meta?.tick ?? null,
+      members: game.memberships.map((m) => ({
+        slotIndex: m.slotIndex,
+        userId: m.userId,
+        username: m.user.username,
+        nationId: m.nationId,
+      })),
+    };
+  });
+
+  // ── Fast-forward voting (v0.36) ────────────────────────────────────────────
+
+  // POST /api/games/:id/fast-forward/vote — cast a fast-forward vote.
+  app.post('/api/games/:id/fast-forward/vote', async (request, reply) => {
+    const userId = await getSessionUserId(request);
+    if (!userId) return reply.code(401).send({ error: 'Not logged in' });
+
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({ where: { id: gameId } });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+    if (game.status !== 'active') return reply.code(409).send({ error: 'Game is not active' });
+
+    const membership = await prisma.gameMembership.findFirst({ where: { gameId, userId } });
+    if (!membership) return reply.code(403).send({ error: 'Not a member of this game' });
+
+    const meta = await prisma.worldMeta.findFirst({ where: { gameId } });
+    const currentTick = meta?.tick ?? 0;
+
+    // Upsert vote (replace existing vote for a new tick).
+    await prisma.fastForwardVote.upsert({
+      where: { gameId_userId: { gameId, userId } },
+      create: { gameId, userId, tickNumber: currentTick },
+      update: { tickNumber: currentTick, votedAt: new Date() },
+    });
+
+    // Count human player slots.
+    const aiSlots = new Set<number>((game.aiSlots as number[]) ?? []);
+    const removedSlots = new Set<number>((game.removedSlots as number[]) ?? []);
+    const humanMemberships = await prisma.gameMembership.findMany({
+      where: { gameId },
+    });
+    const humanCount = humanMemberships.filter(
+      (m) => !aiSlots.has(m.slotIndex) && !removedSlots.has(m.slotIndex),
+    ).length;
+
+    const currentVotes = await prisma.fastForwardVote.count({ where: { gameId } });
+
+    if (currentVotes >= humanCount) {
+      // All human players voted — fire tick immediately.
+      reply.send({ ok: true, triggered: true, votes: currentVotes, required: humanCount });
+      // Fire async so reply sends first.
+      setImmediate(async () => {
+        try {
+          await runGameTick(gameId, defs);
+          const updatedGame = await prisma.game.findUnique({ where: { id: gameId }, select: { status: true, tickIntervalSeconds: true } });
+          if (updatedGame?.status === 'active') {
+            scheduleGameTick(gameId, defs, updatedGame.tickIntervalSeconds * 1000);
+          }
+        } catch (err) {
+          console.error(`[fast-forward] Game ${gameId} immediate tick failed:`, err);
+        }
+      });
+      return;
+    }
+
+    return { ok: true, triggered: false, votes: currentVotes, required: humanCount };
+  });
+
+  // GET /api/games/:id/fast-forward/status — vote status.
+  app.get('/api/games/:id/fast-forward/status', async (request, reply) => {
+    const { id: gameId } = request.params as { id: string };
+    const game = await prisma.game.findUnique({ where: { id: gameId } });
+    if (!game) return reply.code(404).send({ error: 'Game not found' });
+
+    const aiSlots = new Set<number>((game.aiSlots as number[]) ?? []);
+    const removedSlots = new Set<number>((game.removedSlots as number[]) ?? []);
+    const humanMemberships = await prisma.gameMembership.findMany({ where: { gameId } });
+    const humanCount = humanMemberships.filter(
+      (m) => !aiSlots.has(m.slotIndex) && !removedSlots.has(m.slotIndex),
+    ).length;
+
+    const votes = await prisma.fastForwardVote.count({ where: { gameId } });
+    return { votes, required: humanCount, ready: votes >= humanCount };
+  });
+
   // ── Startup ────────────────────────────────────────────────────────────────
 
   await prisma.$connect();
@@ -1971,6 +2506,7 @@ const start = async () => {
   await ensureWorldInitialized(defs);
 
   startScheduler(defs);
+  await resumeActiveGames(defs);
 
   try {
     await app.listen({ port: PORT, host: '0.0.0.0' });

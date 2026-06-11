@@ -481,6 +481,139 @@ export function run(scenario: Scenario): RunResult {
         };
         world = { ...world, tradeRoutes: [...world.tradeRoutes, route] };
 
+      } else if (action.type === 'establish_trade_route') {
+        // Harness: inject a TradeRouteAgreement directly into world.tradeRouteAgreements.
+        // payload: { ownerNationId, sourceTerritoryId, destinationTerritoryId, type?, baseCapacity?, currentCapacity? }
+        const ownerNationId = p['ownerNationId'] as string;
+        const sourceTerritoryId = p['sourceTerritoryId'] as string;
+        const destinationTerritoryId = p['destinationTerritoryId'] as string;
+        if (!ownerNationId || !sourceTerritoryId || !destinationTerritoryId) {
+          console.warn('[harness] establish_trade_route requires ownerNationId, sourceTerritoryId, destinationTerritoryId');
+          continue;
+        }
+        const routeType = (p['type'] as string) ?? 'domestic';
+        const baseCapacity = (p['baseCapacity'] as number) ?? 5;
+        const currentCapacity = (p['currentCapacity'] as number) ?? baseCapacity;
+        const growthCap = baseCapacity * 1.5;
+        const routeId = 9100 + (world.tradeRouteAgreements ?? []).length + 1;
+        world = {
+          ...world,
+          tradeRouteAgreements: [
+            ...(world.tradeRouteAgreements ?? []),
+            {
+              id: routeId,
+              treatyClauseId: null,
+              ownerNationId,
+              partnerNationId: (p['partnerNationId'] as string | undefined) ?? null,
+              type: routeType as import('@war/engine').TradeRouteType,
+              sourceTerritoryId,
+              destinationTerritoryId,
+              path: [sourceTerritoryId, destinationTerritoryId],
+              pathComputedAtTick: world.tick,
+              portLevel: (p['portLevel'] as number) ?? 1,
+              baseCapacity,
+              currentCapacity,
+              growthCap,
+              cyclesCompleted: (p['cyclesCompleted'] as number) ?? 0,
+              profitMultiplier: (p['profitMultiplier'] as number) ?? 1.0,
+              upkeepRate: (p['upkeepRate'] as number) ?? 0.1,
+              status: 'active' as const,
+              startedAtTick: world.tick,
+              shipments: [{
+                id: -(routeId * 100 + 1),
+                routeId,
+                path: [destinationTerritoryId],
+                transitTicksRemaining: 1,
+                cargoAmount: currentCapacity,
+                cargoResource: 'wealth' as import('@war/engine').TradeResource,
+                direction: 'forward' as const,
+                departedAtTick: world.tick,
+              }],
+            },
+          ],
+        };
+
+      } else if (action.type === 'renew_trade_route') {
+        // Harness: simulate treaty renewal for a trade_route. Finds the active route by
+        // sourceTerritoryId+destinationTerritoryId, marks it ended, and injects a new route
+        // with currentCapacity and cyclesCompleted carried forward.
+        // payload: { ownerNationId, sourceTerritoryId, destinationTerritoryId, type?, baseCapacity? }
+        const ownerNationId = p['ownerNationId'] as string;
+        const sourceTerritoryId = p['sourceTerritoryId'] as string;
+        const destinationTerritoryId = p['destinationTerritoryId'] as string;
+        if (!ownerNationId || !sourceTerritoryId || !destinationTerritoryId) {
+          console.warn('[harness] renew_trade_route requires ownerNationId, sourceTerritoryId, destinationTerritoryId');
+          continue;
+        }
+        const existing = (world.tradeRouteAgreements ?? []).find(
+          (r) => r.sourceTerritoryId === sourceTerritoryId && r.destinationTerritoryId === destinationTerritoryId && r.status === 'active',
+        );
+        if (!existing) {
+          console.warn(`[harness] renew_trade_route: no active route from ${sourceTerritoryId} to ${destinationTerritoryId}`);
+          continue;
+        }
+        // End old route without loss event.
+        const updatedRoutes = (world.tradeRouteAgreements ?? []).map((r) =>
+          r.id === existing.id ? { ...r, status: 'ended' as const } : r,
+        );
+        const newRouteId = 9100 + updatedRoutes.length + 1;
+        const routeType = (p['type'] as string ?? existing.type) as import('@war/engine').TradeRouteType;
+        const baseCapacity = (p['baseCapacity'] as number | undefined) ?? existing.baseCapacity;
+        const growthCap = baseCapacity * 1.5;
+        const newRoute: import('@war/engine').TradeRouteAgreement = {
+          id: newRouteId,
+          treatyClauseId: null,
+          ownerNationId,
+          partnerNationId: existing.partnerNationId,
+          type: routeType,
+          sourceTerritoryId,
+          destinationTerritoryId,
+          path: existing.path,
+          pathComputedAtTick: world.tick,
+          portLevel: existing.portLevel,
+          baseCapacity,
+          currentCapacity: existing.currentCapacity,  // carry forward
+          growthCap,
+          cyclesCompleted: existing.cyclesCompleted,  // carry forward
+          profitMultiplier: existing.profitMultiplier,
+          upkeepRate: existing.upkeepRate,
+          status: 'active',
+          startedAtTick: world.tick,
+          shipments: [{
+            id: -(newRouteId * 100 + 1),
+            routeId: newRouteId,
+            path: [destinationTerritoryId],
+            transitTicksRemaining: 1,
+            cargoAmount: existing.currentCapacity,
+            cargoResource: 'wealth' as import('@war/engine').TradeResource,
+            direction: 'forward' as const,
+            departedAtTick: world.tick,
+          }],
+        };
+        world = { ...world, tradeRouteAgreements: [...updatedRoutes, newRoute] };
+
+      } else if (action.type === 'set_territory_infra') {
+        // Harness: set hasPort/hasMarket/portLevel on a territory.
+        // payload: { territoryId, hasPort?, hasMarket?, portLevel? }
+        const tid = p['territoryId'] as string;
+        const t = world.territories[tid];
+        if (!t) { console.warn(`[harness] set_territory_infra: territory ${tid} not found`); continue; }
+        world = {
+          ...world,
+          territories: {
+            ...world.territories,
+            [tid]: {
+              ...t,
+              state: {
+                ...t.state,
+                hasPort: (p['hasPort'] as boolean | undefined) ?? t.state.hasPort,
+                hasMarket: (p['hasMarket'] as boolean | undefined) ?? t.state.hasMarket,
+                portLevel: (p['portLevel'] as number | undefined) ?? (t.state as any).portLevel ?? 1,
+              },
+            },
+          },
+        };
+
       } else if (action.type === 'propose_embassy') {
         // Harness: directly insert a proposed embassy into world.embassies.
         // payload: { ownerNationId, hostTerritoryId }
@@ -524,7 +657,7 @@ export function run(scenario: Scenario): RunResult {
         const nationId = tid ? (world.territories[tid]?.state.ownerId ?? null) : null;
         if (!nationId) continue;
 
-        let payload = { ...p, nationId };
+        let payload: Record<string, unknown> = { ...p, nationId };
         if (action.type === 'build_fort' && !payload['targetLevel']) {
           const fortLevel = (world.territories[tid!]?.state.fortificationLevel ?? 0) + 1;
           payload = { ...payload, targetLevel: fortLevel };
@@ -659,7 +792,7 @@ export function run(scenario: Scenario): RunResult {
       const expectedPresent = p['expectedPresent'] as boolean;
 
       const causes = world.territories[territoryId]?.state.lastEquilibriumCauses;
-      const value = causes ? (causes as Record<string, number>)[component] ?? 0 : 0;
+      const value = causes ? ((causes as unknown) as Record<string, number>)[component] ?? 0 : 0;
       const actualPresent = value !== 0;
 
       if (actualPresent !== expectedPresent) {
@@ -671,6 +804,104 @@ export function run(scenario: Scenario): RunResult {
           territoryId,
           component,
           expectedPresent,
+          message: msg,
+        });
+      }
+    }
+
+    // ── assert_route_capacity post-tick pass ────────────────────────────────
+    for (const action of tickActions) {
+      if (action.type !== 'assert_route_capacity') continue;
+      const p = action.payload;
+      const routeId = p['routeId'] as number | undefined;
+      const sourceTerritoryId = p['sourceTerritoryId'] as string | undefined;
+      const destinationTerritoryId = p['destinationTerritoryId'] as string | undefined;
+      const expectedMin = p['expectedMin'] as number;
+      const expectedMax = p['expectedMax'] as number | undefined;
+
+      const route = (world.tradeRouteAgreements ?? []).find((r) =>
+        r.status === 'active' && (
+          routeId !== undefined ? r.id === routeId :
+          r.sourceTerritoryId === sourceTerritoryId && r.destinationTerritoryId === destinationTerritoryId
+        ),
+      );
+
+      const actualCapacity = route?.currentCapacity ?? -1;
+      const failed = actualCapacity < expectedMin || (expectedMax !== undefined && actualCapacity > expectedMax);
+      if (failed) {
+        const msg = `[assert_route_capacity] FAILED at tick ${world.tick}: route ${routeId ?? `${sourceTerritoryId}→${destinationTerritoryId}`} currentCapacity=${actualCapacity.toFixed(3)}, expected min=${expectedMin}${expectedMax !== undefined ? ` max=${expectedMax}` : ''}`;
+        console.error(msg);
+        assertionErrors.push({
+          tick: world.tick,
+          type: 'assert_route_capacity',
+          routeId: routeId ?? route?.id ?? -1,
+          sourceTerritoryId: sourceTerritoryId ?? route?.sourceTerritoryId ?? '',
+          destinationTerritoryId: destinationTerritoryId ?? route?.destinationTerritoryId ?? '',
+          expectedMin,
+          actualCapacity,
+          message: msg,
+        });
+      }
+    }
+
+    // ── assert_route_cycles post-tick pass ──────────────────────────────────
+    for (const action of tickActions) {
+      if (action.type !== 'assert_route_cycles') continue;
+      const p = action.payload;
+      const routeId = p['routeId'] as number | undefined;
+      const sourceTerritoryId = p['sourceTerritoryId'] as string | undefined;
+      const destinationTerritoryId = p['destinationTerritoryId'] as string | undefined;
+      const expectedMin = p['expectedMin'] as number;
+      const expectedMax = p['expectedMax'] as number | undefined;
+
+      const route = (world.tradeRouteAgreements ?? []).find((r) =>
+        r.status === 'active' && (
+          routeId !== undefined ? r.id === routeId :
+          r.sourceTerritoryId === sourceTerritoryId && r.destinationTerritoryId === destinationTerritoryId
+        ),
+      );
+
+      const actualCycles = route?.cyclesCompleted ?? -1;
+      const failed = actualCycles < expectedMin || (expectedMax !== undefined && actualCycles > expectedMax);
+      if (failed) {
+        const msg = `[assert_route_cycles] FAILED at tick ${world.tick}: route ${routeId ?? `${sourceTerritoryId}→${destinationTerritoryId}`} cyclesCompleted=${actualCycles}, expected min=${expectedMin}${expectedMax !== undefined ? ` max=${expectedMax}` : ''}`;
+        console.error(msg);
+        assertionErrors.push({
+          tick: world.tick,
+          type: 'assert_route_capacity',
+          routeId: routeId ?? route?.id ?? -1,
+          sourceTerritoryId: sourceTerritoryId ?? route?.sourceTerritoryId ?? '',
+          destinationTerritoryId: destinationTerritoryId ?? route?.destinationTerritoryId ?? '',
+          expectedMin,
+          actualCapacity: actualCycles,
+          message: msg,
+        });
+      }
+    }
+
+    // ── assert_route_upkeep post-tick pass ───────────────────────────────────
+    for (const action of tickActions) {
+      if (action.type !== 'assert_route_upkeep') continue;
+      const p = action.payload;
+      const nationId = p['nationId'] as string;
+      const expectedDelta = p['expectedDelta'] as number; // negative = wealth decreased
+      const tolerance = (p['tolerance'] as number) ?? 0.5;
+
+      // Compare nation wealth to previous snapshot.
+      const prevSnap = snapshots[snapshots.length - 1];
+      const prevWealth = prevSnap?.diplomacy.nationState[nationId]?.wealthStock ?? 0;
+      const currWealth = world.nations[nationId]?.stockpiles.wealth ?? 0;
+      const actualDelta = currWealth - prevWealth;
+
+      if (Math.abs(actualDelta - expectedDelta) > tolerance) {
+        const msg = `[assert_route_upkeep] FAILED at tick ${world.tick}: nation ${nationId} wealth delta=${actualDelta.toFixed(3)}, expected≈${expectedDelta.toFixed(3)} (±${tolerance})`;
+        console.error(msg);
+        assertionErrors.push({
+          tick: world.tick,
+          type: 'assert_route_upkeep',
+          nationId,
+          expectedDelta,
+          actualDelta,
           message: msg,
         });
       }

@@ -601,8 +601,8 @@ Agent-based simulation replacing scripted scenarios:
 | 4 | Infrastructure, Culture, Diplomacy, Trade, War | ✓ Complete |
 | 5 | AI nations, activity tiers, fragmentation | ✓ Complete |
 | 6 | Fog of war, Prestige, War council, hardening | ✓ Complete |
-| 6.5 | Systems integration, initialization pipeline, treaty expansion, movement model, diplomatic value engine | In progress (Prompt 1 of N complete — 2.1–2.6 wired) |
-| 7 | Americas map expansion (37 territories) | After 6.5 |
+| 6.5 | Systems integration, initialization pipeline, treaty expansion, movement model, diplomatic value engine | ✓ Complete (v0.26–v0.29) |
+| 7 | Americas map expansion (36 territories) + pre-playtest polish (isCoastal, build_market) | ✓ Complete (v0.30–v0.32) |
 | 8 | Culture objectives, edicts, events system, advisor/notification UI, embassy construction, Paradox UI pass | After 7 |
 | 9 | Tutorial, documentation, full simulation harness | After 8 |
 | 10 | Europe + Asia map expansion | After 9 |
@@ -628,3 +628,170 @@ first tuning sweep after Phase 7 real-play data:
 - Trust recovery rate and fine rates
 - Fragmentation risk formula weights
 - All AI doctrine scoring weights
+- Market construction cost/time and LAND_MARKET_CAPACITY_MULTIPLIER
+- All trade route capacity, growth, upkeep, and cultural pressure constants (v0.33)
+
+---
+
+## 11. Trade Routes — Growth, Decay, and Cultural Feedback
+
+> **Reference section for v0.33 and all future trade-route work.** All constants are [PLACEHOLDER] — see `docs/tuning-notes.md` §"Trade route placeholders (v0.33)" for current values.
+
+### 11.1 Why this system exists
+
+The existing `trade` clause (v0.29) is a flat per-tick resource flow: a treaty clause that assigns capacity to a route object and adjusts territory equilibrium each tick. It captures the *presence* of a trade relationship but not its *depth* — there is no history, no accumulated value, and no cost to severing it.
+
+Trade routes give trade relationships weight. A route that has run for 20 cycles is worth more than one that just started; losing it hurts more; the cultural pressure it exerts on endpoint territories is proportional to how deeply embedded it has become in the local economy. This creates a new class of strategic asset — one that rewards sustained diplomacy, punishes aggression near trade endpoints, and ties the economic and cultural systems together.
+
+### 11.2 Route type matrix
+
+| Route type | Same nation? | Border type | Infra required | Treaty required | Mandate cost | Collateral |
+|---|---|---|---|---|---|---|
+| **Domestic** | Yes | None | market OR port at at least one endpoint | No | `ESTABLISH_DOMESTIC_ROUTE_MANDATE` [PLACEHOLDER: 2] | No |
+| **International — market tier** | No | Land border crossing | market on both endpoints | Yes (`trade_route` clause) | `INTERNATIONAL_ROUTE_MANDATE` [PLACEHOLDER: 1] | Yes — collateral-secured per treaty |
+| **International — port tier** | No | Sea crossing | port (level ≥ 1) on both endpoints | Yes (`trade_route` clause) | `INTERNATIONAL_ROUTE_MANDATE` [PLACEHOLDER: 1] | Yes — standard treaty collateral |
+
+All international routes live inside a treaty as a `trade_route` clause. Domestic routes are standalone actions (`establish_trade_route`), Mandate-gated only — no partner nation, no treaty, no collateral.
+
+### 11.3 Shipment movement
+
+Trade routes operate by dispatching `TradeShipment` objects that physically traverse the path between endpoints. The path is computed by BFS at route creation time (reusing `findTradePath` from `engine/src/trade.ts`). Each shipment carries `cargoAmount` of a `cargoResource` (`wealth` for standard routes). Resources are deducted immediately from the source territory's local stockpile on departure. The shipment advances one hop per tick (decrementing `transitTicksRemaining`). On arrival at the destination, cargo is deposited — scaled by `profitMultiplier` for port-tier routes — growth is applied to the route, and a new shipment departs immediately if the route is still active.
+
+This means route capacity grows through completed cycles (a "cycle" = one full departure → arrival pass). The route's economic contribution accelerates over time as `currentCapacity` climbs toward `growthCap`.
+
+### 11.4 Capacity growth
+
+```
+baseCapacity:
+  domestic (market endpoint):  MARKET_ROUTE_BASE_CAPACITY [PLACEHOLDER: 5]
+  domestic (port endpoint):    PORT_ROUTE_BASE_CAPACITY[portLevel] [PLACEHOLDER: L1=8, L2=12, L3=18]
+  international market tier:   MARKET_ROUTE_BASE_CAPACITY [PLACEHOLDER: 5]
+  international port tier:     PORT_ROUTE_BASE_CAPACITY[portLevel] of the higher-level endpoint
+
+growthCap = baseCapacity × ROUTE_GROWTH_CAP_MULTIPLIER [PLACEHOLDER: 1.5]
+
+On each shipment arrival:
+  currentCapacity = min(growthCap, currentCapacity + baseCapacity × ROUTE_GROWTH_RATE [PLACEHOLDER: 0.05])
+  cyclesCompleted += 1
+```
+
+A market-tier route starts at capacity 5, can grow to 7.5 max, and grows by 0.25 per cycle. Growth is intentionally slow — it represents the gradual deepening of commercial relationships, not an immediate windfall.
+
+### 11.5 Upkeep
+
+Each tick, active routes consume upkeep from the owning nation(s):
+
+```
+upkeep = currentCapacity × ROUTE_UPKEEP_RATE [PLACEHOLDER: 0.1]
+```
+
+For domestic routes: deducted from the owning nation's wealth stockpile.  
+For international routes: deducted 50/50 from each party's wealth stockpile [PLACEHOLDER split — tunable].
+
+Upkeep scales with `currentCapacity`, so a well-developed route costs more to maintain. Upkeep is allowed to go negative (insolvency is the nation's problem). The route does not auto-terminate on insolvency — that is handled by the nation's overall economic situation, not by route logic.
+
+### 11.6 Port-tier distance scaling
+
+Port-tier routes reward longer sea passages:
+
+```
+profitMultiplier = 1 + (hopDistance × PORT_DISTANCE_PROFIT_BONUS [PLACEHOLDER: 0.1])
+```
+
+`hopDistance` = number of hops from source port to destination port. Cargo deposited at destination = `cargoAmount × profitMultiplier`. This means a 3-hop sea route delivers 30% more cargo than was sent. The multiplier is fixed at route creation time and does not change unless the route is re-established with a new path.
+
+`portLevel` (stubbed at 1 for all ports in v0.33) will eventually gate which routes are reachable — a higher-level port can sustain longer routes and higher base capacity. Port upgrades are a Phase 8+ feature.
+
+### 11.7 Loss event
+
+When a route terminates for any reason — treaty non-renewal, territory ownership change, infrastructure destroyed (port or market removed), or treaty breach — a loss event fires if the route had grown beyond its base:
+
+```
+lostValue = currentCapacity - baseCapacity
+
+If lostValue > 0:
+  unrestSpike = (lostValue / growthCap) × ROUTE_LOSS_UNREST_SCALE [PLACEHOLDER: 0.1]
+  → TerritoryModifier on each endpoint territory
+    { source: 'trade_route_loss', unrestEquilibriumAdj: unrestSpike,
+      durationTicks: ROUTE_LOSS_UNREST_TICKS [PLACEHOLDER: 5] }
+  → Event log: "The trade route between [source] and [dest] (grown to N% over M cycles) has been severed."
+```
+
+If the route terminates through treaty breach, the standard trust/collateral breach consequences also apply on top of the loss event.
+
+A route that never grew (`currentCapacity == baseCapacity`) produces no loss spike — the territory never became dependent on it.
+
+### 11.8 Cultural feedback — portfolio-aware
+
+Cultural pressure from trade routes is computed per-nation each tick before the territory loop. It is *portfolio-aware*: what matters is not any single route but the aggregate share of economic output represented by all active routes.
+
+```
+nationTotalEconomicOutput = Σ baseWealth for non-revolting owned territories
+
+merchantPressure[nation] =
+  Σ over active routes owned/partnered by nation:
+    (route.currentCapacity / nationTotalEconomicOutput) × ROUTE_MERCHANT_PRESSURE_WEIGHT [PLACEHOLDER: 0.5]
+```
+
+`merchantPressure` is applied as a drift bias toward `individualist` (the Merchant cultural pole) on endpoint territories, using the same `applyDrift` mechanism as edicts (§4.2). The more trade-dependent a nation becomes, the more its endpoint territories drift toward commercial individualism.
+
+```
+activeRouteCount[nation] = count of active TradeRouteAgreements owned or partnered
+
+routeCountPressure[nation] =
+  if activeRouteCount > ROUTE_ISOLATIONIST_THRESHOLD [PLACEHOLDER: 3]:
+    (activeRouteCount - ROUTE_ISOLATIONIST_THRESHOLD) × ROUTE_ISOLATIONIST_COUNT_WEIGHT [PLACEHOLDER: 0.02]
+  else: 0
+```
+
+`routeCountPressure` is added to the `isolationistEntanglement` unrest component for isolationist-trait territories. **Double-count guard**: this counts trade routes, not treaties. The parent treaty of an international route is counted separately by `ISOLATIONIST_TREATY_THRESHOLD` (§2.2). These are different counters with different thresholds — there is no double-count.
+
+### 11.9 Prestige integration
+
+Active routes contribute to Prestige via a `tradeRouteScore` component:
+
+```
+tradeRouteScore = Σ active routes: route.currentCapacity
+prestige += tradeRouteScore × PRESTIGE_PER_TRADE_CAPACITY [PLACEHOLDER: 0.3]
+```
+
+This integrates naturally with the existing Prestige formula in `engine/src/prestige.ts`. A nation that has grown many routes will hold meaningfully more Prestige — and lose it visibly when routes are severed.
+
+### 11.10 Renewal and grown-state preservation
+
+International `trade_route` clause treaties use the existing `propose_renewal` flow. The key constraint: when a renewal is accepted, the renewed route's `currentCapacity` and `cyclesCompleted` must carry over from the old route. The grown state is a real asset — resetting it on renewal would make the renewal mechanic punitive and discourage long-term partnerships.
+
+Implementation: when a `trade_route` clause treaty is renewed, the server's `acceptTreatyHandler` looks up the existing `TradeRouteAgreement` by old `treatyClauseId`, copies `currentCapacity` and `cyclesCompleted` to the new route row, and marks the old route `ended` without firing a loss event.
+
+A renewal gap (old treaty expires tick T, new treaty signed tick T+1) suspends the route for one tick. No loss event fires during the grace period [PLACEHOLDER: 1-tick grace].
+
+### 11.11 `portLevel` stub
+
+Port levels (used for port-tier capacity and route range) do not exist in the codebase prior to v0.33. The stub adds `portLevel Int @default(1)` to the `TerritoryState` schema. All existing ports get level 1. Full port upgrade UX (construction actions, upgrade cost, level-gated route radius) is deferred to a future phase.
+
+For v0.33, `portLevel = 1` means:
+- All ports qualify for port-tier routes
+- Port-tier base capacity = `PORT_ROUTE_BASE_CAPACITY[1]` = 8 [PLACEHOLDER]
+- Route range is not gated by portLevel (any BFS path is valid)
+
+### 11.12 Edge cases
+
+| Scenario | Behavior |
+|---|---|
+| Path blocked mid-treaty (hostile territory) | Route suspends (`status = 'suspended'`), shipment halted; event logged; resumes when path clears |
+| Both endpoints lost simultaneously | Loss event fires once (deduplication by routeId) |
+| Source territory revolting | Shipment departure skipped that tick; route not ended |
+| Insufficient source stockpile | Shipment departure skipped; event: "shipment delayed"; route not ended |
+| International treaty expires, no renewal | Loss event fires (grown value is gone — non-renewal is still a termination) |
+| portLevel = 0 territory | Treated as `hasPort = false` for trade route purposes |
+| Renewal gap (1 tick between old and new treaty) | Route suspends for 1 tick; no loss event within grace period |
+
+### 11.13 Data model
+
+Two new tables in v0.33:
+
+**`TradeRouteAgreement`** — one row per active or historical route. Stores the full growth state (`currentCapacity`, `growthCap`, `cyclesCompleted`), path, type, parties, profitMultiplier, upkeepRate, and status. The `treatyClauseId` is null for domestic routes.
+
+**`TradeShipment`** — one row per in-transit shipment. Stores the remaining path, ticksRemaining, cargo amount and resource, and departure tick. Deleted on arrival; new row created on next departure.
+
+Distinct from the existing `TradeRoute` table (which backs the old flat `trade` clause and is left untouched).

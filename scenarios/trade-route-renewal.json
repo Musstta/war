@@ -1,0 +1,90 @@
+{
+  "name": "trade-route-renewal",
+  "description": "Domestic route established at T1, grows for 10 ticks (~5 cycles). At T11 the treaty is renewed (renew_trade_route). Asserts that currentCapacity and cyclesCompleted are preserved across the renewal boundary — not reset to baseCapacity/0.",
+  "ticks": 15,
+  "world": {
+    "nations": [
+      {
+        "id": "nation_costa_rica",
+        "name": "Costa Rica",
+        "territories": ["costa_rica", "nicaragua"],
+        "wealthStock": 500,
+        "industryStock": 100,
+        "populationStock": 100
+      }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "set_territory_infra",
+      "payload": { "territoryId": "costa_rica", "hasPort": true, "portLevel": 1 }
+    },
+    {
+      "tick": 1,
+      "type": "set_territory_infra",
+      "payload": { "territoryId": "nicaragua", "hasMarket": true }
+    },
+    {
+      "tick": 1,
+      "type": "establish_trade_route",
+      "payload": {
+        "ownerNationId": "nation_costa_rica",
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "type": "domestic",
+        "baseCapacity": 5
+      }
+    },
+    {
+      "tick": 10,
+      "type": "assert_route_capacity",
+      "payload": {
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "expectedMin": 5.5,
+        "expectedMax": 7.5
+      }
+    },
+    {
+      "tick": 10,
+      "type": "assert_route_cycles",
+      "payload": {
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "expectedMin": 4
+      }
+    },
+    {
+      "tick": 11,
+      "type": "renew_trade_route",
+      "payload": {
+        "ownerNationId": "nation_costa_rica",
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "type": "domestic",
+        "baseCapacity": 5
+      }
+    },
+    {
+      "tick": 12,
+      "type": "assert_route_capacity",
+      "payload": {
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "expectedMin": 5.5,
+        "expectedMax": 7.5
+      }
+    },
+    {
+      "tick": 12,
+      "type": "assert_route_cycles",
+      "payload": {
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "expectedMin": 4
+      }
+    }
+  ],
+  "metrics": ["stockpiles_per_nation_per_tick", "treaty_state_per_tick"]
+}

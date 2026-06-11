@@ -1,6 +1,60 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, AdminWorldFull, AdminTerritoryRow, AdminNationRow } from './api';
+import { api, AdminWorldFull, AdminTerritoryRow, AdminNationRow, TradeRouteAgreementView } from './api';
 import { CULTURE_AXES, poleShort, poleName } from './cultureAxes';
+
+// ── Trade Route Agreements Section ───────────────────────────────────────────
+function TradeRouteAgreementsSection({ routes }: { routes: TradeRouteAgreementView[] }) {
+  return (
+    <>
+      <div style={sectionHead}>TRADE ROUTE AGREEMENTS ({routes.length})</div>
+      {routes.length === 0
+        ? <div style={{ color: '#333', fontSize: '0.75rem', marginBottom: '0.5rem' }}>No active route agreements.</div>
+        : (
+          <table style={tblStyle}>
+            <thead>
+              <tr>
+                {['#', 'Type', 'Owner', 'Partner', 'Source', 'Destination', 'Cap / GrowthCap', 'Cycles', 'Upkeep/t', 'Profit×', 'Shipments', 'Status'].map((h) => (
+                  <th key={h} style={th}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {routes.map((r) => {
+                const growthPct = r.growthCap > 0 ? ((r.currentCapacity / r.growthCap) * 100).toFixed(0) : '?';
+                const statusColor = r.status === 'active' ? '#5be' : r.status === 'suspended' ? '#fa6' : '#555';
+                return (
+                  <tr key={r.id}>
+                    <td style={td}>{r.id}</td>
+                    <td style={{ ...td, color: r.type === 'international_port' ? '#7ecfff' : r.type === 'international_market' ? '#a8e6cf' : '#888' }}>
+                      {r.type === 'domestic' ? 'dom' : r.type === 'international_port' ? 'port L' + r.portLevel : 'mkt'}
+                    </td>
+                    <td style={td}>{r.ownerNationName ?? r.ownerNationId}</td>
+                    <td style={{ ...td, color: '#666' }}>{r.partnerNationName ?? r.partnerNationId ?? '—'}</td>
+                    <td style={td}>{r.sourceTerritoryName ?? r.sourceTerritoryId}</td>
+                    <td style={td}>{r.destinationTerritoryName ?? r.destinationTerritoryId}</td>
+                    <td style={td}>
+                      <span style={{ color: r.currentCapacity > r.baseCapacity ? '#5be' : '#888' }}>{r.currentCapacity.toFixed(1)}</span>
+                      <span style={{ color: '#333' }}> / {r.growthCap.toFixed(1)}</span>
+                      <span style={{ color: '#444', fontSize: '0.68rem' }}> ({growthPct}%)</span>
+                    </td>
+                    <td style={{ ...td, color: '#888' }}>{r.cyclesCompleted}</td>
+                    <td style={{ ...td, color: '#fa6' }}>{r.upkeepPerTick.toFixed(2)}</td>
+                    <td style={{ ...td, color: r.profitMultiplier > 1 ? '#5be' : '#555' }}>×{r.profitMultiplier.toFixed(2)}</td>
+                    <td style={{ ...td, color: r.shipments.length > 0 ? '#aaa' : '#333' }}>
+                      {r.shipments.length > 0
+                        ? r.shipments.map((s) => `${s.cargoAmount.toFixed(1)} (${s.transitTicksRemaining}t)`).join(', ')
+                        : '—'}
+                    </td>
+                    <td style={{ ...td, color: statusColor }}>{r.status}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+    </>
+  );
+}
 
 // ── Admin Diplomacy Section ───────────────────────────────────────────────────
 interface DiplomacySectionProps {
@@ -368,6 +422,22 @@ function TerritoryTableRow({ row, nations, adminKey, onRefresh }: TerritoryRowPr
     catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
   };
 
+  const toggleMarket = async () => {
+    if (row.isCoastal && !row.hasMarket) { alert('Territory is coastal — build a port instead'); return; }
+    try { await api.admin.toggleMarket(adminKey, row.id); onRefresh(); }
+    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
+  };
+
+  const promptPortLevel = async () => {
+    if (!row.hasPort) { alert('Territory has no port'); return; }
+    const raw = window.prompt(`Set port level for ${row.name} (0–3):`, String(row.portLevel ?? 1));
+    if (raw === null) return;
+    const v = parseInt(raw, 10);
+    if (isNaN(v) || v < 0 || v > 3) { alert('Must be 0–3'); return; }
+    try { await api.admin.setPortLevel(adminKey, row.id, v); onRefresh(); }
+    catch (err) { alert(err instanceof Error ? err.message : 'Failed'); }
+  };
+
   const clearConstruction = async () => {
     if (!row.constructionType && !row.pendingConstructionType) return;
     try { await api.admin.clearConstruction(adminKey, row.id); onRefresh(); }
@@ -395,8 +465,20 @@ function TerritoryTableRow({ row, nations, adminKey, onRefresh }: TerritoryRowPr
           {row.hasRoad ? 'Road✓' : 'Road✗'}
         </span>
         {row.isCoastal && (
-          <span style={{ cursor: 'pointer', color: row.hasPort ? '#7ecfff' : '#444', marginLeft: '0.4rem' }} onClick={togglePort} title="Toggle port">
-            {row.hasPort ? 'Port✓' : 'Port✗'}
+          <>
+            <span style={{ cursor: 'pointer', color: row.hasPort ? '#7ecfff' : '#444', marginLeft: '0.4rem' }} onClick={togglePort} title="Toggle port">
+              {row.hasPort ? 'Port✓' : 'Port✗'}
+            </span>
+            {row.hasPort && (
+              <span style={{ cursor: 'pointer', color: '#5be', marginLeft: '0.2rem', fontSize: '0.68rem' }} onClick={promptPortLevel} title="Click to set port level (0–3)">
+                L{row.portLevel ?? 1}
+              </span>
+            )}
+          </>
+        )}
+        {!row.isCoastal && (
+          <span style={{ cursor: 'pointer', color: row.hasMarket ? '#a8e6cf' : '#444', marginLeft: '0.4rem' }} onClick={toggleMarket} title="Toggle market">
+            {row.hasMarket ? 'Mkt✓' : 'Mkt✗'}
           </span>
         )}
         <span style={{ cursor: 'pointer', color: row.fortificationLevel > 0 ? '#f0a500' : '#444', marginLeft: '0.4rem' }} onClick={promptFort} title="Click to set fort level (0–3)">
@@ -713,6 +795,7 @@ export default function AdminApp() {
         <NationsTable nations={world.nations} territories={world.territories} />
         <TerritoriesTable territories={world.territories} nations={world.nations} adminKey={key} onRefresh={() => loadWorld(key)} />
         <DiplomacySection nations={world.nations} adminKey={key} onRefresh={() => loadWorld(key)} />
+        <TradeRouteAgreementsSection routes={world.tradeRouteAgreements ?? []} />
         <EventLog events={world.recentEvents} />
       </div>
     </div>

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, DiplomacyView, TreatyClauseInput, ClauseType, WorldView, TerritoryView, ObjectiveClauseView, ObjectiveType, ResponsibleParty } from '../api';
+import { api, DiplomacyView, TreatyClauseInput, ClauseType, WorldView, TerritoryView, ObjectiveClauseView, ObjectiveType, ResponsibleParty, TradeRouteAgreementView } from '../api';
 
 interface Props {
   world: WorldView;
   onActionQueued: () => void;
+  tradeRoutes?: TradeRouteAgreementView[];
 }
 
 const CLAUSE_TYPES: ClauseType[] = ['non_aggression', 'tribute', 'trade', 'military_access', 'defense_pact', 'objective'];
@@ -86,7 +87,7 @@ const S = {
   }),
 };
 
-export function DiplomacyPanel({ world, onActionQueued }: Props) {
+export function DiplomacyPanel({ world, onActionQueued, tradeRoutes = [] }: Props) {
   const [dipl, setDipl] = useState<DiplomacyView | null>(null);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
@@ -369,6 +370,38 @@ export function DiplomacyPanel({ world, onActionQueued }: Props) {
           );
         })()}
       </div>
+
+      {/* Trade route agreements */}
+      {tradeRoutes.length > 0 && (
+        <div style={S.section}>
+          <div style={{ ...S.label, marginBottom: '0.35rem' }}>TRADE ROUTES ({tradeRoutes.length})</div>
+          {tradeRoutes.map((r) => {
+            const growthPct = r.growthCap > 0 ? ((r.currentCapacity / r.growthCap) * 100).toFixed(0) : '?';
+            const typeLabel = r.type === 'domestic' ? 'dom' : r.type === 'international_port' ? 'port' : 'mkt';
+            const statusColor = r.status === 'active' ? '#5be' : r.status === 'suspended' ? '#fa6' : '#555';
+            return (
+              <div key={r.id} style={{ marginBottom: '0.4rem', paddingBottom: '0.3rem', borderBottom: '1px solid #111' }}>
+                <div style={S.row}>
+                  <span style={{ color: '#ddd' }}>
+                    {r.sourceTerritoryName ?? r.sourceTerritoryId} → {r.destinationTerritoryName ?? r.destinationTerritoryId}
+                  </span>
+                  <span style={{ ...S.tag(r.status), color: statusColor }}>[{typeLabel}] {r.status}</span>
+                </div>
+                <div style={{ color: '#666', fontSize: '0.70rem' }}>
+                  Cap: {r.currentCapacity.toFixed(1)} / {r.growthCap.toFixed(1)} ({growthPct}%) · {r.cyclesCompleted} cycles · upkeep {r.upkeepPerTick.toFixed(2)}/tick
+                  {r.shipments.length > 0 && <span style={{ color: '#555' }}> · {r.shipments.length} in transit</span>}
+                  {r.profitMultiplier > 1 && <span style={{ color: '#5be' }}> · ×{r.profitMultiplier.toFixed(2)} profit</span>}
+                </div>
+                {r.treatyClauseId && (
+                  <div style={{ color: '#444', fontSize: '0.68rem' }}>
+                    Partner: {r.partnerNationName ?? r.partnerNationId} · treaty clause #{r.treatyClauseId}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Propose new treaty */}
       <div style={S.section}>

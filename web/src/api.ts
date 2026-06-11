@@ -78,12 +78,13 @@ export interface TerritoryView {
   // Clear only
   hasRoad?: boolean;
   hasPort?: boolean;
+  hasMarket?: boolean;
   isInRevolt?: boolean;
   fortificationLevel?: number;
   unrest?: number;
-  constructionType?: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | null;
+  constructionType?: 'port' | 'market' | 'fort_l1' | 'fort_l2' | 'fort_l3' | null;
   constructionTicksLeft?: number | null;
-  pendingConstructionType?: 'port' | 'fort_l1' | 'fort_l2' | 'fort_l3' | 'road' | null;
+  pendingConstructionType?: 'port' | 'market' | 'fort_l1' | 'fort_l2' | 'fort_l3' | 'road' | null;
   compatibility?: CompatibilityBreakdown;
   unrestCauses?: UnrestCauses;
   armies?: TerritoryArmyView[];
@@ -160,6 +161,8 @@ export interface AdminTerritoryRow {
   fortificationLevel: number;
   hasRoad: boolean;
   hasPort: boolean;
+  hasMarket: boolean;
+  portLevel: number;
   isCoastal: boolean;
   constructionType: string | null;
   constructionTicksLeft: number | null;
@@ -198,11 +201,12 @@ export interface AdminWorldFull {
   nations: AdminNationRow[];
   territories: AdminTerritoryRow[];
   recentEvents: Array<{ tick: number; message: string }>;
+  tradeRouteAgreements?: TradeRouteAgreementView[];
 }
 
 // ── Diplomacy types ───────────────────────────────────────────────────────────
 
-export type ClauseType = 'non_aggression' | 'tribute' | 'trade' | 'military_access' | 'defense_pact' | 'objective';
+export type ClauseType = 'non_aggression' | 'tribute' | 'trade' | 'military_access' | 'defense_pact' | 'objective' | 'trade_route';
 
 export type ObjectiveType =
   | 'build_road_connection'
@@ -231,6 +235,39 @@ export interface TradeRouteView {
   pathStale: boolean;
   capacity: number | null;
   friction: number | null;
+}
+
+export interface TradeShipmentView {
+  id: number;
+  routeId: number;
+  transitTicksRemaining: number;
+  cargoAmount: number;
+  cargoResource: string;
+  departedAtTick: number;
+}
+
+export interface TradeRouteAgreementView {
+  id: number;
+  treatyClauseId: number | null;
+  ownerNationId: string;
+  ownerNationName: string;
+  partnerNationId: string | null;
+  partnerNationName: string | null;
+  type: 'domestic' | 'international_market' | 'international_port';
+  sourceTerritoryId: string;
+  sourceTerritoryName: string;
+  destinationTerritoryId: string;
+  destinationTerritoryName: string;
+  portLevel: number;
+  baseCapacity: number;
+  currentCapacity: number;
+  growthCap: number;
+  cyclesCompleted: number;
+  profitMultiplier: number;
+  upkeepPerTick: number;
+  status: 'active' | 'suspended' | 'ended';
+  startedAtTick: number;
+  shipments: TradeShipmentView[];
 }
 
 export interface TreatyClauseView {
@@ -528,6 +565,10 @@ export const api = {
       apiFetch<{ ok: boolean }>(`/api/admin/territory/${id}/toggle-port`, {
         method: 'POST', headers: adminHeaders(key),
       }),
+    toggleMarket: (key: string, id: string) =>
+      apiFetch<{ ok: boolean }>(`/api/admin/territory/${id}/toggle-market`, {
+        method: 'POST', headers: adminHeaders(key),
+      }),
     clearConstruction: (key: string, id: string) =>
       apiFetch<{ ok: boolean }>(`/api/admin/territory/${id}/clear-construction`, {
         method: 'POST', headers: adminHeaders(key),
@@ -571,6 +612,12 @@ export const api = {
         method: 'POST',
         headers: adminHeaders(key, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ name, memberNationIds }),
+      }),
+    setPortLevel: (key: string, territoryId: string, portLevel: number) =>
+      apiFetch<{ ok: boolean; portLevel: number }>(`/api/admin/territory/${territoryId}/set-port-level`, {
+        method: 'POST',
+        headers: adminHeaders(key, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ portLevel }),
       }),
   },
 };

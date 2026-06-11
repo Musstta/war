@@ -25,6 +25,7 @@ const VALID_CLAUSE_TYPES = new Set([
   'army_lending',        // §1.1
   'population_transfer', // §1.2
   'outpost',             // §1.11
+  'trade_route',         // §11 — shipment-based trade route
 ]);
 
 const VALID_OBJECTIVE_TYPES = new Set([
@@ -113,6 +114,18 @@ export const proposeTreatyHandler: ActionHandler = {
         }
         if (op.type !== 'sentry' && op.type !== 'outpost') {
           return { ok: 'error', status: 400, reason: `outpost clause type must be 'sentry' or 'outpost'` };
+        }
+      }
+      if (c.type === 'trade_route') {
+        const rp = c.payload as Record<string, unknown>;
+        if (!rp?.sourceTerritoryId || typeof rp.sourceTerritoryId !== 'string') {
+          return { ok: 'error', status: 400, reason: `trade_route clause requires sourceTerritoryId` };
+        }
+        if (!rp?.destinationTerritoryId || typeof rp.destinationTerritoryId !== 'string') {
+          return { ok: 'error', status: 400, reason: `trade_route clause requires destinationTerritoryId` };
+        }
+        if (rp.routeType !== 'international_market' && rp.routeType !== 'international_port') {
+          return { ok: 'error', status: 400, reason: `trade_route clause routeType must be 'international_market' or 'international_port'` };
         }
       }
     }

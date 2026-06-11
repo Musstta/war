@@ -31,9 +31,8 @@ export function currentPhase(): Phase {
 /**
  * [PLACEHOLDER] Mandate budget based on infrastructure investment, not raw territory count.
  * Base: 3 (always).
- * +1 per territory with road + port + fort L1+ ("developed").
- * +1 per territory with road + port + fort L3 ("fully fortified") — cumulative with the above.
- * Inland territories can never earn bonuses (they can't build ports) — intentional.
+ * +1 per territory with road + (port OR market) + fort L1+ ("developed").
+ * +1 per territory with road + (port OR market) + fort L3 ("fully fortified") — cumulative with above.
  * Tune values via harness once combat/economy are in place.
  */
 export function mandateBudget(developedCount: number, fullyFortifiedCount: number): number {
@@ -44,6 +43,7 @@ export function mandateBudget(developedCount: number, fullyFortifiedCount: numbe
 export const ACTION_COSTS: Record<string, number> = {
   build_road:           1,
   build_port:           2,
+  build_market:         2, // [PLACEHOLDER] same cost as build_port
   build_fort:           0, // sentinel — real cost from FORT_MANDATE_COSTS
   propose_treaty:       1, // [PLACEHOLDER] per design doc §8.3
   accept_treaty:        1, // [PLACEHOLDER] 0.5 rounded to 1 for now
@@ -65,12 +65,14 @@ export const ACTION_COSTS: Record<string, number> = {
   propose_embassy:      1, // [PLACEHOLDER] §1.6
   build_embassy:        1, // [PLACEHOLDER] §1.6
   expel_embassy:        0, // [PLACEHOLDER] §1.6 — free for host nation
+  establish_trade_route: 2, // [PLACEHOLDER] §11 — ESTABLISH_DOMESTIC_ROUTE_MANDATE
 };
 
 // Which phase each action type is restricted to.
 export const ACTION_PHASE: Record<string, Phase> = {
   build_road:           'main',
   build_port:           'main',
+  build_market:         'main',
   build_fort:           'main',
   propose_treaty:       'main',
   accept_treaty:        'main',
@@ -92,6 +94,7 @@ export const ACTION_PHASE: Record<string, Phase> = {
   propose_embassy:      'main',
   build_embassy:        'main',
   expel_embassy:        'main',
+  establish_trade_route: 'main',
 };
 
 /** Mandate cost to build each fort level. [PLACEHOLDER] */

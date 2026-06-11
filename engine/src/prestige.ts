@@ -6,6 +6,9 @@
  * See tuning-notes.md for the placeholder notes on each constant.
  */
 
+import { PRESTIGE_PER_TRADE_CAPACITY } from './tradeRoutes';
+export { PRESTIGE_PER_TRADE_CAPACITY };
+
 // ── Prestige formula constants ────────────────────────────────────────────────
 
 /** Prestige gained per owned territory. [PLACEHOLDER] */
@@ -104,6 +107,8 @@ export interface PrestigeInput {
   nationAgeTicks: number;
   infrastructureScore: number;
   trust: number;
+  /** Sum of currentCapacity across all active trade route agreements. [PLACEHOLDER] */
+  tradeRouteScore: number;
 }
 
 /** Compute the raw Prestige score from inputs. Returns a non-negative integer. */
@@ -111,20 +116,23 @@ export function computePrestige(input: PrestigeInput): number {
   const {
     territoryCount, standingTreatyCount, completedTreatiesKept,
     warsWon, avgUnrest, nationAgeTicks, infrastructureScore, trust,
+    tradeRouteScore,
   } = input;
 
   const score =
-    territoryCount       * PRESTIGE_PER_TERRITORY +
-    standingTreatyCount  * PRESTIGE_PER_TREATY +
+    territoryCount        * PRESTIGE_PER_TERRITORY +
+    standingTreatyCount   * PRESTIGE_PER_TREATY +
     completedTreatiesKept * PRESTIGE_PER_KEPT_TREATY +
-    warsWon              * PRESTIGE_PER_WAR_WIN +
+    warsWon               * PRESTIGE_PER_WAR_WIN +
     (avgUnrest < PRESTIGE_STABILITY_THRESHOLD ? PRESTIGE_STABILITY_BONUS : 0) +
-    nationAgeTicks       * PRESTIGE_PER_TICK_AGE +
-    infrastructureScore  * PRESTIGE_PER_INFRA_POINT +
-    trust                * PRESTIGE_TRUST_SCALE;
+    nationAgeTicks        * PRESTIGE_PER_TICK_AGE +
+    infrastructureScore   * PRESTIGE_PER_INFRA_POINT +
+    trust                 * PRESTIGE_TRUST_SCALE +
+    tradeRouteScore       * PRESTIGE_PER_TRADE_CAPACITY;
 
   return Math.max(0, Math.round(score));
 }
+
 
 /**
  * Given a map of nationId → prestige score, return the set of nationIds that

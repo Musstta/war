@@ -100,6 +100,22 @@ import {
   DOMINANT_WAR_ATTACKER_BONUS,
   DOMINANT_WAR_MILITARISTIC_BONUS,
 } from './prestige';
+import {
+  MARKET_ROUTE_BASE_CAPACITY,
+  PORT_ROUTE_BASE_CAPACITY,
+  ROUTE_GROWTH_CAP_MULTIPLIER,
+  ROUTE_GROWTH_RATE,
+  ROUTE_UPKEEP_RATE,
+  ROUTE_INTERNATIONAL_UPKEEP_SPLIT,
+  ROUTE_LOSS_UNREST_SCALE,
+  ROUTE_LOSS_UNREST_TICKS,
+  ROUTE_MERCHANT_PRESSURE_WEIGHT,
+  ROUTE_ISOLATIONIST_THRESHOLD,
+  ROUTE_ISOLATIONIST_COUNT_WEIGHT,
+  computeBaseCapacity,
+  computeProfitMultiplier,
+} from './tradeRoutes';
+import type { TradeRouteAgreement, TradeShipment } from './types';
 
 // ── Placeholder constants ─────────────────────────────────────────────────────
 // These numbers are not final. All tuning happens via the simulation harness
@@ -117,6 +133,7 @@ const POPULATION_PRODUCTION_BASE = 50; // [PLACEHOLDER]
 /** Ticks required to complete each construction type. [PLACEHOLDER] */
 export const BUILD_TICKS: Record<string, number> = {
   port:    3,
+  market:  3, // [PLACEHOLDER] same as port
   fort_l1: 3,
   fort_l2: 7,
   fort_l3: 14,
@@ -125,6 +142,7 @@ export const BUILD_TICKS: Record<string, number> = {
 /** Industry stockpile cost deducted at construction start. [PLACEHOLDER] */
 export const BUILD_INDUSTRY: Record<string, number> = {
   port:    5,
+  market:  5, // [PLACEHOLDER] same as port
   fort_l1: 3,
   fort_l2: 6,
   fort_l3: 10,
@@ -147,6 +165,54 @@ function sumProduction(world: WorldState, nationId: string): Stockpiles {
     wealth += t.def.baseWealth;
   }
   return { population, industry, wealth };
+}
+
+/**
+ * Fire a trade route loss event: log, apply TerritoryModifier unrest spike, mark route ended.
+ * Only applies if the route grew beyond baseCapacity. Called from treaty expiry, ownership change,
+ * and infra destruction paths.
+ */
+function applyRouteLossEvent(
+  route: TradeRouteAgreement,
+  draft: { territories: WorldState['territories']; territoryModifiers: WorldState['territoryModifiers']; eventLog: WorldState['eventLog']; },
+  currentTick: number,
+): void {
+  const lostValue = route.currentCapacity - route.baseCapacity;
+  if (lostValue <= 0) {
+    route.status = 'ended';
+    return;
+  }
+
+  const pctGrown = Math.round((route.currentCapacity / route.growthCap) * 100);
+  const srcName = draft.territories[route.sourceTerritoryId]?.def.name ?? route.sourceTerritoryId;
+  const dstName = draft.territories[route.destinationTerritoryId]?.def.name ?? route.destinationTerritoryId;
+  draft.eventLog.push({
+    tick: currentTick,
+    message: `The trade route between ${srcName} and ${dstName} (grown to ${pctGrown}% over ${route.cyclesCompleted} cycles) has been severed.`,
+  });
+
+  const unrestSpike = (lostValue / route.growthCap) * ROUTE_LOSS_UNREST_SCALE;
+  for (const endpointId of [route.sourceTerritoryId, route.destinationTerritoryId]) {
+    const endpointTerr = draft.territories[endpointId];
+    if (!endpointTerr) continue;
+    // Generate a unique negative ID (in-memory placeholder; DB ID assigned by server on save).
+    const modId = -(currentTick * 100000 + Math.abs(route.id) * 2 + (endpointId === route.sourceTerritoryId ? 0 : 1));
+    draft.territoryModifiers.push({
+      id: modId,
+      territoryId: endpointId,
+      source: 'trade_route_loss',
+      movementMultiplier: 1.0,
+      productionMultiplier: 1.0,
+      unrestEquilibriumAdj: unrestSpike,
+      driftRateMultiplier: 1.0,
+      defenseBonus: 0,
+      startTick: currentTick,
+      durationTicks: ROUTE_LOSS_UNREST_TICKS,
+      expiresAtTick: currentTick + ROUTE_LOSS_UNREST_TICKS,
+    });
+  }
+
+  route.status = 'ended';
 }
 
 /**
@@ -209,6 +275,58 @@ export function resolveTick(
           t.state.constructionType = 'port';
           t.state.constructionTicksLeft = BUILD_TICKS['port']!;
           draft.eventLog.push({ tick: world.tick + 1, message: `${nation.name} began port construction in ${t.def.name}.` });
+          apply(action);
+          break;
+        }
+
+        case 'build_market': {
+          const { territoryId } = action.payload as { territoryId: string };
+          const t = draft.territories[territoryId];
+          const nation = draft.nations[action.nationId];
+          if (!t || !nation) { discard(action, 'territory or nation not found'); break; }
+          if (t.state.ownerId !== action.nationId) { discard(action, 'not owner'); break; }
+          if (t.def.isCoastal) { discard(action, 'territory is coastal — build a port instead'); break; }
+          if (t.state.hasMarket) { discard(action, 'already has market'); break; }
+          if (t.state.hasPort) { discard(action, 'already has port'); break; }
+          if (t.state.constructionType !== null) { discard(action, 'construction slot occupied'); break; }
+          const marketIndustryCost = BUILD_INDUSTRY['market']!;
+          if (nation.stockpiles.industry < marketIndustryCost) { discard(action, `insufficient industry (need ${marketIndustryCost})`); break; }
+          nation.stockpiles.industry -= marketIndustryCost;
+          t.state.constructionType = 'market';
+          t.state.constructionTicksLeft = BUILD_TICKS['market']!;
+          draft.eventLog.push({ tick: world.tick + 1, message: `${nation.name} began market construction in ${t.def.name}.` });
+          apply(action);
+          break;
+        }
+
+        case 'establish_trade_route': {
+          // Domestic trade route — both territories owned by same nation, at least one has infra.
+          // Mandate cost is handled by the server action handler at queue time.
+          // The engine receives the fully-formed TradeRouteAgreement object and injects it.
+          // (Same pattern as treaty acceptance: server validates, engine just records.)
+          const { tradeRoute } = action.payload as { tradeRoute: TradeRouteAgreement };
+          if (!tradeRoute) { discard(action, 'establish_trade_route: missing tradeRoute payload'); break; }
+          const sourceTerr = draft.territories[tradeRoute.sourceTerritoryId];
+          const destTerr = draft.territories[tradeRoute.destinationTerritoryId];
+          if (!sourceTerr || !destTerr) { discard(action, 'establish_trade_route: territory not found'); break; }
+          if (sourceTerr.state.ownerId !== action.nationId) { discard(action, 'establish_trade_route: source not owned by nation'); break; }
+          if (destTerr.state.ownerId !== action.nationId) { discard(action, 'establish_trade_route: destination not owned by nation'); break; }
+          const hasInfra = sourceTerr.state.hasPort || sourceTerr.state.hasMarket
+            || destTerr.state.hasPort || destTerr.state.hasMarket;
+          if (!hasInfra) { discard(action, 'establish_trade_route: no market or port at either endpoint'); break; }
+          // Duplicate check: no other active domestic route between these endpoints.
+          const duplicate = draft.tradeRouteAgreements.some(
+            (r) => r.status === 'active' && r.type === 'domestic'
+              && ((r.sourceTerritoryId === tradeRoute.sourceTerritoryId && r.destinationTerritoryId === tradeRoute.destinationTerritoryId)
+              || (r.sourceTerritoryId === tradeRoute.destinationTerritoryId && r.destinationTerritoryId === tradeRoute.sourceTerritoryId)),
+          );
+          if (duplicate) { discard(action, 'establish_trade_route: active domestic route already exists between these territories'); break; }
+          draft.tradeRouteAgreements.push(tradeRoute);
+          const ownerName = draft.nations[action.nationId]?.name ?? action.nationId;
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `${ownerName} established a domestic trade route: ${sourceTerr.def.name} → ${destTerr.def.name} (base capacity ${tradeRoute.baseCapacity}).`,
+          });
           apply(action);
           break;
         }
@@ -952,6 +1070,98 @@ export function resolveTick(
       }
     }
 
+    // ── Trade route shipment transit advancement ──────────────────────────────
+    // Mirror of army transit advancement. Each tick: decrement transitTicksRemaining.
+    // On arrival (transitTicksRemaining hits 0): deposit cargo, apply growth, depart new shipment.
+    // Shipments are carried on route.shipments (in-memory); persisted by server/world.ts.
+    {
+      // Helper: depart a new shipment from source → destination.
+      const departShipment = (route: TradeRouteAgreement, currentTick: number): TradeShipment => {
+        const cargoAmount = route.currentCapacity;
+        // Deduct from source territory local wealth stockpile; allow insolvency.
+        const srcTerrState = draft.territories[route.sourceTerritoryId]?.state;
+        if (srcTerrState && !srcTerrState.isInRevolt) {
+          const deducted = Math.min(srcTerrState.localWltStock, cargoAmount);
+          srcTerrState.localWltStock -= deducted;
+          // The remaining deduction from general stockpile is handled at flush time naturally —
+          // the route upkeep block covers the wealth cost. For shipment cargo we just note departure.
+        }
+        return {
+          id: -(currentTick * 10000 + draft.tradeRouteAgreements.indexOf(route)), // negative = in-memory (not DB row)
+          routeId: route.id,
+          path: [...route.path],
+          transitTicksRemaining: 1,
+          cargoAmount,
+          cargoResource: 'wealth',
+          direction: 'forward',
+          departedAtTick: currentTick,
+        };
+      };
+
+      for (const route of draft.tradeRouteAgreements) {
+        if (route.status !== 'active') continue;
+
+        // Auto-depart first shipment if none in transit (newly created route or resumed after suspension).
+        if (route.shipments.length === 0) {
+          route.shipments.push(departShipment(route, world.tick + 1));
+          continue;
+        }
+
+        const shipmentsToRemove: number[] = [];
+        const shipmentsToAdd: TradeShipment[] = [];
+
+        for (let si = 0; si < route.shipments.length; si++) {
+          const shipment = route.shipments[si]!;
+          shipment.transitTicksRemaining -= 1;
+          if (shipment.transitTicksRemaining > 0) continue;
+
+          // Advance one step on path.
+          shipment.path = shipment.path.slice(1);
+
+          if (shipment.path.length === 0) {
+            // Shipment arrived at destination.
+            const destTerrState = draft.territories[route.destinationTerritoryId]?.state;
+            if (destTerrState) {
+              destTerrState.localWltStock += shipment.cargoAmount * route.profitMultiplier;
+            }
+
+            // Apply growth to route.
+            route.currentCapacity = Math.min(
+              route.growthCap,
+              route.currentCapacity + route.baseCapacity * ROUTE_GROWTH_RATE,
+            );
+            route.cyclesCompleted += 1;
+
+            shipmentsToRemove.push(si);
+
+            // Depart next shipment immediately if route still active.
+            if (route.status === 'active') {
+              shipmentsToAdd.push(departShipment(route, world.tick + 1));
+            }
+          } else {
+            // Still in transit — compute ticks for next territory on path.
+            const nextTerrId = shipment.path[0];
+            if (nextTerrId) {
+              const nextTerr = draft.territories[nextTerrId];
+              const geoMod = nextTerr ? (GEOGRAPHY_MOVEMENT_MODIFIER_INLINE[nextTerr.def.geography] ?? 1.0) : 1.0;
+              const roadMod = nextTerr?.state.hasRoad ? 0.5 : 1.0;
+              shipment.transitTicksRemaining = Math.max(1, Math.ceil(geoMod * roadMod));
+            } else {
+              shipment.transitTicksRemaining = 1;
+            }
+          }
+        }
+
+        // Remove arrived shipments (in reverse index order).
+        for (let ri = shipmentsToRemove.length - 1; ri >= 0; ri--) {
+          route.shipments.splice(shipmentsToRemove[ri]!, 1);
+        }
+        for (const s of shipmentsToAdd) {
+          route.shipments.push(s);
+        }
+      }
+    }
+
     // ── §1.3 Border skirmish detection ────────────────────────────────────────
     // Detect armies from different non-war nations crossing the same territory this tick.
     // A skirmish fires when two such armies both had attack intents on the same territory.
@@ -1221,6 +1431,9 @@ export function resolveTick(
       if (completedType === 'port') {
         t.state.hasPort = true;
         draft.eventLog.push({ tick: world.tick + 1, message: `${ownerName} completed a port in ${t.def.name}.` });
+      } else if (completedType === 'market') {
+        t.state.hasMarket = true;
+        draft.eventLog.push({ tick: world.tick + 1, message: `${ownerName} completed a market in ${t.def.name}.` });
       } else {
         t.state.fortificationLevel += 1;
         draft.eventLog.push({
@@ -1823,6 +2036,17 @@ export function resolveTick(
         }
       }
 
+      // trade_route clause expiry: fire loss event on associated TradeRouteAgreement.
+      for (const clause of treaty.clauses) {
+        if (clause.type !== 'trade_route') continue;
+        const route = draft.tradeRouteAgreements.find(
+          (r) => r.treatyClauseId === clause.id && r.status === 'active',
+        );
+        if (route) {
+          applyRouteLossEvent(route, draft, world.tick + 1);
+        }
+      }
+
       treaty.status = 'expired';
       const bonus = trustCompletionBonus(treaty.termTicks);
       for (const partyId of treaty.partyIds) {
@@ -1927,6 +2151,31 @@ export function resolveTick(
         if (toNationId) {
           tributeObligationsAsReceiver[toNationId] = true;
         }
+      }
+    }
+
+    // ── Trade route cultural feedback pre-computation ────────────────────────
+    // Compute merchant pressure and route count pressure per nation before the territory loop.
+    // merchantPressure: drives drift toward individualist on endpoint territories.
+    // routeCountPressure: adds to isolationistEntanglement on isolationist territories.
+    // Both are portfolio-aware: the aggregate across all active routes matters, not any single route.
+    const routeMerchantPressureByNation: Record<string, number> = {};
+    const routeCountByNation: Record<string, number> = {};
+    // Gross wealth output per nation (non-revolting territories) — denominator for merchant pressure.
+    const nationEconomicOutput: Record<string, number> = {};
+    for (const t of Object.values(draft.territories)) {
+      const oid = t.state.ownerId;
+      if (!oid || t.state.isInRevolt) continue;
+      nationEconomicOutput[oid] = (nationEconomicOutput[oid] ?? 0) + t.def.baseWealth;
+    }
+    for (const route of draft.tradeRouteAgreements) {
+      if (route.status !== 'active') continue;
+      const parties = [route.ownerNationId, ...(route.partnerNationId ? [route.partnerNationId] : [])];
+      for (const nid of parties) {
+        routeCountByNation[nid] = (routeCountByNation[nid] ?? 0) + 1;
+        const output = nationEconomicOutput[nid] ?? 1;
+        const pressure = (route.currentCapacity / output) * ROUTE_MERCHANT_PRESSURE_WEIGHT;
+        routeMerchantPressureByNation[nid] = (routeMerchantPressureByNation[nid] ?? 0) + pressure;
       }
     }
 
@@ -2058,12 +2307,18 @@ export function resolveTick(
       // ── 2.2 Cultural constraint axes ─────────────────────────────────────────
 
       // isolationist_entanglement: isolationist > 0.3 (expansionist < −0.3) AND treaty count > threshold.
+      // Also adds routeCountPressure from active trade routes (separate counter, separate threshold).
       // [PLACEHOLDER callsite: ISOLATIONIST_TREATY_THRESHOLD, ISOLATIONIST_ENTANGLEMENT_WEIGHT]
       let isolationistEntanglement = 0;
       if (t.state.valueTraits.expansionist < -0.3) {
         const treatyCount = activeTreatyCountByNation[ownerId] ?? 0;
         if (treatyCount > ISOLATIONIST_TREATY_THRESHOLD) {
           isolationistEntanglement = (treatyCount - ISOLATIONIST_TREATY_THRESHOLD) * ISOLATIONIST_ENTANGLEMENT_WEIGHT; // [PLACEHOLDER]
+        }
+        // Route count pressure — SEPARATE from treaty count, distinct threshold.
+        const routeCount = routeCountByNation[ownerId] ?? 0;
+        if (routeCount > ROUTE_ISOLATIONIST_THRESHOLD) {
+          isolationistEntanglement += (routeCount - ROUTE_ISOLATIONIST_THRESHOLD) * ROUTE_ISOLATIONIST_COUNT_WEIGHT; // [PLACEHOLDER]
         }
       }
 
@@ -2137,6 +2392,16 @@ export function resolveTick(
       const compat = hasActiveEmbassy
         ? { ...rawCompat, total: Math.min(1, rawCompat.total + EMBASSY_COMPAT_BONUS) }
         : rawCompat;
+
+      // Trade route loss spike: TerritoryModifiers from applyRouteLossEvent are applied via modUnrestAdj.
+      // The named component tradeRouteLossSpike is always 0 here (the spike is in the modifier).
+      // tradeRouteStability: endpoint territories of grown active routes get a mild stability bonus.
+      const isEndpointTerritory = draft.tradeRouteAgreements.some(
+        (r) => r.status === 'active' && r.currentCapacity > r.baseCapacity
+          && (r.sourceTerritoryId === t.def.id || r.destinationTerritoryId === t.def.id),
+      );
+      const tradeRouteStability = isEndpointTerritory ? -0.01 : 0; // [PLACEHOLDER: minor stability bonus for grown routes]
+
       const causes = computeUnrestEquilibrium(
         compat, hops,
         t.state.hasRoad, t.state.hasPort, t.state.fortificationLevel,
@@ -2151,6 +2416,8 @@ export function resolveTick(
         progressiveStagnation,
         // §1.2 Population transfer shock: active while ticksLeft > 0. [PLACEHOLDER callsite: POPULATION_TRANSFER_UNREST_SCALE]
         t.state.populationTransferShockTicksLeft > 0 ? POPULATION_TRANSFER_UNREST_SCALE : 0,
+        tradeRouteStability,
+        0, // tradeRouteLossSpike — applied via TerritoryModifier (modUnrestAdj), not equilibrium formula
       );
 
       // Store causes for assert_equilibrium_component harness assertions.
@@ -2225,6 +2492,19 @@ export function resolveTick(
       t.state.valueTraits = applyDrift(t.state.valueTraits, nationCulture, t.state.unrest, rng,
         tradeDriftMult * roadDriftMult * modDriftMult, // [PLACEHOLDER callsite: §1.4 TerritoryModifier driftRateMultiplier]
       );
+
+      // §11.8 Trade route merchant pressure drift bias.
+      // Endpoint territories of active routes: nudge individualist axis toward +1 by merchantPressure × scale.
+      // Applied as a direct trait adjustment (not via applyDrift) to avoid coupling with nationCulture.
+      // [PLACEHOLDER callsite: ROUTE_MERCHANT_PRESSURE_WEIGHT]
+      const merchantPressure = routeMerchantPressureByNation[ownerId] ?? 0;
+      if (merchantPressure > 0 && isEndpointTerritory) {
+        const nudge = merchantPressure * 0.01 * Math.max(0, 1 - t.state.unrest); // [PLACEHOLDER scale]
+        t.state.valueTraits = {
+          ...t.state.valueTraits,
+          individualist: Math.min(1, t.state.valueTraits.individualist + nudge),
+        };
+      }
     }
 
     // ── Production + local stockpile → nation general stockpile ──────────────
@@ -2277,6 +2557,43 @@ export function resolveTick(
         : nation.armySize;
       const upkeep = effectiveArmySize * UPKEEP_PER_SOLDIER;
       nation.stockpiles.wealth -= upkeep;
+    }
+
+    // ── Trade route upkeep deduction ─────────────────────────────────────────
+    // Per-tick upkeep = currentCapacity × upkeepRate, deducted from owning nation(s).
+    // Domestic: 100% from owner. International: 50/50 split. Wealth may go negative.
+    for (const route of draft.tradeRouteAgreements) {
+      if (route.status !== 'active') continue;
+      const upkeep = route.currentCapacity * ROUTE_UPKEEP_RATE;
+      if (route.type === 'domestic') {
+        const ownerNation = draft.nations[route.ownerNationId];
+        if (ownerNation) ownerNation.stockpiles.wealth -= upkeep;
+      } else {
+        const ownerFraction = upkeep * ROUTE_INTERNATIONAL_UPKEEP_SPLIT;
+        const partnerFraction = upkeep - ownerFraction;
+        const ownerNation = draft.nations[route.ownerNationId];
+        const partnerNation = route.partnerNationId ? draft.nations[route.partnerNationId] : null;
+        if (ownerNation) ownerNation.stockpiles.wealth -= ownerFraction;
+        if (partnerNation) partnerNation.stockpiles.wealth -= partnerFraction;
+      }
+    }
+
+    // ── Trade route ownership-change loss event ───────────────────────────────
+    // When a territory changes owner, any active route with that territory as an endpoint
+    // fires the loss event. Check by comparing territory ownerId to route's owner.
+    for (const route of draft.tradeRouteAgreements) {
+      if (route.status !== 'active') continue;
+      const srcOwner = draft.territories[route.sourceTerritoryId]?.state.ownerId;
+      const dstOwner = draft.territories[route.destinationTerritoryId]?.state.ownerId;
+      const srcWrong = route.type === 'domestic'
+        ? srcOwner !== route.ownerNationId
+        : srcOwner !== route.ownerNationId && srcOwner !== route.partnerNationId;
+      const dstWrong = route.type === 'domestic'
+        ? dstOwner !== route.ownerNationId
+        : dstOwner !== route.ownerNationId && dstOwner !== route.partnerNationId;
+      if (srcWrong || dstWrong) {
+        applyRouteLossEvent(route, draft, world.tick + 1);
+      }
     }
 
     // ── Insolvency + debt resolution ──────────────────────────────────────────

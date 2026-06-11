@@ -10,11 +10,11 @@ interface Props {
 }
 
 const FORT_MANDATE_COSTS: Record<number, number> = { 1: 2, 2: 3, 3: 4 };
-const BUILD_IND: Record<string, number> = { port: 5, fort_l1: 3, fort_l2: 6, fort_l3: 10 };
-const BUILD_TICKS: Record<string, number> = { port: 3, fort_l1: 3, fort_l2: 7, fort_l3: 14 };
+const BUILD_IND: Record<string, number> = { port: 5, market: 5, fort_l1: 3, fort_l2: 6, fort_l3: 10 };
+const BUILD_TICKS: Record<string, number> = { port: 3, market: 3, fort_l1: 3, fort_l2: 7, fort_l3: 14 };
 
 const CONSTRUCTION_NAMES: Record<string, string> = {
-  port: 'Port', fort_l1: 'Fort L1', fort_l2: 'Fort L2', fort_l3: 'Fort L3', road: 'Road',
+  port: 'Port', market: 'Market', fort_l1: 'Fort L1', fort_l2: 'Fort L2', fort_l3: 'Fort L3', road: 'Road',
 };
 
 
@@ -41,6 +41,7 @@ function queuedActionLabel(type: string, payload: unknown): string {
   const p = payload as { targetLevel?: number };
   if (type === 'build_road') return 'Road — resolves at next tick';
   if (type === 'build_port') return `Port — ${BUILD_TICKS['port']} ticks to complete`;
+  if (type === 'build_market') return `Market — ${BUILD_TICKS['market']} ticks to complete`;
   if (type === 'build_fort') return `Fort L${p.targetLevel ?? '?'} — ${BUILD_TICKS[`fort_l${p.targetLevel}`] ?? '?'} ticks`;
   return type;
 }
@@ -179,6 +180,7 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
 
   const canBuildRoad = isOwn && !t?.hasRoad && phase === 'main' && mandateLeft >= 1 && slotAvailable;
   const canBuildPort = isOwn && !!t?.isCoastal && !t?.hasPort && phase === 'main' && mandateLeft >= 2 && myInd >= BUILD_IND['port']! && slotAvailable;
+  const canBuildMarket = isOwn && !t?.isCoastal && !t?.hasMarket && !t?.hasPort && phase === 'main' && mandateLeft >= 2 && myInd >= BUILD_IND['market']! && slotAvailable;
   const canBuildFort = isOwn && (t?.fortificationLevel ?? 0) < 3 && phase === 'main' && mandateLeft >= fortMandateCost && myInd >= fortIndCost && slotAvailable;
 
   // Actions queued by this player for the current territory this tick.
@@ -222,6 +224,7 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
       <Row label="Coastal" value={t?.isCoastal ? 'Yes' : 'No'} />
       <Row label="Road" value={t?.hasRoad ? 'Yes' : 'No'} />
       <Row label="Port" value={t?.hasPort ? 'Yes' : (t?.isCoastal ? 'No' : '—')} />
+      {!t?.isCoastal && <Row label="Market" value={t?.hasMarket ? 'Yes' : 'No'} />}
       {t?.fortificationLevel !== undefined && (
         <Row label="Fortification" value={String(t.fortificationLevel)} />
       )}
@@ -407,6 +410,33 @@ export function InfoPanel({ territoryId, world, defNames, onActionQueued }: Prop
               style={{ ...actionBtn, opacity: canBuildPort ? 1 : 0.4, cursor: canBuildPort ? 'pointer' : 'not-allowed', marginBottom: '0.3rem' }}
             >
               {t?.hasPort ? 'Port built' : isDeferred ? `Queue next: Port (2M / ${BUILD_IND['port']}ind)` : `Build Port (2M / ${BUILD_IND['port']}ind)`}
+            </button>
+          )}
+
+          {/* Market (inland only) */}
+          {!t?.isCoastal && (
+            <button
+              onClick={() => stage({
+                title: isDeferred ? 'Queue next: Market' : 'Build Market',
+                costLine: `2 mandates · ${BUILD_IND['market']} industry`,
+                timingLine: isDeferred
+                  ? `Starts after ${CONSTRUCTION_NAMES[constructing!] ?? constructing} completes · ${BUILD_TICKS['market']} ticks to build`
+                  : `${BUILD_TICKS['market']} ticks to complete`,
+                execute: async () => { await api.action('build_market', { territoryId }); onActionQueued(); },
+              })}
+              disabled={!canBuildMarket}
+              title={
+                t?.hasMarket ? 'Already has a market'
+                : t?.hasPort ? 'Already has a port'
+                : pending !== null ? 'Next construction already queued'
+                : phase !== 'main' ? 'Only during Main Phase'
+                : myInd < BUILD_IND['market']! ? `Need ${BUILD_IND['market']} industry (have ${Math.floor(myInd)})`
+                : mandateLeft < 2 ? 'Not enough mandates'
+                : undefined
+              }
+              style={{ ...actionBtn, opacity: canBuildMarket ? 1 : 0.4, cursor: canBuildMarket ? 'pointer' : 'not-allowed', marginBottom: '0.3rem' }}
+            >
+              {t?.hasMarket ? 'Market built' : isDeferred ? `Queue next: Market (2M / ${BUILD_IND['market']}ind)` : `Build Market (2M / ${BUILD_IND['market']}ind)`}
             </button>
           )}
 

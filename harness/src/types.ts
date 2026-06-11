@@ -33,7 +33,13 @@ export type ActionType =
   | 'propose_embassy'   // harness: directly place a proposed embassy into world.embassies
   | 'build_embassy'     // harness: advance an embassy to under_construction (engine pass-through)
   | 'expel_embassy'     // harness: expel an embassy (engine pass-through)
-  | 'set_trade_route'  // harness: inject a TradeRoute into world.tradeRoutes (for tradeStability tests)
+  | 'set_trade_route'         // harness: inject a TradeRoute into world.tradeRoutes (for tradeStability tests)
+  | 'establish_trade_route'  // harness: inject a TradeRouteAgreement into world.tradeRouteAgreements
+  | 'renew_trade_route'      // harness: simulate treaty renewal — end old route, inject new one carrying forward currentCapacity/cyclesCompleted
+  | 'assert_route_capacity'  // harness assertion: verify route currentCapacity
+  | 'assert_route_cycles'    // harness assertion: verify route cyclesCompleted
+  | 'assert_route_upkeep'    // harness assertion: verify nation wealth decreased by expected upkeep
+  | 'set_territory_infra'    // harness: set hasPort/hasMarket/portLevel on a territory
   | 'build_road'
   | 'build_port'
   | 'build_fort';
@@ -175,6 +181,23 @@ export interface TreatySnapshot {
   tradeClauses: TradeClauseState[];
 }
 
+export interface TradeRouteSnapshot {
+  routeId: number;
+  type: string;
+  ownerNationId: string;
+  partnerNationId: string | null;
+  sourceTerritoryId: string;
+  destinationTerritoryId: string;
+  baseCapacity: number;
+  currentCapacity: number;
+  growthCap: number;
+  cyclesCompleted: number;
+  profitMultiplier: number;
+  upkeepPerTick: number;
+  shipmentCount: number;
+  status: string;
+}
+
 export interface TickSnapshot {
   tick: number;
   territories: Record<string, TerritorySnapshot>;
@@ -187,6 +210,8 @@ export interface TickSnapshot {
   events: Array<{ tick: number; message: string }>;
   /** Per-territory fragmentation data — only populated for abandoned nation territories. */
   fragmentationData: TerritoryFragmentationSnapshot[];
+  /** Trade route agreement snapshots — only populated when routes exist. */
+  tradeRoutes: TradeRouteSnapshot[];
 }
 
 export interface VisibilityAssertionError {
@@ -208,7 +233,27 @@ export interface EquilibriumComponentAssertionError {
   message: string;
 }
 
-export type AssertionError = VisibilityAssertionError | EquilibriumComponentAssertionError;
+export interface RouteCapacityAssertionError {
+  tick: number;
+  type: 'assert_route_capacity';
+  routeId: number;
+  sourceTerritoryId: string;
+  destinationTerritoryId: string;
+  expectedMin: number;
+  actualCapacity: number;
+  message: string;
+}
+
+export interface RouteUpkeepAssertionError {
+  tick: number;
+  type: 'assert_route_upkeep';
+  nationId: string;
+  expectedDelta: number;
+  actualDelta: number;
+  message: string;
+}
+
+export type AssertionError = VisibilityAssertionError | EquilibriumComponentAssertionError | RouteCapacityAssertionError | RouteUpkeepAssertionError;
 
 export interface RunResult {
   scenario: Scenario;

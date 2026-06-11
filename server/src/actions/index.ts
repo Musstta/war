@@ -1,6 +1,7 @@
 import type { ActionHandler } from './types';
 import { buildRoadHandler } from './buildRoad';
 import { buildPortHandler } from './buildPort';
+import { buildMarketHandler } from './buildMarket';
 import { buildFortHandler } from './buildFort';
 import { cancelPendingConstructionHandler } from './cancelPendingConstruction';
 import { proposeTreatyHandler } from './proposeTreaty';
@@ -23,6 +24,7 @@ import { buildBarricadeHandler } from './buildBarricade';
 import { proposeEmbassyHandler } from './proposeEmbassy';
 import { buildEmbassyHandler } from './buildEmbassy';
 import { expelEmbassyHandler } from './expelEmbassy';
+import { establishTradeRouteHandler } from './establishTradeRoute';
 
 /**
  * Registry of action handlers keyed by action type string.
@@ -32,6 +34,7 @@ import { expelEmbassyHandler } from './expelEmbassy';
 export const actionRegistry: Record<string, ActionHandler> = {
   build_road:                    buildRoadHandler,
   build_port:                    buildPortHandler,
+  build_market:                  buildMarketHandler,
   build_fort:                    buildFortHandler,
   cancel_pending_construction:   cancelPendingConstructionHandler,
   propose_treaty:                proposeTreatyHandler,
@@ -54,6 +57,7 @@ export const actionRegistry: Record<string, ActionHandler> = {
   propose_embassy:               proposeEmbassyHandler,
   build_embassy:                 buildEmbassyHandler,
   expel_embassy:                 expelEmbassyHandler,
+  establish_trade_route:         establishTradeRouteHandler,
 };
 
 export type { ActionHandler, ActionContext, ValidateResult } from './types';

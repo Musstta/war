@@ -107,7 +107,7 @@ export default function App() {
           {showDiplomacy ? '✕ Diplomacy' : '🤝 Diplomacy'}
         </button>
       </div>
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', marginRight: '13rem' }}>
         <GameMap
           world={world}
           selectedId={selectedTerritoryId}

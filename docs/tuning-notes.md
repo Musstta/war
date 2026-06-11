@@ -753,6 +753,226 @@ Two territories in `engine/src/data/americas.json` required `traitOverrides` aft
 
 ---
 
-## Fast-forward vote (deferred feature)
+## North America macro-territory derived traits (v0.35)
 
-when all active players check "ready for next tick," the tick fires immediately instead of waiting for midnight. Preserves the persistent-world design as default but lets a synchronously-online group compress time. Build post-Phase 4, post-harness. Needs to handle: who counts as "active" for the vote, what happens to queued actions for absent-but-not-Dormant players, whether the vote requires unanimous or majority. Need to differentiate between if this is possible in prep or only main phase and what the difference is. Differences in phases at the moment are still unrealized, so defer until the full action set and phase structure are specced.
+All 8 North American macro-territories (`usa_northeast`, `usa_midwest`, `usa_south`, `usa_west`, `canada_west`, `canada_central`, `canada_east`, `canada_northwest`) are in `engine/src/data/americas.json` and go through the same `deriveTerritoryTraits` initialization pipeline as all other territories. Their base values and derived traits are first-pass [PLACEHOLDER] exactly like the rest of the Americas dataset.
+
+**Cultural family assignment:** all 8 are `frontier` in `americas-territories.json`, which maps to `european` in the current initialization pipeline (see v0.26 notes). This is a placeholder decision — the US and Canada have genuinely different cultural sub-profiles (Midwestern isolationism vs. Northeastern cosmopolitanism vs. Southern conservative-expansionist vs. Western frontier-individualist). These differences are currently represented only through `traitOverrides` (only `usa_northeast` has one: `individualist: 0.3, progressive: 0.3`). The other 7 North American territories derive traits from the generic `european/coastal|plain|mountainous` buckets.
+
+**Quality tier summary (v0.34 formula, all [PLACEHOLDER]):**
+- `usa_northeast`: score 9.25 → tier 3 (coastal, high base values)
+- `usa_midwest`: score 6.2 → tier 2 (inland plain, moderate base values)
+- `usa_south`: score 9.25 → tier 3 (coastal)
+- `usa_west`: score 7.25 → tier 2 (coastal but mountainous geography lowers base values slightly)
+- `canada_west`: score 7.25 → tier 2 (coastal mountainous)
+- `canada_central`: score 7.7 → tier 2 (coastal — shares a sea adjacency, scoring coastal bonus)
+- `canada_east`: score 9.25 → tier 3 (coastal)
+- `canada_northwest`: score 7.7 → tier 2 (coastal — Alaska coast)
+
+**Known gap — cultural family nuance:** the `frontier → european` mapping groups all NA territories into the European cultural family, which drives Hofstede-style collectivist offsets. This will produce incorrect baseline traits for regions with strong Indigenous cultural presence (`canada_northwest`) and over-individual-or-collectivist results for others. The correct fix is either a new `frontier` cultural family with its own FAMILY_TRAIT_OFFSETS, or territory-level `traitOverrides` on each of the 8 territories after the first playtest reveals the derived traits. Defer until Phase 7 content pass with real player data.
+
+**Geography assignments:**
+- `usa_northeast`: `coastal` — trade-oriented, moderate population, progressive modifier (+0.2)
+- `usa_midwest`: `plain` (rendered as `inland`) — agrarian, neutral modifiers
+- `usa_south`: `coastal` — largest state count, most disconnected sub-polygons; trait profile similar to northeast but distinct in history
+- `usa_west`: `mountainous` — traditional lean (−0.2 progressive, −0.2 expansionist), militaristic (+0.1)
+- `canada_west`: `mountainous` — same modifiers as usa_west
+- `canada_central`: `plain` (rendered as `inland`) — neutral modifiers, agrarian
+- `canada_east`: `coastal` — similar to northeast
+- `canada_northwest`: `plain` (rendered as `inland`, indigenous family in americas-territories.json but mapped to `european`) — correct family assignment would give peaceful (−0.2 militaristic) and isolationist (−0.3 expansionist) leans
+
+**Map geometry note:** `canada_northwest` has 98 sub-polygons after dissolve (was 105). This is correct — Nunavut comprises ~1,800 islands, none contiguous with the mainland. The dissolve correctly merges the mainland portion (Yukon, NWT mainland) into a smaller polygon count while preserving the genuinely disconnected island chain geometry.
+
+---
+
+## Market construction placeholders (v0.32)
+
+Markets are the inland equivalent of ports — single-territory construction, same slot, mutually exclusive with port.
+
+**Current placeholder values:**
+- Construction cost: `BUILD_INDUSTRY['market'] = 5` (same as port)
+- Construction time: `BUILD_TICKS['market'] = 3` (same as port)
+- Mandate cost: `ACTION_COSTS['build_market'] = 2` (same as build_port)
+- Land trade capacity with road+market: `LAND_MARKET_CAPACITY_MULTIPLIER = 1.5` (stacks multiplicatively on `LAND_ROAD_CAPACITY_MULTIPLIER = 1.5` → net 2.25× base)
+
+---
+
+## Trade route placeholders (v0.33)
+
+All values in `engine/src/tradeRoutes.ts`. Every value is [PLACEHOLDER] — these were set to produce a recognizable growth curve in harness scenarios, not from real tuning data.
+
+**Capacity:**
+- `MARKET_ROUTE_BASE_CAPACITY = 5` — starting capacity for market-tier (domestic or international) routes
+- `PORT_ROUTE_BASE_CAPACITY = { 1: 8, 2: 12, 3: 18 }` — starting capacity indexed by portLevel (L2/L3 are future-proofed; only L1 is reachable in v0.33)
+- `ROUTE_GROWTH_CAP_MULTIPLIER = 1.5` — max capacity = baseCapacity × 1.5 (market-tier cap: 7.5, port L1 cap: 12)
+
+**Growth:**
+- `ROUTE_GROWTH_RATE = 0.05` — capacity added per cycle = baseCapacity × 0.05
+  - Market-tier: +0.25 per cycle. Takes 10 cycles to reach cap from base.
+  - Port L1: +0.40 per cycle. Takes 10 cycles to reach cap from base.
+  - Deliberately slow — represents deepening commercial relations, not immediate windfall.
+
+**Upkeep:**
+- `ROUTE_UPKEEP_RATE = 0.1` — per tick cost = currentCapacity × 0.1
+  - Market-tier at base: 0.5/tick. At cap: 0.75/tick. Not punitive.
+  - Observation: upkeep at cap < growth benefit for most routes. Routes are net-positive long-term — that's intentional.
+
+**Port distance bonus:**
+- `PORT_DISTANCE_PROFIT_BONUS = 0.1` — profitMultiplier += 0.1 per hop
+  - 1-hop sea route: 1.1× cargo deposited
+  - 3-hop sea route: 1.3× cargo deposited
+  - Rationale: reward maritime trade networks; differentiate port-tier from market-tier beyond just capacity
+
+**Loss event:**
+- `ROUTE_LOSS_UNREST_SCALE = 0.1` — unrestSpike = (lostValue / growthCap) × 0.1
+  - Route at cap (lostValue = growthCap × 0.333): spike = 0.033 equilibrium adjustment
+  - Modest but visible; stacks with existing unrest causes
+- `ROUTE_LOSS_UNREST_TICKS = 5` — duration of the TerritoryModifier spike
+
+**Cultural pressure:**
+- `ROUTE_MERCHANT_PRESSURE_WEIGHT = 0.5` — scales how much merchant drift pressure a route exerts relative to its share of national output
+  - A route at baseCapacity = 5 in a nation with 100 total output → drift bias = 0.025 toward individualist per tick
+- `ROUTE_ISOLATIONIST_THRESHOLD = 3` — routes beyond this count add routeCountPressure (separate counter from ISOLATIONIST_TREATY_THRESHOLD)
+- `ROUTE_ISOLATIONIST_COUNT_WEIGHT = 0.02` — per-route-above-threshold isolationist entanglement penalty
+  - Intentionally same magnitude as `ISOLATIONIST_ENTANGLEMENT_WEIGHT = 0.015` but separate component
+
+**Prestige:**
+- `PRESTIGE_PER_TRADE_CAPACITY = 0.3` — prestige contribution = Σ currentCapacity × 0.3
+  - 10 market routes at cap (7.5 each) → 22.5 prestige. Meaningful but not dominant.
+
+**Mandate costs:**
+- `ESTABLISH_DOMESTIC_ROUTE_MANDATE = 2` — same as `build_market` / `build_port`
+- `INTERNATIONAL_ROUTE_MANDATE = 1` — reduced (treaty negotiation is the real cost for international routes)
+
+**When to tune:**
+- After first playtest pass with trade routes active. Key questions: Are routes growing too fast? Does upkeep feel meaningful at scale? Does the loss event feel punishing enough to deter offensive action near trade endpoints?
+
+**Stacking decision:** The market bonus is multiplicative with the road bonus (not additive). Rationale: markets only help if goods can flow; a market without roads still gets only the no-infra multiplier. Additive stacking would let a market partially compensate for missing roads, which isn't the intended design.
+
+**When to review:** After first playtest or harness data on AI build behavior. Key questions:
+- Is market construction too cheap relative to ports (inland AIs spamming markets vs. building roads first)?
+- Does 22.5 effective capacity (road+market on both ends) meaningfully differentiate high-investment inland trade routes?
+- Should market construction time differ from port (markets are logistical hubs, not infrastructure — may be faster)?
+
+---
+
+## Open items from v0.33 (trade routes)
+
+**hopDistance is hardcoded to 1 in `server/src/actions/acceptTreaty.ts`** (marked `TODO(v0.34+)`). Real hop distance for international port-tier routes requires BFS over `seaAdjacentIds` from source to destination port. Until this is implemented, all port-tier routes get `profitMultiplier = 1 + 1×0.1 = 1.1` regardless of actual geography. Fix when port-tier international routes are first used in play; the formula is correct, only the distance input is stubbed.
+
+**Prestige contribution from trade routes is server-only and not harness-verifiable.** `PRESTIGE_PER_TRADE_CAPACITY × Σ currentCapacity` is computed in `server/src/world.ts` `saveWorldState()`, not in `resolveTick`. The harness runs the engine only and cannot observe prestige. When Phase 9's simulation harness is extended with a prestige-visibility mode (needed for tuning the Dominant qualification floor), add a `assert_prestige` assertion type that reads the prestige formula output directly from the engine rather than the DB.
+
+---
+
+## Quality tier formula (v0.34 — thresholds [PLACEHOLDER])
+
+Territory quality tiers are read-only metadata computed at data-authoring time and stored as `qualityTier` in `engine/src/data/americas.json`. No simulation effect. Exposed via `GET /api/admin/territory/:id/quality-tier`.
+
+**Formula:**
+```
+score = basePopulation × 0.4 + baseIndustry × 0.35 + baseWealth × 0.25 + (isCoastal ? 1.5 : 0)
+tier 3 = score ≥ 8.0
+tier 2 = score ≥ 5.0
+tier 1 = score < 5.0
+```
+
+**Current Americas distribution (36 territories):**
+- Tier 3 (18): all coastal territories score 9.25 (basePopulation=10, baseIndustry=8, baseWealth=5, isCoastal=true → 4.0+2.8+1.25+1.5=9.55; exact scores vary by def values but all coastal reach ≥ 8.0)
+- Tier 2 (16): inland and mountain territories scoring 5.0–7.99
+- Tier 1 (2): `brazil_amazonia` (score 4.05), `peru_selva` (score 4.05) — landlocked forest with low base values
+
+**Why coastal territories are all tier 3:** the `isCoastal ? 1.5 : 0` bonus was chosen so that any reasonably-developed coastal territory crosses the tier-3 threshold. This reflects the design doc's positioning of coastal access as a significant economic advantage. If the first playtest reveals coastal territories are too dominant relative to inland ones, lower the coastal bonus to 1.0 (shifting many coastal territories to tier 2) or adjust the tier-3 threshold from 8.0 to 9.0.
+
+**Component weights are [PLACEHOLDER].** The 0.4/0.35/0.25 split (population-heavy) was chosen to reflect that labor supply is the primary driver of territory value before infrastructure is built. This may need adjustment once the full production formula is calibrated — if wealth production dominates at later game stages, the wealth weight should rise. Adjust at data-authoring time by recomputing scores and re-tagging `qualityTier` in `americas.json`; the formula is purely in `server/src/index.ts` and not part of the simulation.
+
+**Thresholds (8.0/5.0) are [PLACEHOLDER].** Setting them requires knowing the score distribution — with the current Americas dataset, scores range from ~4.0 (forest inland) to ~9.5 (well-developed coastal). The current thresholds put 50% of territories at tier 3, 44% at tier 2, 6% at tier 1. A tighter distribution (e.g., tier 3 ≥ 9.0, tier 2 ≥ 6.0) would reduce tier-3 coverage to ~18 territories with explicit coastal+development gating. Tune once quality tier is used for any simulation-visible mechanic.
+
+---
+
+## Territory selection constants (v0.37)
+
+### Draw algorithm
+
+| Constant | Value | Location | Notes |
+|---|---|---|---|
+| `EPSILON` | 0.1 | `server/src/territorySelection.ts` | Inverse-weight denominator floor: `weight = 1/(tier + EPSILON)`. Prevents divide-by-zero for tier-0 hypotheticals. |
+| `CANDIDATES_PER_ROLL` | 3 | same | Candidates shown to each player per roll. |
+| `MID_HIGH_THRESHOLD` | 2 | same | `qualityTier ≥ 2` = at least one candidate per player must qualify. 34/36 territories qualify; the 2 non-qualifying are `brazil_amazonia` and `peru_selva` (both tier 1, inland). |
+
+### qualityTier distribution (Americas, 36 territories)
+
+| Tier | isCoastal | Count | Territories |
+|---|---|---|---|
+| 3 | true | 16 | usa_northeast, usa_south, canada_east, belize, el_salvador, nicaragua, costa_rica, panama, caribbean_west, caribbean_east, venezuela, guianas, brazil_nordeste, brazil_sul, chile, uruguay |
+| 2 | true | 14 | usa_west, canada_west, canada_central, canada_northwest, mexico_norte, mexico_centro, mexico_sur, guatemala, honduras, colombia_andes, ecuador, peru_costa_sierra, argentina_pampa_norte, argentina_patagonia |
+| 2 | false | 4 | usa_midwest, colombia_orinoquia, bolivia, paraguay |
+| 1 | false | 2 | brazil_amazonia, peru_selva |
+
+### Inverse-weight probabilities (relative draw probability per territory)
+
+`weight = 1/(qualityTier + 0.1)`: tier 1 → 0.909, tier 2 → 0.333, tier 3 → 0.244. In a 36-territory pool: tier-1 territories are drawn ~3.7× more likely than tier-3 per slot. This causes inverse distribution — lower-value territories appear more often in rolls, forcing players to decide whether to reroll for better options or accept a strategic low-tier start.
+
+### Reroll policy
+
+One reroll per player per game session. Replaces all 3 candidates (not individual slot). `rerollUsed Boolean @default(false)` on `GameMembership`. Cannot reroll after confirming.
+
+### Snipe detection
+
+Checked at confirm-time, not roll-time. If the chosen territory was confirmed by another player between the roll and the confirm call, `confirmCandidate` returns `{sniped: true, candidates: [...fresh]}` — the server auto-rerolls the affected player's candidates. No reroll token consumed (snipe-triggered rerolls are free). In `autoAssignUnconfirmed`, snipe retry capped at 2 attempts.
+
+### AFK deadline
+
+`lastTickAt` (set to now when host calls `POST /api/games/:id/start`) + `tickIntervalSeconds * 1000` = AFK deadline for territory selection. Same `tickIntervalSeconds` as the game tick interval — short intervals (e.g. 60s) give short selection windows, suitable for testing. `scheduleSelectionDeadline` uses the same `gameTimers` map as `scheduleGameTick`, so `deregisterGame` cancels both.
+
+## Lobby and scheduler constants (v0.36)
+
+### Tick interval
+
+| Constant | Default | Where set | Notes |
+|---|---|---|---|
+| `tickIntervalSeconds` | 86400 (24h) | `POST /api/games` body; `Game.tickIntervalSeconds` in DB | Minimum enforced in endpoint: 10s (for testing). Legacy-world uses `TICK_SCHEDULE` cron. |
+| Min for test | 10s | endpoint validation | Lower bound prevents runaway self-scheduling. |
+
+**Testing guidance:** create a new game with `tickIntervalSeconds: 60` to observe a full tick cycle in 1 minute. Fast-forward votes can further compress this to ~instant.
+
+### Fast-forward vote
+
+| Concept | Implementation |
+|---|---|
+| Denominator | Human player slots only — `GameMembership` rows where slot is not in `game.aiSlots` and not in `game.removedSlots` |
+| Threshold | **Unanimous** (all human players) |
+| Vote lifetime | Per-tick; upserted on each vote, entire `FastForwardVote` table for the game cleared after the triggered tick completes |
+| Re-arm | After a fast-forward tick fires, scheduler re-arms normally with the full `tickIntervalSeconds` interval |
+
+The unanimous threshold is appropriate for the ~5-player context. For larger games, consider a majority threshold (Session C decision). AI slots and removed slots do not vote — they should not block human players from fast-forwarding.
+
+### Empty slot policy
+
+When host calls `POST /api/games/:id/start`:
+
+| `emptySlotPolicy` | Effect on unfilled slots |
+|---|---|
+| `'ai'` (default) | Slot is occupied by an AI nation (`isAI = true`, auto-doctrinated) |
+| `'removed'` | Slot is skipped entirely — no nation created for that slot |
+| `'open'` | Slot remains open (no nation); same as removed for initialization purposes [Session C will allow late-join to an open slot] |
+
+Per-slot overrides in `slotResolutions: { [slotIndex]: 'ai' | 'removed' }` take precedence over `emptySlotPolicy`.
+
+### Win condition
+
+| Constant | Value | Source |
+|---|---|---|
+| `DOMINANT_PRESTIGE_FLOOR` | 150 [PLACEHOLDER] | `engine/src/prestige.ts` |
+| `DOMINANT_COMPARABILITY_BAND` | 0.85 [PLACEHOLDER] | `engine/src/prestige.ts` |
+
+A game ends automatically when `computeDominantNations()` returns a non-empty set after any tick. The check runs outside the tick transaction (read-only). Multiple co-dominant nations are allowed — if two nations both qualify, the game ends with both as winners.
+
+### Game ID format
+
+New games get `id = "game_{timestamp}_{randomSuffix}"`. Legacy world keeps `id = "legacy-world"`. The scheduler skips `legacy-world` on resume and on win-condition checks.
+
+---
+
+## Fast-forward vote (deferred feature — shipped v0.36)
+
+Implemented in v0.36. See lobby and scheduler constants section above for the current design. The original deferred note is preserved here for reference: when all active players check "ready for next tick," the tick fires immediately instead of waiting for midnight. Preserves the persistent-world design as default but lets a synchronously-online group compress time.

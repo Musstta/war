@@ -423,6 +423,8 @@ export function computeUnrestEquilibrium(
   traditionalErosion = 0,           // traditional territory experiencing high cultural drift [PLACEHOLDER]
   progressiveStagnation = 0,        // progressive territory with stagnant cultural drift [PLACEHOLDER]
   populationTransferShock = 0,      // temporary spike from population transfer event [PLACEHOLDER]
+  tradeRouteStability = 0,          // negative — grown trade route flowing to/through this territory [PLACEHOLDER]
+  tradeRouteLossSpike = 0,          // temporary positive spike when a grown route is severed [PLACEHOLDER]
 ): UnrestCauses {
   const base = BASE_UNREST_FLOOR;
 
@@ -449,7 +451,7 @@ export function computeUnrestEquilibrium(
     treatyCulturalClash + insolvencyPressure + tradeStability +
     isolationistEntanglement + expansionistStagnation + collectivistIsolation +
     individualistObligation + traditionalErosion + progressiveStagnation +
-    populationTransferShock,
+    populationTransferShock + tradeRouteStability + tradeRouteLossSpike,
   ));
 
   return {
@@ -471,6 +473,8 @@ export function computeUnrestEquilibrium(
     traditionalErosion,
     progressiveStagnation,
     populationTransferShock,
+    tradeRouteStability,
+    tradeRouteLossSpike,
     equilibrium,
   };
 }

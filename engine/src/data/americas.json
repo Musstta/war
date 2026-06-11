@@ -16,6 +16,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -44,6 +45,7 @@
     "basePopulation": 8,
     "baseIndustry": 5,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -69,6 +71,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -81,7 +84,7 @@
     "name": "Western United States",
     "culturalFamily": "european",
     "geography": "mountainous",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "canada_northwest",
       "canada_west",
@@ -94,6 +97,7 @@
     "basePopulation": 6,
     "baseIndustry": 6,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -106,7 +110,7 @@
     "name": "Western Canada",
     "culturalFamily": "european",
     "geography": "mountainous",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "canada_central",
       "canada_northwest",
@@ -117,6 +121,7 @@
     "basePopulation": 6,
     "baseIndustry": 6,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -129,7 +134,7 @@
     "name": "Central Canada",
     "culturalFamily": "european",
     "geography": "inland",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "canada_east",
       "canada_northwest",
@@ -141,6 +146,7 @@
     "basePopulation": 8,
     "baseIndustry": 5,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -162,6 +168,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -174,7 +181,7 @@
     "name": "Northwestern Canada and Alaska",
     "culturalFamily": "indigenous",
     "geography": "inland",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "canada_central",
       "canada_west",
@@ -184,6 +191,7 @@
     "basePopulation": 8,
     "baseIndustry": 5,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -196,7 +204,7 @@
     "name": "Northern Mexico",
     "culturalFamily": "latin",
     "geography": "desert",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "mexico_centro",
       "usa_south",
@@ -206,6 +214,7 @@
     "basePopulation": 4,
     "baseIndustry": 3,
     "baseWealth": 4,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -218,7 +227,7 @@
     "name": "Central Mexico",
     "culturalFamily": "latin",
     "geography": "mountainous",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "mexico_norte",
       "mexico_sur"
@@ -227,6 +236,7 @@
     "basePopulation": 6,
     "baseIndustry": 6,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -251,6 +261,7 @@
     "basePopulation": 5,
     "baseIndustry": 3,
     "baseWealth": 4,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -272,6 +283,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -284,7 +296,7 @@
     "name": "Guatemala",
     "culturalFamily": "latin",
     "geography": "mountainous",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "belize",
       "el_salvador",
@@ -295,6 +307,7 @@
     "basePopulation": 6,
     "baseIndustry": 6,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -316,6 +329,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -328,7 +342,7 @@
     "name": "Honduras",
     "culturalFamily": "latin",
     "geography": "mountainous",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "el_salvador",
       "guatemala",
@@ -338,6 +352,7 @@
     "basePopulation": 6,
     "baseIndustry": 6,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -359,6 +374,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -380,6 +396,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -389,7 +406,7 @@
   },
   {
     "id": "panama",
-    "name": "Panam\u00e1",
+    "name": "Panamá",
     "culturalFamily": "latin",
     "geography": "coastal",
     "isCoastal": true,
@@ -401,6 +418,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -425,6 +443,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -447,6 +466,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -473,6 +493,7 @@
     "basePopulation": 6,
     "baseIndustry": 6,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -485,7 +506,7 @@
   },
   {
     "id": "colombia_orinoquia",
-    "name": "Colombian Orinoqu\u00eda",
+    "name": "Colombian Orinoquía",
     "culturalFamily": "latin",
     "geography": "inland",
     "isCoastal": false,
@@ -499,6 +520,7 @@
     "basePopulation": 8,
     "baseIndustry": 5,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -525,6 +547,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -549,6 +572,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -575,6 +599,7 @@
     "basePopulation": 5,
     "baseIndustry": 3,
     "baseWealth": 4,
+    "qualityTier": 1,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -598,6 +623,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -623,6 +649,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -635,7 +662,7 @@
     "name": "Ecuador",
     "culturalFamily": "latin",
     "geography": "mountainous",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "colombia_andes",
       "peru_costa_sierra",
@@ -645,6 +672,7 @@
     "basePopulation": 6,
     "baseIndustry": 6,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -657,7 +685,7 @@
     "name": "Peruvian Coast and Highlands",
     "culturalFamily": "latin",
     "geography": "mountainous",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "bolivia",
       "chile",
@@ -669,6 +697,7 @@
     "basePopulation": 6,
     "baseIndustry": 6,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -693,6 +722,7 @@
     "basePopulation": 5,
     "baseIndustry": 3,
     "baseWealth": 4,
+    "qualityTier": 1,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -719,6 +749,7 @@
     "basePopulation": 6,
     "baseIndustry": 6,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -741,6 +772,7 @@
     "basePopulation": 8,
     "baseIndustry": 5,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -764,6 +796,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -776,7 +809,7 @@
     "name": "Argentine Pampa and North",
     "culturalFamily": "latin",
     "geography": "inland",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "argentina_patagonia",
       "bolivia",
@@ -789,6 +822,7 @@
     "basePopulation": 8,
     "baseIndustry": 5,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -801,7 +835,7 @@
     "name": "Patagonia",
     "culturalFamily": "european",
     "geography": "inland",
-    "isCoastal": false,
+    "isCoastal": true,
     "adjacentIds": [
       "argentina_pampa_norte",
       "chile"
@@ -810,6 +844,7 @@
     "basePopulation": 8,
     "baseIndustry": 5,
     "baseWealth": 5,
+    "qualityTier": 2,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,
@@ -835,6 +870,7 @@
     "basePopulation": 10,
     "baseIndustry": 5,
     "baseWealth": 8,
+    "qualityTier": 3,
     "valueTraits": {
       "individualist": 0.0,
       "progressive": 0.0,

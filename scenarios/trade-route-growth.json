@@ -1,0 +1,60 @@
+{
+  "name": "trade-route-growth",
+  "description": "Domestic trade route between nicaragua (market) and costa_rica (port) grows over 30 ticks. Asserts capacity growth, upkeep deduction, and cyclesCompleted.",
+  "ticks": 30,
+  "world": {
+    "nations": [
+      {
+        "id": "nation_costa_rica",
+        "name": "Costa Rica",
+        "territories": ["costa_rica", "nicaragua"],
+        "wealthStock": 500,
+        "industryStock": 100,
+        "populationStock": 100
+      }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "set_territory_infra",
+      "payload": { "territoryId": "costa_rica", "hasPort": true, "portLevel": 1 }
+    },
+    {
+      "tick": 1,
+      "type": "set_territory_infra",
+      "payload": { "territoryId": "nicaragua", "hasMarket": true }
+    },
+    {
+      "tick": 1,
+      "type": "establish_trade_route",
+      "payload": {
+        "ownerNationId": "nation_costa_rica",
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "type": "domestic",
+        "baseCapacity": 5
+      }
+    },
+    {
+      "tick": 15,
+      "type": "assert_route_capacity",
+      "payload": {
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "expectedMin": 5.1
+      }
+    },
+    {
+      "tick": 30,
+      "type": "assert_route_capacity",
+      "payload": {
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "expectedMin": 5.25,
+        "expectedMax": 7.5
+      }
+    }
+  ],
+  "metrics": ["stockpiles_per_nation_per_tick", "treaty_state_per_tick"]
+}

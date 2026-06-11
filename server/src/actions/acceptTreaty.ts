@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { ActionContext, ActionHandler, ValidateResult } from './types';
-import { findTradePath, computeTradeCapacity, computeTradeFriction, UNDERDOG_PRESTIGE_BONUS } from '@war/engine';
+import { findTradePath, computeTradeCapacity, computeTradeFriction, UNDERDOG_PRESTIGE_BONUS, computeBaseCapacity, computeProfitMultiplier, ROUTE_GROWTH_CAP_MULTIPLIER } from '@war/engine';
 import type { Territory, TerritoryState, CulturalFamily } from '@war/engine';
 import { ACTION_COSTS } from '../phase';
 
@@ -141,6 +141,81 @@ export const acceptTreatyHandler: ActionHandler = {
               isSeaRoute: pathResult?.isSeaRoute ?? false,
               capacity: routeCapacity,   // [PLACEHOLDER: computed from geography + infrastructure, 2.3]
               friction: routeFriction,   // [PLACEHOLDER: computed from path terrain + hostile crossings, 2.3]
+            },
+          });
+        }
+
+        if (clause.type === 'trade_route') {
+          const rp = clause.payload as {
+            sourceTerritoryId?: string;
+            destinationTerritoryId?: string;
+            routeType?: string;
+            _renewalFromClauseId?: number;
+          };
+          if (!rp.sourceTerritoryId || !rp.destinationTerritoryId || !rp.routeType) continue;
+
+          const sourceRow = terrRows.find((t) => t.id === rp.sourceTerritoryId);
+          const portLevel = (sourceRow as any)?.portLevel ?? 1;
+          // TODO(v0.34+): hopDistance is hardcoded to 1; real value needs BFS sea-hop count
+          // from sourceTerritoryId to destinationTerritoryId via seaAdjacentIds adjacency.
+          const hopDistance = 1;
+          const routeType = rp.routeType as 'international_market' | 'international_port';
+          const baseCapacity = computeBaseCapacity(routeType, portLevel);
+          const growthCap = baseCapacity * ROUTE_GROWTH_CAP_MULTIPLIER;
+          const profitMultiplier = computeProfitMultiplier(routeType, hopDistance);
+          const path: string[] = [rp.sourceTerritoryId, rp.destinationTerritoryId];
+
+          // If this is a renewal, carry forward grown state from the prior route row.
+          let inheritedCapacity = baseCapacity;
+          let inheritedCycles = 0;
+          if (rp._renewalFromClauseId) {
+            const tx_any = tx as any;
+            const priorRoute = await tx_any.tradeRouteAgreement?.findFirst?.({
+              where: { treatyClauseId: rp._renewalFromClauseId },
+            });
+            if (priorRoute) {
+              inheritedCapacity = priorRoute.currentCapacity;
+              inheritedCycles   = priorRoute.cyclesCompleted;
+              // Mark old route ended without firing a loss event (clean renewal).
+              await tx_any.tradeRouteAgreement.update({
+                where: { id: priorRoute.id },
+                data: { status: 'ended' },
+              });
+            }
+          }
+
+          const tx_any = tx as any;
+          const route = await tx_any.tradeRouteAgreement.create({
+            data: {
+              treatyClauseId: clause.id,
+              ownerNationId: proposal.proposerId,
+              partnerNationId: proposal.targetId,
+              type: routeType,
+              sourceTerritoryId: rp.sourceTerritoryId,
+              destinationTerritoryId: rp.destinationTerritoryId,
+              path: path as Prisma.InputJsonValue,
+              pathComputedAtTick: ctx.currentTick,
+              portLevel,
+              baseCapacity,
+              currentCapacity: inheritedCapacity,
+              growthCap,
+              cyclesCompleted: inheritedCycles,
+              profitMultiplier,
+              upkeepRate: 0.1,
+              status: 'active',
+              startedAtTick: ctx.currentTick,
+            },
+          });
+
+          await tx_any.tradeShipment.create({
+            data: {
+              routeId: route.id,
+              path: [rp.destinationTerritoryId] as Prisma.InputJsonValue,
+              transitTicksRemaining: path.length - 1,
+              cargoAmount: inheritedCapacity,
+              cargoResource: 'wealth',
+              direction: 'forward',
+              departedAtTick: ctx.currentTick,
             },
           });
         }

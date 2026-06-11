@@ -82,7 +82,7 @@ export const BALANCED_DOCTRINE: DoctrineBlend = {
 // Higher score = higher priority for this action. [PLACEHOLDER all weights]
 
 export interface AiActionCandidate {
-  type: 'build_road' | 'build_port' | 'build_fort' | 'expand_claim' | 'propose_treaty' | 'propose_trade';
+  type: 'build_road' | 'build_port' | 'build_market' | 'build_fort' | 'expand_claim' | 'propose_treaty' | 'propose_trade';
   /** Extra context used in scoring (e.g. highestOwnedUnrest). */
   context?: Record<string, unknown>;
 }
@@ -99,7 +99,10 @@ export function scoreAction(
       return 0.3 + ind * 0.4 + (highUnrest ? 0.3 : 0); // [PLACEHOLDER]
     }
     case 'build_port':
-      return 0.2 + merch * 0.5 + ind * 0.2; // [PLACEHOLDER]
+      return 0.2 + merch * 0.5 + ind * 0.2; // [PLACEHOLDER] — only scored for coastal territories
+
+    case 'build_market':
+      return 0.2 + merch * 0.5 + ind * 0.2; // [PLACEHOLDER] — only scored for inland territories; same formula as build_port
 
     case 'build_fort':
       return 0.2 + mil * 0.4 + iso * 0.3; // [PLACEHOLDER]

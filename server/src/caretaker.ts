@@ -192,8 +192,8 @@ async function runCaretakerActions(
 ): Promise<void> {
   // Load current mandate budget.
   const [devCount, fullCount] = await Promise.all([
-    tx.territoryState.count({ where: { ownerId: nation.id, hasRoad: true, hasPort: true, fortificationLevel: { gte: 1 } } }),
-    tx.territoryState.count({ where: { ownerId: nation.id, hasRoad: true, hasPort: true, fortificationLevel: 3 } }),
+    tx.territoryState.count({ where: { ownerId: nation.id, hasRoad: true, OR: [{ hasPort: true }, { hasMarket: true }], fortificationLevel: { gte: 1 } } }),
+    tx.territoryState.count({ where: { ownerId: nation.id, hasRoad: true, OR: [{ hasPort: true }, { hasMarket: true }], fortificationLevel: 3 } }),
   ]);
   const budget = 3 + devCount + fullCount; // mandateBudget formula
   let mandateUsed: number = nation.mandateUsed;

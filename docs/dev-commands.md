@@ -557,6 +557,321 @@ The script prints a spot-check for `costa_rica`, `brazil_amazonia`, and `caribbe
 
 ---
 
+## 19. Inspect AI nation spawn territories (Phase 7+)
+
+After world init, confirm which territory each AI nation spawned in:
+
+```bash
+curl http://localhost:3001/api/admin/world-map \
+  -H "X-Admin-Key: dev-only-insecure-key" \
+  | jq '.territories[] | select(.ownerId != null) | {id, name, ownerId}'
+```
+
+Expected output (8 AI + 5 player nations, all with `ownerId` set):
+
+```json
+{ "id": "costa_rica",            "name": "Costa Rica",         "ownerId": "nation_costa_rica" }
+{ "id": "guatemala",             "name": "Guatemala",           "ownerId": "nation_guatemala" }
+{ "id": "honduras",              "name": "Honduras",            "ownerId": "nation_honduras" }
+{ "id": "nicaragua",             "name": "Nicaragua",           "ownerId": "nation_nicaragua" }
+{ "id": "panama",                "name": "Panamá",              "ownerId": "nation_panama" }
+{ "id": "usa_northeast",         "name": "USA Northeast",       "ownerId": "nation_north_atlantic" }
+{ "id": "mexico_norte",          "name": "Mexico Norte",        "ownerId": "nation_gran_norte" }
+{ "id": "brazil_sul",            "name": "Brazil Sul",          "ownerId": "nation_sul_grande" }
+{ "id": "colombia_andes",        "name": "Colombia Andes",      "ownerId": "nation_nueva_granada" }
+{ "id": "argentina_pampa_norte", "name": "Argentina Pampa Norte","ownerId": "nation_rio_de_plata" }
+{ "id": "caribbean_west",        "name": "Caribbean West",      "ownerId": "nation_antilles" }
+{ "id": "canada_central",        "name": "Canada Central",      "ownerId": "nation_dominion" }
+{ "id": "venezuela",             "name": "Venezuela",           "ownerId": "nation_llanos" }
+```
+
+All other 23 territories should return `ownerId: null` (unclaimed at tick 0).
+
+---
+
+## 20. Auth endpoints (v0.34)
+
+New `/api/auth/*` endpoints added alongside the existing `/api/login` / `/api/logout`. Both sets do the same thing; `/api/auth/*` is the canonical path going forward.
+
+### Register a new user
+
+```bash
+curl -X POST http://localhost:3001/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"testuser","password":"mypassword"}'
+# → {"ok":true,"userId":6}
+```
+
+Username: 3–32 characters. Password: minimum 4 characters. Returns `{"ok":false,"error":"Username already taken"}` if the username exists.
+
+### Login and capture session cookie
+
+```bash
+curl -c /tmp/war.cookies -X POST http://localhost:3001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"player1","password":"war1"}'
+# → {"ok":true,"nationId":"nation_costa_rica"}
+```
+
+Sets a signed `war_session` cookie (30-day TTL). Use `-b /tmp/war.cookies` on subsequent requests.
+
+### Logout (invalidates session in DB)
+
+```bash
+curl -b /tmp/war.cookies -c /tmp/war.cookies \
+  -X POST http://localhost:3001/api/auth/logout
+# → {"ok":true}
+```
+
+The session token is deleted from `UserSession` table. The cookie is cleared.
+
+### Using the session for player actions
+
+```bash
+# 1. Login
+curl -c /tmp/war.cookies -X POST http://localhost:3001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"player1","password":"war1"}'
+
+# 2. Queue an action
+curl -b /tmp/war.cookies -X POST http://localhost:3001/api/action \
+  -H "Content-Type: application/json" \
+  -d '{"type":"build_road","payload":{"territoryId":"costa_rica"}}'
+# → {"ok":true}
+```
+
+### Quality tier inspection (admin)
+
+```bash
+# Inspect territory quality tier
+curl "http://localhost:3001/api/admin/territory/costa_rica/quality-tier" \
+  -H "X-Admin-Key: dev-only-insecure-key" | jq .
+# → {"territoryId":"costa_rica","name":"Costa Rica","qualityTier":3,"score":9.25,
+#    "components":{"population":4.0,"industry":3.5,"wealth":0.25,"coastal":1.5},
+#    "thresholds":{"tier3":8.0,"tier2":5.0}}
+
+curl "http://localhost:3001/api/admin/territory/brazil_amazonia/quality-tier" \
+  -H "X-Admin-Key: dev-only-insecure-key" | jq .
+# → {"qualityTier":1,"score":4.05,...}
+
+curl "http://localhost:3001/api/admin/territory/usa_midwest/quality-tier" \
+  -H "X-Admin-Key: dev-only-insecure-key" | jq .
+# → {"qualityTier":2,"score":6.2,...}
+```
+
+---
+
+## 22. Territory selection flow (v0.37)
+
+Full curl walkthrough for the `territory_selection` phase. Assumes two registered users. All commands use cookie jars `/tmp/alice.jar` and `/tmp/bob.jar`.
+
+### Setup: register, login, create game, join
+
+```bash
+BASE=http://localhost:3001/api
+
+# Register (skip if already done)
+curl -s -X POST $BASE/auth/register -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"pass"}' -c /tmp/alice.jar
+curl -s -X POST $BASE/auth/register -H 'Content-Type: application/json' \
+  -d '{"username":"bob","password":"pass"}' -c /tmp/bob.jar
+
+# Login
+curl -s -X POST $BASE/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"pass"}' -c /tmp/alice.jar -b /tmp/alice.jar
+curl -s -X POST $BASE/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"bob","password":"pass"}' -c /tmp/bob.jar -b /tmp/bob.jar
+
+# Alice creates a game (tickIntervalSeconds=60 gives 60s AFK deadline for testing)
+GAME=$(curl -s -X POST $BASE/games -H 'Content-Type: application/json' \
+  -d '{"name":"test","tickIntervalSeconds":60}' -c /tmp/alice.jar -b /tmp/alice.jar)
+GAME_ID=$(echo $GAME | python3 -c 'import sys,json; print(json.load(sys.stdin)["gameId"])')
+
+# Bob joins
+curl -s -X POST $BASE/games/$GAME_ID/join -b /tmp/bob.jar
+```
+
+### Start (transitions lobby → territory_selection)
+
+```bash
+# Empty slots resolved as AI; sets lastTickAt=now (AFK deadline in 60s)
+curl -s -X POST $BASE/games/$GAME_ID/start \
+  -H 'Content-Type: application/json' \
+  -d '{"emptySlotPolicy":"ai"}' -c /tmp/alice.jar -b /tmp/alice.jar
+# → {"ok":true,"phase":"territory_selection","aiSlots":[2,3,4],...}
+
+curl -s $BASE/games/$GAME_ID | python3 -c 'import sys,json; print(json.load(sys.stdin)["status"])'
+# → territory_selection
+```
+
+### Roll candidates
+
+```bash
+# Each player rolls independently. Pool excludes territories already confirmed by others.
+# Response: [{slotIndex:0,territoryId:"...",name:"...",qualityTier:N,isCoastal:bool,confirmed:false}, ...]
+# Guarantee: at least one candidate qualityTier >= 2 per roll.
+
+curl -s -X POST $BASE/games/$GAME_ID/territory/roll -b /tmp/alice.jar
+curl -s -X POST $BASE/games/$GAME_ID/territory/roll -b /tmp/bob.jar
+```
+
+### View candidates
+
+```bash
+curl -s $BASE/games/$GAME_ID/territory/candidates -b /tmp/alice.jar
+# → {candidates:[...], confirmedTerritoryId:null, rerollUsed:false, confirmedCount:0, totalHuman:2}
+```
+
+### Reroll (one-time)
+
+```bash
+# Replaces all 3 candidates. Cannot use if already confirmed.
+curl -s -X POST $BASE/games/$GAME_ID/territory/reroll \
+  -H 'Content-Type: application/json' -d '{"slotIndex":0}' -b /tmp/alice.jar
+# slotIndex parameter is accepted but ignored (full reroll always) — body may be empty
+```
+
+### Confirm a candidate
+
+```bash
+# Lock in candidate at slotIndex 1 (0-indexed from the roll response).
+curl -s -X POST $BASE/games/$GAME_ID/territory/confirm \
+  -H 'Content-Type: application/json' -d '{"slotIndex":1}' -b /tmp/alice.jar
+# → {ok:true, sniped:false, candidates:[...], transitioned:false}
+# When the last player confirms: transitioned:true, game.status becomes 'active'.
+
+# Snipe scenario: if another player confirmed the same territory between your roll and confirm:
+# → {ok:false, sniped:true, candidates:[...fresh auto-rerolled]}
+```
+
+### Force-resolve (host — AFK resolution)
+
+```bash
+# Host can force-resolve at any time during territory_selection.
+# Auto-assigns highest-qualityTier candidate to each unconfirmed player.
+# If no candidates yet, rolls first then auto-assigns.
+curl -s -X POST $BASE/games/$GAME_ID/territory/force-resolve -b /tmp/alice.jar
+# → {ok:true}
+# Game transitions to active immediately.
+```
+
+### Verify capitals after transition
+
+```bash
+# Game status
+curl -s $BASE/games/$GAME_ID | python3 -c 'import sys,json; g=json.load(sys.stdin); print(g["status"], "tick:", g["tick"])'
+# → active tick: 0
+
+# Nation capitals in DB (confirm players got their chosen territories)
+docker exec war-postgres-1 psql -U war -d war \
+  -c "SELECT id, name, \"capitalTerritoryId\" FROM \"Nation\" WHERE \"gameId\" = '$GAME_ID'"
+```
+
+## 21. Lobby lifecycle (v0.36)
+
+Full curl walkthrough demonstrating the lobby flow. Uses two terminal sessions (player1 = host, player2 = second player).
+
+### Register and login (if needed)
+
+```bash
+# Terminal A — player1 (host)
+curl -c /tmp/p1.cookies -X POST http://localhost:3001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"player1","password":"war1"}'
+# → {"ok":true,"nationId":"nation_costa_rica"}
+
+# Terminal B — player2
+curl -c /tmp/p2.cookies -X POST http://localhost:3001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"player2","password":"war2"}'
+# → {"ok":true,"nationId":"nation_guatemala"}
+```
+
+### Create a new game lobby
+
+```bash
+# Terminal A — player1 creates a lobby with a short tick interval for testing
+curl -b /tmp/p1.cookies -X POST http://localhost:3001/api/games \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test Game","maxPlayers":3,"tickIntervalSeconds":60}'
+# → {"ok":true,"gameId":"game_1749521234_abc12","name":"Test Game"}
+# Save the gameId:
+GAME_ID="game_1749521234_abc12"
+```
+
+### List open lobbies
+
+```bash
+curl http://localhost:3001/api/games | jq .
+# → [{"id":"game_...","name":"Test Game","maxPlayers":3,"memberCount":1,"tickIntervalSeconds":60,...}]
+```
+
+### Join the lobby
+
+```bash
+# Terminal B — player2 joins
+curl -b /tmp/p2.cookies -X POST http://localhost:3001/api/games/$GAME_ID/join
+# → {"ok":true,"slotIndex":1}
+```
+
+### Inspect game detail
+
+```bash
+curl http://localhost:3001/api/games/$GAME_ID | jq .
+# → {"id":"...","name":"Test Game","status":"lobby","maxPlayers":3,"tick":null,
+#    "members":[{"slotIndex":0,"username":"player1","nationId":null},
+#               {"slotIndex":1,"username":"player2","nationId":null}]}
+```
+
+### Start the game (host-only)
+
+Empty slot 2 resolved as AI. `emptySlotPolicy: 'ai'` applies globally; `slotResolutions` can override per slot.
+
+```bash
+# Terminal A — player1 starts
+curl -b /tmp/p1.cookies -X POST http://localhost:3001/api/games/$GAME_ID/start \
+  -H "Content-Type: application/json" \
+  -d '{"emptySlotPolicy":"ai"}'
+# → {"ok":true,"gameId":"...","aiSlots":[2],"removedSlots":[]}
+# Scheduler fires in 60 seconds. lastTickAt will update.
+```
+
+### Check tick progress
+
+```bash
+curl http://localhost:3001/api/games/$GAME_ID | jq '{status, tick: .tick, lastTickAt}'
+# After 60s: {"status":"active","tick":1,"lastTickAt":"2026-06-10T..."}
+```
+
+### Fast-forward vote (both players must vote to trigger immediately)
+
+```bash
+# Terminal A — player1 votes
+curl -b /tmp/p1.cookies -X POST http://localhost:3001/api/games/$GAME_ID/fast-forward/vote
+# → {"ok":true,"triggered":false,"votes":1,"required":2}
+
+# Terminal B — player2 votes → triggers tick immediately
+curl -b /tmp/p2.cookies -X POST http://localhost:3001/api/games/$GAME_ID/fast-forward/vote
+# → {"ok":true,"triggered":true,"votes":2,"required":2}
+
+# Status endpoint
+curl http://localhost:3001/api/games/$GAME_ID/fast-forward/status
+# → {"votes":0,"required":2,"ready":false}  (cleared after tick fired)
+```
+
+### End the game (host-only)
+
+```bash
+# Terminal A — player1 ends
+curl -b /tmp/p1.cookies -X POST http://localhost:3001/api/games/$GAME_ID/end
+# → {"ok":true}
+
+curl http://localhost:3001/api/games/$GAME_ID | jq '{status, endReason}'
+# → {"status":"ended","endReason":"host_ended"}
+```
+
+---
+
 ## Player credentials (dev)
 
 | Username | Password | Nation     |

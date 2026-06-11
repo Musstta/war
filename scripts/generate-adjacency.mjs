@@ -25,6 +25,7 @@ import { get } from 'https';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { booleanIntersects } from '@turf/boolean-intersects';
+import { union } from '@turf/union';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CACHE = join(__dirname, '.cache');
@@ -163,6 +164,27 @@ function mergeGeometries(features) {
   return { type: 'MultiPolygon', coordinates: polygons };
 }
 
+// Dissolves a set of NE features into a single unioned geometry using @turf/union.
+// Removes internal borders between adjacent polygons (e.g. state borders within a macro-region).
+// Falls back to mergeGeometries() if union fails (e.g. non-contiguous geometries with no shared border).
+function dissolveGeometries(features) {
+  const valid = features.filter(f => f.geometry);
+  if (valid.length === 0) return { type: 'MultiPolygon', coordinates: [] };
+  if (valid.length === 1) return valid[0].geometry;
+  try {
+    const fc = {
+      type: 'FeatureCollection',
+      features: valid.map(f => ({ type: 'Feature', geometry: f.geometry, properties: {} })),
+    };
+    const result = union(fc);
+    if (result) return result.geometry;
+  } catch {
+    // fall through to concatenation
+  }
+  // Fallback: concatenate as MultiPolygon (preserves internal borders but doesn't crash)
+  return mergeGeometries(features);
+}
+
 function normName(s) {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 }
@@ -217,7 +239,8 @@ async function main() {
   console.log(`  ${territories.length} territories in americas-territories.json\n`);
 
   // ── Build merged geometry per territory ──────────────────────────────────────
-  const geometries = new Map();   // id → { geometry, bbox }
+  const geometries         = new Map();  // id → { geometry, bbox }         — used for adjacency detection (MultiPolygon concat, fast)
+  const dissolvedGeometries = new Map(); // id → geometry                   — used for map output (properly unioned, no internal borders)
   const handPlacementRequired = [];
   const warnings = [];
 
@@ -290,6 +313,8 @@ async function main() {
     }
     const bbox = bboxOf(geometry);
     geometries.set(terr.id, { geometry, bbox, matchedCount: matched.length });
+    // Build dissolved geometry for map output (removes internal state/province borders)
+    dissolvedGeometries.set(terr.id, dissolveGeometries(matched));
     const src = `${matched.length}/${terr.neFeatures.length} features`;
     console.log(`  built: ${terr.id} (${src}${notFound.length ? ', ' + notFound.length + ' missing' : ''})`);
   }
@@ -403,8 +428,12 @@ async function main() {
   console.log(`\nWrote: ${OUT_FILE}`);
 
   // ── GeoJSON output for MapLibre ───────────────────────────────────────────────
-  // Approximate bounding-box polygons for hand-placed territories (no NE polygon).
+  // Approximate bounding-box polygons for:
+  //   (a) hand-placed territories (no NE polygon at all), and
+  //   (b) Mexico sub-regions (no Admin-1 state data in the 50m file).
+  // Canada sub-regions use real province geometries looked up from states file.
   const HAND_PLACED_BBOX = {
+    // Hand-placed (no NE source)
     colombia_orinoquia:    [[-75,3],  [-67,3],  [-67,8],  [-75,8],  [-75,3]],
     brazil_amazonia:       [[-73,-10],[-50,-10],[-50,5],  [-73,5],  [-73,-10]],
     brazil_nordeste:       [[-48,-18],[-35,-18],[-35,-2], [-48,-2], [-48,-18]],
@@ -413,20 +442,41 @@ async function main() {
     peru_selva:            [[-76,-14],[-70,-14],[-70,-0], [-76,-0], [-76,-14]],
     argentina_pampa_norte: [[-68,-38],[-53,-38],[-53,-22],[-68,-22],[-68,-38]],
     argentina_patagonia:   [[-73,-55],[-62,-55],[-62,-38],[-73,-38],[-73,-55]],
+    // Mexico sub-regions (Admin-1 50m has no Mexican states)
+    mexico_norte:          [[-117.5,22],[-97,22],[-97,32.7],[-117.5,32.7],[-117.5,22]],
+    mexico_centro:         [[-105,18.5],[-87,18.5],[-87,22],[-105,22],[-105,18.5]],
+    mexico_sur:            [[-97,14.5],[-87,14.5],[-87,18.5],[-97,18.5],[-97,14.5]],
   };
 
+  // Build per-region geometry for Canada sub-regions from the provinces in the states file.
+  const CANADA_REGIONS = {
+    canada_west:      ['British Columbia', 'Alberta'],
+    canada_central:   ['Saskatchewan', 'Manitoba', 'Ontario', 'Quebec'],
+    canada_east:      ['New Brunswick', 'Nova Scotia', 'Prince Edward Island', 'Newfoundland and Labrador'],
+    canada_northwest: ['Yukon', 'Northwest Territories', 'Nunavut'],
+  };
+  const canadaGeometries = new Map();
+  for (const [regionId, provinceNames] of Object.entries(CANADA_REGIONS)) {
+    const matched = findByName(states.features, NAME_KEYS_STATE, provinceNames);
+    if (matched.length > 0) {
+      // Use dissolved geometry (removes internal province borders) for clean map rendering
+      canadaGeometries.set(regionId, dissolveGeometries(matched));
+    }
+  }
+
   const mapFeatures = [];
-  const defsByIdMap = Object.fromEntries(territories.map(t => [t.id, t]));
 
   for (const terr of territories) {
     let geometry = null;
-    if (geometries.has(terr.id)) {
-      geometry = geometries.get(terr.id).geometry;
+    if (canadaGeometries.has(terr.id)) {
+      // Canada sub-regions: dissolved province geometries (no internal borders)
+      geometry = canadaGeometries.get(terr.id);
+    } else if (dissolvedGeometries.has(terr.id) && !COUNTRY_LEVEL_IDS.has(terr.id)) {
+      // US territories and other multi-state regions: dissolved for clean rendering
+      geometry = dissolvedGeometries.get(terr.id);
     } else if (HAND_PLACED_BBOX[terr.id]) {
-      geometry = {
-        type: 'Polygon',
-        coordinates: [HAND_PLACED_BBOX[terr.id]],
-      };
+      const ring = HAND_PLACED_BBOX[terr.id];
+      geometry = { type: 'Polygon', coordinates: [ring] };
     }
     if (!geometry) continue;
 

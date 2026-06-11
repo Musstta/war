@@ -432,6 +432,27 @@ export function generateCSVs(result: RunResult, outputDir: string): void {
     writeFileSync(join(outputDir, 'army-sizes.csv'), asRows.join('\n') + '\n');
   }
 
+  // trade-routes.csv — per-route per-tick capacity/upkeep/cycles
+  const hasTradeRoutes = snapshots.some((s) => s.tradeRoutes && s.tradeRoutes.length > 0);
+  if (hasTradeRoutes) {
+    const trHeader = 'tick,route_id,type,owner_nation,partner_nation,source,destination,base_capacity,current_capacity,growth_cap,cycles_completed,profit_multiplier,upkeep_per_tick,shipment_count,status';
+    const trRows: string[] = [trHeader];
+    for (const snap of snapshots) {
+      for (const r of (snap.tradeRoutes ?? [])) {
+        trRows.push([
+          snap.tick, r.routeId, r.type,
+          r.ownerNationId, r.partnerNationId ?? '',
+          r.sourceTerritoryId, r.destinationTerritoryId,
+          r.baseCapacity.toFixed(3), r.currentCapacity.toFixed(3), r.growthCap.toFixed(3),
+          r.cyclesCompleted,
+          r.profitMultiplier.toFixed(3), r.upkeepPerTick.toFixed(3),
+          r.shipmentCount, r.status,
+        ].join(','));
+      }
+    }
+    writeFileSync(join(outputDir, 'trade-routes.csv'), trRows.join('\n') + '\n');
+  }
+
   const extraCsvs = [
     hasTreaties ? 'treaty-metrics.csv' : null,
     'nation-diplomacy.csv',
@@ -439,6 +460,7 @@ export function generateCSVs(result: RunResult, outputDir: string): void {
     hasObjectiveClauses ? 'objective-metrics.csv' : null,
     hasWars ? 'war-state.csv  army-sizes.csv' : null,
     hasFragData ? 'fragmentation-risk.csv' : null,
+    hasTradeRoutes ? 'trade-routes.csv' : null,
   ].filter(Boolean).join('  ');
   console.log(`  ✓ territory-metrics.csv  nation-metrics.csv  events.csv  ${extraCsvs}`);
 }

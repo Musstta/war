@@ -1,0 +1,73 @@
+{
+  "name": "trade-route-loss",
+  "description": "Domestic route established at T1, grows for 15 ticks, then nicaragua is transferred to a new nation. Loss event fires (lostValue spike, unrest modifier, route ended).",
+  "ticks": 20,
+  "world": {
+    "nations": [
+      {
+        "id": "nation_costa_rica",
+        "name": "Costa Rica",
+        "territories": ["costa_rica", "nicaragua"],
+        "wealthStock": 500,
+        "industryStock": 100,
+        "populationStock": 100
+      },
+      {
+        "id": "nation_honduras",
+        "name": "Honduras",
+        "territories": ["honduras"],
+        "wealthStock": 100,
+        "industryStock": 50,
+        "populationStock": 50
+      }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "set_territory_infra",
+      "payload": { "territoryId": "costa_rica", "hasPort": true, "portLevel": 1 }
+    },
+    {
+      "tick": 1,
+      "type": "set_territory_infra",
+      "payload": { "territoryId": "nicaragua", "hasMarket": true }
+    },
+    {
+      "tick": 1,
+      "type": "establish_trade_route",
+      "payload": {
+        "ownerNationId": "nation_costa_rica",
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "type": "domestic",
+        "baseCapacity": 5
+      }
+    },
+    {
+      "tick": 15,
+      "type": "assert_route_capacity",
+      "payload": {
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "expectedMin": 5.1
+      }
+    },
+    {
+      "tick": 16,
+      "type": "assign_territory",
+      "payload": { "territoryId": "nicaragua", "ownerId": "nation_honduras" }
+    },
+    {
+      "tick": 17,
+      "type": "assert_route_capacity",
+      "payload": {
+        "sourceTerritoryId": "nicaragua",
+        "destinationTerritoryId": "costa_rica",
+        "expectedMin": -1,
+        "expectedMax": 5.0
+      }
+    }
+  ],
+  "metrics": ["stockpiles_per_nation_per_tick", "treaty_state_per_tick"]
+}

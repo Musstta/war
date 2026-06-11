@@ -144,6 +144,16 @@ export const SEA_CAPACITY_MULTIPLIER = 2.0; // [PLACEHOLDER]
 /** Land route with roads on both endpoints capacity multiplier. [PLACEHOLDER] */
 export const LAND_ROAD_CAPACITY_MULTIPLIER = 1.5; // [PLACEHOLDER]
 
+/**
+ * Additional multiplier applied on top of LAND_ROAD_CAPACITY_MULTIPLIER when
+ * both endpoints have a market. Stacks additively with the road multiplier
+ * (i.e. capacity = base × road_mult × market_mult, not base × (road + market)).
+ * Design choice: additive stacking rewards investing in both roads AND markets;
+ * a market without roads still uses NO_INFRA_CAPACITY_MULTIPLIER and does not
+ * trigger this bonus. [PLACEHOLDER]
+ */
+export const LAND_MARKET_CAPACITY_MULTIPLIER = 1.5; // [PLACEHOLDER]
+
 /** Land route with no road infrastructure on either endpoint. [PLACEHOLDER] */
 export const NO_INFRA_CAPACITY_MULTIPLIER = 0.7; // [PLACEHOLDER]
 
@@ -167,10 +177,12 @@ export const FRICTION_ROAD_REDUCTION = 0.03; // [PLACEHOLDER]
  * it is a sea route. Capacity is the maximum flow per tick.
  *
  * Formula (design doc §14A.2, §2.3):
- *   sea route (port+port):   baseCapacity × SEA_CAPACITY_MULTIPLIER
- *   land route with roads:   baseCapacity × LAND_ROAD_CAPACITY_MULTIPLIER
- *   no infrastructure:       baseCapacity × NO_INFRA_CAPACITY_MULTIPLIER
+ *   sea route (port+port):              baseCapacity × SEA_CAPACITY_MULTIPLIER
+ *   land route with roads + markets:    baseCapacity × LAND_ROAD_CAPACITY_MULTIPLIER × LAND_MARKET_CAPACITY_MULTIPLIER
+ *   land route with roads only:         baseCapacity × LAND_ROAD_CAPACITY_MULTIPLIER
+ *   no infrastructure:                  baseCapacity × NO_INFRA_CAPACITY_MULTIPLIER
  *
+ * Market bonus requires roads on both endpoints (markets alone don't help).
  * All constants [PLACEHOLDER]. [2.3 callsite]
  */
 export function computeTradeCapacity(
@@ -183,7 +195,11 @@ export function computeTradeCapacity(
     return baseCapacity * SEA_CAPACITY_MULTIPLIER; // [PLACEHOLDER callsite: SEA_CAPACITY_MULTIPLIER]
   }
   if (sourceTerr.state.hasRoad && destTerr.state.hasRoad) {
-    return baseCapacity * LAND_ROAD_CAPACITY_MULTIPLIER; // [PLACEHOLDER callsite: LAND_ROAD_CAPACITY_MULTIPLIER]
+    const roadCapacity = baseCapacity * LAND_ROAD_CAPACITY_MULTIPLIER; // [PLACEHOLDER callsite: LAND_ROAD_CAPACITY_MULTIPLIER]
+    if (!isSeaRoute && sourceTerr.state.hasMarket && destTerr.state.hasMarket) {
+      return roadCapacity * LAND_MARKET_CAPACITY_MULTIPLIER; // [PLACEHOLDER callsite: LAND_MARKET_CAPACITY_MULTIPLIER]
+    }
+    return roadCapacity;
   }
   return baseCapacity * NO_INFRA_CAPACITY_MULTIPLIER; // [PLACEHOLDER callsite: NO_INFRA_CAPACITY_MULTIPLIER]
 }
