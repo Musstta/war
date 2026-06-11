@@ -2413,12 +2413,16 @@ const start = async () => {
       lastTickAt: game.lastTickAt,
       endedAt: game.endedAt,
       endReason: game.endReason,
+      hostUserId: game.hostUserId,
+      aiSlots: game.aiSlots,
+      removedSlots: game.removedSlots,
       tick: meta?.tick ?? null,
       members: game.memberships.map((m) => ({
         slotIndex: m.slotIndex,
         userId: m.userId,
         username: m.user.username,
         nationId: m.nationId,
+        confirmedTerritoryId: m.confirmedTerritoryId ?? null,
       })),
     };
   });

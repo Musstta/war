@@ -1,6 +1,31 @@
+/**
+ * App.tsx — top-level router (v0.38)
+ *
+ * Route map:
+ *   /                         → redirect: /lobby if logged in, /login if not
+ *   /login                    → LoginScreen
+ *   /register                 → RegisterScreen
+ *   /lobby                    → LobbyScreen (auth required)
+ *   /games/:id                → GameLobbyScreen (status=lobby; auto-redirects for other statuses)
+ *   /games/:id/select-territory → TerritorySelectionScreen (status=territory_selection)
+ *   /games/:id/play           → legacy single-game map view (status=active/ended)
+ *
+ * Styling note (v0.38): clean dark theme, no custom illustration or thematic chrome.
+ * Phase 8 will introduce a full visual identity pass — inline styles here are intentionally
+ * easy to replace, not built around.
+ */
+
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, MeResponse, WorldView } from './api';
-import { LoginForm } from './components/LoginForm';
+import { useAuth } from './AuthContext';
+import { LoginScreen } from './screens/LoginScreen';
+import { RegisterScreen } from './screens/RegisterScreen';
+import { LobbyScreen } from './screens/LobbyScreen';
+import { GameLobbyScreen } from './screens/GameLobbyScreen';
+import { TerritorySelectionScreen } from './screens/TerritorySelectionScreen';
+
+// Legacy single-game components (kept for active/ended game view)
+import { api, type MeResponse, type WorldView } from './api';
 import { PhaseBar } from './components/PhaseBar';
 import { GameMap } from './components/GameMap';
 import { InfoPanel } from './components/InfoPanel';
@@ -8,38 +33,59 @@ import { DiplomacyPanel } from './components/DiplomacyPanel';
 import { PrestigeLeaderboard } from './components/PrestigeLeaderboard';
 import { WarCouncilPanel } from './components/WarCouncilPanel';
 
-type AuthState = 'loading' | 'logged-out' | 'logged-in';
+// ── Auth guard ─────────────────────────────────────────────────────────────────
 
-const REFRESH_INTERVAL_MS = 5_000;
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#111827', color: '#9ca3af', fontFamily: 'system-ui' }}>
+        Loading…
+      </div>
+    );
+  }
+  if (!user) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
 
-export default function App() {
-  const [auth, setAuth] = useState<AuthState>('loading');
+// ── Root redirect ──────────────────────────────────────────────────────────────
+
+function RootRedirect() {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  return <Navigate to={user ? '/lobby' : '/login'} replace />;
+}
+
+// ── Legacy map view (active / ended games) ─────────────────────────────────────
+
+const REFRESH_MS = 5_000;
+
+function GamePlayScreen() {
+  useParams<{ id: string }>();
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+
+  const [authState, setAuthState] = useState<'loading' | 'logged-in' | 'logged-out'>('loading');
   const [me, setMe] = useState<MeResponse | null>(null);
   const [world, setWorld] = useState<WorldView | null>(null);
   const [selectedTerritoryId, setSelectedTerritoryId] = useState<string | null>(null);
   const [showDiplomacy, setShowDiplomacy] = useState(false);
-  // Territory display names loaded from geojson
   const [defNames, setDefNames] = useState<Record<string, string>>({});
-
-  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadWorld = useCallback(async () => {
     try {
       const [meData, worldData] = await Promise.all([api.me(), api.world()]);
       setMe(meData);
       setWorld(worldData);
-      setAuth('logged-in');
+      setAuthState('logged-in');
     } catch {
-      setAuth('logged-out');
+      setAuthState('logged-out');
     }
   }, []);
 
-  // On mount: check if already logged in
-  useEffect(() => {
-    loadWorld().catch(() => setAuth('logged-out'));
-  }, [loadWorld]);
+  useEffect(() => { loadWorld().catch(() => setAuthState('logged-out')); }, [loadWorld]);
 
-  // Load territory names from geojson once
   useEffect(() => {
     fetch('/territories.geojson')
       .then((r) => r.json())
@@ -51,42 +97,28 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Periodic world refresh
   useEffect(() => {
-    if (auth !== 'logged-in') {
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+    if (authState !== 'logged-in') {
+      if (timerRef.current) clearInterval(timerRef.current);
       return;
     }
-    refreshTimerRef.current = setInterval(() => loadWorld(), REFRESH_INTERVAL_MS);
-    return () => {
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
-    };
-  }, [auth, loadWorld]);
-
-  const handleLogin = () => loadWorld();
+    timerRef.current = setInterval(() => loadWorld(), REFRESH_MS);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [authState, loadWorld]);
 
   const handleLogout = async () => {
-    await api.logout().catch(() => {});
-    setAuth('logged-out');
-    setMe(null);
-    setWorld(null);
+    await logout();
+    navigate('/login');
   };
 
-  const handleActionQueued = () => loadWorld();
-
-  if (auth === 'loading') {
+  if (authState === 'loading') {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100vh', background: '#1a1a2e', color: '#888', fontFamily: 'monospace' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#1a1a2e', color: '#888', fontFamily: 'monospace' }}>
         Loading…
       </div>
     );
   }
-
-  if (auth === 'logged-out') {
-    return <LoginForm onLogin={handleLogin} />;
-  }
-
+  if (authState === 'logged-out') return <Navigate to="/login" replace />;
   if (!world || !me) return null;
 
   return (
@@ -94,7 +126,6 @@ export default function App() {
       <PhaseBar world={world} myName={me.name} onLogout={handleLogout} />
       <PrestigeLeaderboard nations={world.nations} myNationId={world.myNationId} currentTick={world.tick} />
       <WarCouncilPanel world={world} />
-      {/* Diplomacy toggle button */}
       <div style={{ position: 'fixed', bottom: '1rem', right: '1rem', zIndex: 100 }}>
         <button
           onClick={() => setShowDiplomacy((v) => !v)}
@@ -108,19 +139,10 @@ export default function App() {
         </button>
       </div>
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', marginRight: '13rem' }}>
-        <GameMap
-          world={world}
-          selectedId={selectedTerritoryId}
-          onSelect={setSelectedTerritoryId}
-        />
+        <GameMap world={world} selectedId={selectedTerritoryId} onSelect={setSelectedTerritoryId} />
         {showDiplomacy
-          ? <DiplomacyPanel world={world} onActionQueued={handleActionQueued} />
-          : <InfoPanel
-              territoryId={selectedTerritoryId}
-              world={world}
-              defNames={defNames}
-              onActionQueued={handleActionQueued}
-            />
+          ? <DiplomacyPanel world={world} onActionQueued={loadWorld} />
+          : <InfoPanel territoryId={selectedTerritoryId} world={world} defNames={defNames} onActionQueued={loadWorld} />
         }
       </div>
       {world.recentEvents.length > 0 && (
@@ -138,5 +160,24 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Router ─────────────────────────────────────────────────────────────────────
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<RootRedirect />} />
+      <Route path="/login" element={<LoginScreen />} />
+      <Route path="/register" element={<RegisterScreen />} />
+
+      <Route path="/lobby" element={<RequireAuth><LobbyScreen /></RequireAuth>} />
+      <Route path="/games/:id" element={<RequireAuth><GameLobbyScreen /></RequireAuth>} />
+      <Route path="/games/:id/select-territory" element={<RequireAuth><TerritorySelectionScreen /></RequireAuth>} />
+      <Route path="/games/:id/play" element={<RequireAuth><GamePlayScreen /></RequireAuth>} />
+
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }

@@ -392,6 +392,68 @@ export interface WarCouncilView {
   jointInvasionObjectives: JointInvasionChecklist[];
 }
 
+// ── Lobby / Territory types (v0.36–v0.37) ─────────────────────────────────────
+
+export interface GameListItem {
+  id: string;
+  name: string;
+  hostUserId: number | null;
+  maxPlayers: number;
+  status: string;
+  tickIntervalSeconds: number;
+  memberCount: number;
+  createdAt: string;
+}
+
+export interface GameMember {
+  slotIndex: number;
+  userId: number;
+  username: string;
+  nationId: string | null;
+  confirmedTerritoryId?: string | null;
+}
+
+export interface GameDetail {
+  id: string;
+  name: string;
+  status: string; // 'lobby' | 'territory_selection' | 'active' | 'ended'
+  maxPlayers: number;
+  tickIntervalSeconds: number;
+  lastTickAt: string | null;
+  endedAt: string | null;
+  endReason: string | null;
+  tick: number | null;
+  hostUserId: number | null;
+  members: GameMember[];
+  aiSlots?: number[];
+  removedSlots?: number[];
+}
+
+export interface CandidateView {
+  slotIndex: number;
+  territoryId: string;
+  name: string;
+  qualityTier: number;
+  isCoastal: boolean;
+  confirmed: boolean;
+}
+
+export interface CandidatesResponse {
+  candidates: CandidateView[];
+  confirmedTerritoryId: string | null;
+  rerollUsed: boolean;
+  allConfirmed: boolean;
+  confirmedCount: number;
+  totalHuman: number;
+}
+
+export interface ConfirmResponse {
+  ok: boolean;
+  sniped: boolean;
+  candidates: CandidateView[];
+  transitioned: boolean;
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { credentials: 'include', ...init });
   if (!res.ok) {
@@ -486,6 +548,77 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'decline_instant_trade', payload: { tradeId } }),
     }),
+
+  // ── Auth (v0.34+) ──────────────────────────────────────────────────────────
+  register: (username: string, password: string) =>
+    apiFetch<{ ok: boolean; userId: number }>('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    }),
+
+  authLogin: (username: string, password: string) =>
+    apiFetch<{ ok: boolean; nationId: string | null }>('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    }),
+
+  authLogout: () => apiFetch<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+
+  // ── Games / Lobby (v0.36+) ─────────────────────────────────────────────────
+  createGame: (name: string, maxPlayers: number, tickIntervalSeconds: number) =>
+    apiFetch<{ ok: boolean; gameId: string; name: string }>('/api/games', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, maxPlayers, tickIntervalSeconds }),
+    }),
+
+  listGames: () =>
+    apiFetch<GameListItem[]>('/api/games'),
+
+  getGame: (gameId: string) =>
+    apiFetch<GameDetail>(`/api/games/${gameId}`),
+
+  joinGame: (gameId: string) =>
+    apiFetch<{ ok: boolean; slotIndex: number }>(`/api/games/${gameId}/join`, { method: 'POST' }),
+
+  leaveGame: (gameId: string) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/leave`, { method: 'POST' }),
+
+  startGame: (gameId: string, emptySlotPolicy: 'ai' | 'removed' | 'open', slotResolutions?: Record<number, 'ai' | 'removed'>) =>
+    apiFetch<{ ok: boolean; phase: string; aiSlots: number[]; removedSlots: number[] }>(`/api/games/${gameId}/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emptySlotPolicy, slotResolutions }),
+    }),
+
+  endGame: (gameId: string) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/end`, { method: 'POST' }),
+
+  // ── Territory selection (v0.37+) ───────────────────────────────────────────
+  rollTerritories: (gameId: string) =>
+    apiFetch<{ ok: boolean; candidates: CandidateView[] }>(`/api/games/${gameId}/territory/roll`, { method: 'POST' }),
+
+  getCandidates: (gameId: string) =>
+    apiFetch<CandidatesResponse>(`/api/games/${gameId}/territory/candidates`),
+
+  rerollTerritories: (gameId: string) =>
+    apiFetch<{ ok: boolean; candidates: CandidateView[] }>(`/api/games/${gameId}/territory/reroll`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    }),
+
+  confirmTerritory: (gameId: string, slotIndex: number) =>
+    apiFetch<ConfirmResponse>(`/api/games/${gameId}/territory/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slotIndex }),
+    }),
+
+  forceResolve: (gameId: string) =>
+    apiFetch<{ ok: boolean }>(`/api/games/${gameId}/territory/force-resolve`, { method: 'POST' }),
 
   // ── Dev endpoints (player1 only) ──────────────────────────────────────────
   dev: {
