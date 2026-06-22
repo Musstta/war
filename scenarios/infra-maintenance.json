@@ -1,0 +1,25 @@
+{
+  "name": "infra-maintenance",
+  "description": "Costa Rica owns costa_rica with port (level 1), market, and road enabled at T1. No army, no trade routes, no tributes. Expected per-tick infra maintenance: port(L1) = 0.1, market = 0.05, road = 0.02, total = 0.17/tick. costa_rica baseline production is ~0.70 wealth/tick, so net wealth delta after T1 ≈ +0.53/tick (0.70 − 0.17). Without infra the delta would be +0.70/tick. Confirms v0.40 infrastructure maintenance deduction in the army-upkeep loop extension.",
+  "ticks": 10,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 0, "wealthStock": 50 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 0 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 0 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 0 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 0 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "set_territory_infra",
+      "payload": { "territoryId": "costa_rica", "hasPort": true, "portLevel": 1, "hasMarket": true, "hasRoad": true }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick"
+  ]
+}

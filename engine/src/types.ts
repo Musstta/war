@@ -76,6 +76,8 @@ export interface UnrestCauses {
   tradeRouteStability: number;
   /** Temporary spike when a grown trade route is severed. [PLACEHOLDER] */
   tradeRouteLossSpike: number;
+  /** Negative — garrisoned army in a fort territory reduces equilibrium. [PLACEHOLDER] */
+  garrisonSuppression: number;
   /** Clamped sum [0, 1]. This is the target unrest asymptotes toward. */
   equilibrium: number;
 }
@@ -174,6 +176,13 @@ export interface TerritoryState {
    */
   populationTransferShockTicksLeft: number;
   /**
+   * Compat-scaled shock magnitude for this territory's current population transfer shock.
+   * Set alongside populationTransferShockTicksLeft; used instead of the fixed
+   * POPULATION_TRANSFER_UNREST_SCALE constant. 0 when no shock is active.
+   * Added v0.40 to fix the compat-scaling bug (void shockMagnitude was discarding it).
+   */
+  populationTransferShockMagnitude: number;
+  /**
    * Full UnrestCauses breakdown from the most recent tick's equilibrium computation.
    * Stored so the harness assert_equilibrium_component pass can read named components
    * without recomputing. null until the first tick runs.
@@ -232,10 +241,22 @@ export interface Nation {
   completedTreatiesKept: number;
   /** Cumulative war wins (peace deal favored this nation). */
   warsWon: number;
+  /** Cumulative war losses (peace deal went against this nation). */
+  warsLost: number;
+  /** Cumulative territory losses — territories permanently taken by another nation (conquest or cession-as-loser). */
+  territoriesLost: number;
   /** Tick when this nation was first created (world init or fragmentation spawn). */
   foundedAtTick: number;
   /** True if this nation currently holds Dominant status. Recomputed each tick. */
   isDominant: boolean;
+  /**
+   * Total active trade route currentCapacity at the last expansionist stagnation timer reset.
+   * Used to detect EXPANSIONIST_TRADE_GROWTH_THRESHOLD crossings.
+   * Engine-only field — not persisted to DB (reset to 0 on server load; harness tracks in produce()).
+   * [PLACEHOLDER v0.41]
+   */
+  lastStagnationCapacityBaseline: number;
+  lastExpansionistResetTick: number | null;
 }
 
 /** AI doctrine blend. Values 0–1, sum = 1. [PLACEHOLDER weights] */

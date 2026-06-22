@@ -39,7 +39,7 @@ export type ActionType =
   | 'assert_route_capacity'  // harness assertion: verify route currentCapacity
   | 'assert_route_cycles'    // harness assertion: verify route cyclesCompleted
   | 'assert_route_upkeep'    // harness assertion: verify nation wealth decreased by expected upkeep
-  | 'set_territory_infra'    // harness: set hasPort/hasMarket/portLevel on a territory
+  | 'set_territory_infra'    // harness: set hasPort/hasMarket/hasRoad/portLevel on a territory
   | 'build_road'
   | 'build_port'
   | 'build_fort';

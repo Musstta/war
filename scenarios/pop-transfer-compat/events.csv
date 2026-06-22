@@ -1,0 +1,5 @@
+tick,message
+2,"Population transfer: 20 population from Nicaragua to Costa Rica. Unrest spike applied for 5 ticks (compat-scaled). [PLACEHOLDER: POPULATION_TRANSFER_UNREST_SCALE=0.15]"
+2,"Population transfer: 20 population from Belize to Guatemala. Unrest spike applied for 5 ticks (compat-scaled). [PLACEHOLDER: POPULATION_TRANSFER_UNREST_SCALE=0.15]"
+10,"Treaty #1 between Nicaragua and Costa Rica has completed its term. Both parties gain Trust."
+10,"Treaty #2 between Belize and Guatemala has completed its term. Both parties gain Trust."

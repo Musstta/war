@@ -13,7 +13,7 @@
 | Nation | Territories | Avg Unrest | Max Unrest | Revolts at Final |
 |---|---|---|---|---|
 | Costa Rica | costa_rica | 1.5% | 1.5% | 0 |
-| Guatemala | guatemala | 4.0% | 4.0% | 0 |
+| Guatemala | guatemala | 3.5% | 3.5% | 0 |
 | Honduras | honduras | 4.2% | 4.2% | 0 |
 | Nicaragua | nicaragua | 3.0% | 3.0% | 0 |
 | Panamá | panama | 3.0% | 3.0% | 0 |

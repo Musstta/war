@@ -1,0 +1,13 @@
+tick,nation_id,trust,inactivity_tier,activity_tier,wealth_stock,debt_balance
+0,nation_costa_rica,50.000,active,active,20.00,0.00
+0,nation_nicaragua,50.000,active,active,20.00,0.00
+1,nation_costa_rica,50.000,active,active,20.24,0.00
+1,nation_nicaragua,50.000,active,active,20.20,0.00
+2,nation_costa_rica,50.000,active,active,20.48,0.00
+2,nation_nicaragua,50.000,active,active,20.40,0.00
+3,nation_costa_rica,50.000,active,active,20.72,0.00
+3,nation_nicaragua,50.000,active,active,20.60,0.00
+4,nation_costa_rica,50.000,active,active,20.96,0.00
+4,nation_nicaragua,50.000,active,active,20.80,0.00
+5,nation_costa_rica,50.000,active,active,21.20,0.00
+5,nation_nicaragua,50.000,active,active,21.00,0.00

@@ -14,7 +14,7 @@
 |---|---|---|---|---|
 | Costa Rica | costa_rica | 1.5% | 1.5% | 0 |
 | Guatemala | — | 0.0% | 0.0% | 0 |
-| Honduras | guatemala, honduras | 14.3% | 22.4% | 0 |
+| Honduras | guatemala, honduras | 14.2% | 22.3% | 0 |
 | Nicaragua | nicaragua | 3.0% | 3.0% | 0 |
 | Panamá | panama | 3.0% | 3.0% | 0 |
 
@@ -27,10 +27,10 @@
 | Tick | Owner | Unrest | Eq. | Shock | Compat | Infra | Distance |
 |------|-------|--------|-----|-------|--------|-------|----------|
 | T0 | nation_guatemala | 0.0% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
-| T1 | nation_guatemala | 0.4% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
-| T2 | nation_guatemala | 0.7% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
-| T5 | nation_honduras | 4.6% | 33.1% | 0.210 | 0.989 | 0.000 | 0.040 |
-| T10 | nation_honduras | 16.8% | 30.5% | 0.210 | 0.990 | 0.000 | 0.040 |
+| T1 | nation_guatemala | 0.2% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
+| T2 | nation_guatemala | 0.4% | 2.0% | 0.000 | 1.000 | 0.000 | 0.000 |
+| T5 | nation_honduras | 4.1% | 33.1% | 0.210 | 0.989 | 0.000 | 0.040 |
+| T10 | nation_honduras | 16.5% | 30.5% | 0.210 | 0.990 | 0.000 | 0.040 |
 
 ---
 

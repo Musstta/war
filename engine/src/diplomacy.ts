@@ -55,6 +55,45 @@ export const PROPOSE_TREATY_COST = 1;
 /** Mandate cost to accept a treaty. [PLACEHOLDER — 0.5 rounded to 1 for now] */
 export const ACCEPT_TREATY_COST = 1;
 
+// ── Tribute economics (v0.40) ────────────────────────────────────────────────
+
+/**
+ * Diminishing returns on tribute for the receiver.
+ * effectiveTribute = amount × (1 − min(TRIBUTE_DIMINISHING_CAP, receiverWealth / TRIBUTE_DIMINISHING_SCALE))
+ * At receiverWealth = 0: full tribute received.
+ * At receiverWealth = TRIBUTE_DIMINISHING_SCALE: receives (1 − 1.0) = 0 if cap = 1.0.
+ * The cap limits the max reduction so a rich receiver still gets something. [PLACEHOLDER]
+ *
+ * Worked example (TRIBUTE_DIMINISHING_SCALE=100, TRIBUTE_DIMINISHING_CAP=0.5, amount=10):
+ *   receiverWealth=0   → factor=0.0   → effective=10.0 (100% of tribute)
+ *   receiverWealth=50  → factor=0.25  → effective=7.5  (75% of tribute)
+ *   receiverWealth=100 → factor=0.5   → effective=5.0  (50% of tribute — cap reached)
+ *   receiverWealth=200 → factor=0.5   → effective=5.0  (still 50% — cap enforced)
+ */
+export const TRIBUTE_DIMINISHING_SCALE = 100; // [PLACEHOLDER]
+export const TRIBUTE_DIMINISHING_CAP = 0.5;   // [PLACEHOLDER] max 50% reduction
+
+/**
+ * Exploitation threshold: when payerWealth / receiverWealth < this ratio,
+ * the tribute is considered exploitative (strong nation extracting from weak nation).
+ * Territory count is used as the comparison metric (more consistent than stockpile wealth,
+ * which fluctuates tick-to-tick). Uses territory counts for payer and receiver.
+ * [PLACEHOLDER]
+ */
+export const TRIBUTE_EXPLOITATION_THRESHOLD = 0.4; // [PLACEHOLDER] payer owns < 40% of receiver's territories
+
+/**
+ * Per-tick unrest equilibrium increase applied to ALL territories of the receiver
+ * when an exploitative tribute clause is active. [PLACEHOLDER]
+ */
+export const TRIBUTE_EXPLOITATION_UNREST = 0.03; // [PLACEHOLDER]
+
+/**
+ * Per-tick Prestige reduction for the receiver when an exploitative tribute clause is active.
+ * Extracting tribute from a much weaker nation carries diplomatic stigma. [PLACEHOLDER]
+ */
+export const TRIBUTE_EXPLOITATION_PRESTIGE_PENALTY = 1; // [PLACEHOLDER]
+
 // ── Treaty degradation constants ──────────────────────────────────────────────
 
 /**

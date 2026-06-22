@@ -1,0 +1,13 @@
+tick,nation_id,pop_stock,ind_stock,wealth_stock,army_size,culture_individualist,culture_progressive,culture_militaristic,culture_expansionist,culture_family
+0,nation_costa_rica,0.00,0.00,20.00,,0.100000,0.300000,-0.800000,-0.600000,latin
+0,nation_nicaragua,0.00,0.00,20.00,,-0.300000,0.000000,-0.100000,-0.100000,latin
+1,nation_costa_rica,0.50,0.50,20.24,,0.100000,0.300000,-0.800000,-0.600000,latin
+1,nation_nicaragua,0.72,0.24,20.20,,-0.300000,0.000000,-0.100000,-0.100000,latin
+2,nation_costa_rica,1.00,1.00,20.48,,0.100000,0.300000,-0.800000,-0.600000,latin
+2,nation_nicaragua,1.44,0.48,20.40,,-0.300000,0.000000,-0.100000,-0.100000,latin
+3,nation_costa_rica,1.50,1.50,20.72,,0.100000,0.300000,-0.800000,-0.600000,latin
+3,nation_nicaragua,2.16,0.72,20.60,,-0.300000,0.000000,-0.100000,-0.100000,latin
+4,nation_costa_rica,2.00,2.00,20.96,,0.100000,0.300000,-0.800000,-0.600000,latin
+4,nation_nicaragua,2.88,0.96,20.80,,-0.300000,0.000000,-0.100000,-0.100000,latin
+5,nation_costa_rica,2.50,2.50,21.20,,0.100000,0.300000,-0.800000,-0.600000,latin
+5,nation_nicaragua,3.60,1.20,21.00,,-0.300000,0.000000,-0.100000,-0.100000,latin

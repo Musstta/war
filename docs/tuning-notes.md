@@ -988,3 +988,106 @@ New games get `id = "game_{timestamp}_{randomSuffix}"`. Legacy world keeps `id =
 ## Fast-forward vote (deferred feature — shipped v0.36)
 
 Implemented in v0.36. See lobby and scheduler constants section above for the current design. The original deferred note is preserved here for reference: when all active players check "ready for next tick," the tick fires immediately instead of waiting for midnight. Preserves the persistent-world design as default but lets a synchronously-online group compress time.
+---
+
+## v0.40 Economic & Prestige Rebalance — New [PLACEHOLDER] Constants
+
+All constants below were introduced in v0.40 and set to placeholder values. Tune after the full game loop (war, trade, diplomacy) is playable end-to-end.
+
+### Prestige decay sources (`engine/src/prestige.ts`)
+
+| Constant | Value | What it controls |
+|---|---|---|
+| `PRESTIGE_DECAY_PER_REVOLT_TICK` | 1 | Per revolting territory per tick — keeps a revolt from being costless long-term |
+| `PRESTIGE_LOSS_PER_WAR_DEFEAT` | 10 | One-time loss per war lost (cumulative, stored in `Nation.warsLost`) |
+| `PRESTIGE_LOSS_PER_TERRITORY_LOST` | 8 | Per territory ceded in a peace deal (cumulative, `Nation.territoriesLost`) |
+| `PRESTIGE_DECAY_PER_INSOLVENCY_TICK` | 2 | Per tick while `wealthStock < 0 || debtBalance > 0` — discourages sustained insolvency |
+
+**Tuning concern:** These losses are cumulative and never reset. A nation that loses 3 wars (−30) and 6 territories (−48) has a permanent −78 offset. Ensure PRESTIGE_PER_TERRITORY and other gains scale to outpace this for recovering nations.
+
+### Trade route loss penalties (`engine/src/tradeRoutes.ts`)
+
+| Constant | Value | What it controls |
+|---|---|---|
+| `PRESTIGE_LOSS_PER_ROUTE_LOSS` | 5 | Prestige penalty on owner when a grown route is severed (scaled by lossFraction) |
+| `SHIPMENT_LOSS_WEALTH_VALUE` | 3 | Wealth penalty to destination nation when a route is severed (scaled by lossFraction) |
+
+**Note:** Both are scaled by `lossFraction = (currentCapacity - baseCapacity) / growthCap`, so a freshly-established route that never grew incurs no penalty.
+
+### Tribute economics (`engine/src/diplomacy.ts`)
+
+| Constant | Value | What it controls |
+|---|---|---|
+| `TRIBUTE_DIMINISHING_SCALE` | 100 | Receiver wealth at which diminishing returns reach full cap |
+| `TRIBUTE_DIMINISHING_CAP` | 0.5 | Maximum fraction of tribute that can be lost to diminishing returns (50%) |
+| `TRIBUTE_EXPLOITATION_THRESHOLD` | 0.4 | `payerTerritories / receiverTerritories` below this → exploitation applies |
+| `TRIBUTE_EXPLOITATION_UNREST` | 0.03 | Per-tick unrest equilibrium adj on receiver territories when exploiting |
+| `TRIBUTE_EXPLOITATION_PRESTIGE_PENALTY` | 1 | Prestige deducted from receiver per tick when exploiting a much-smaller payer |
+
+**Worked example (SCALE=100, CAP=0.5, amount=10):**
+- receiverWealth=0 → diminishFactor=0 → effectiveTribute=10.0 (full amount)
+- receiverWealth=50 → diminishFactor=0.5 → effectiveTribute=7.5 (75%)
+- receiverWealth=100 → diminishFactor=0.5 (cap) → effectiveTribute=5.0 (50%)
+- receiverWealth=200 → still capped at 5.0
+
+**Tuning concern:** With SCALE=100 and typical territory wealth production (~0.5/tick), a nation needs ~200 ticks to reach the cap. Adjust SCALE if tribute dominance needs to emerge or dissipate faster.
+
+### Infrastructure maintenance (`engine/src/tick.ts`)
+
+| Constant | Value | What it controls |
+|---|---|---|
+| `PORT_MAINTENANCE_PER_LEVEL` | 0.1 | Per port level per tick (port L1 = 0.1/tick, L2 = 0.2/tick, L3 = 0.3/tick) |
+| `MARKET_MAINTENANCE_FLAT` | 0.05 | Flat per territory with hasMarket=true |
+| `ROAD_MAINTENANCE_FLAT` | 0.02 | Flat per territory with hasRoad=true |
+
+**Net effect:** A fully-developed territory (port L1 + market + road) costs 0.17/tick. With baseline costa_rica production of ~0.70/tick, infra consumes ~24% of gross production. Forts excluded until v0.41.
+
+**Tuning concern:** These are per-territory, so an empire of 10 fully-developed territories pays 1.7/tick — likely tolerable. Scale up once the full economic model (trade, tribute, conquest income) is calibrated.
+
+---
+
+## v0.41 Fort/Garrison Rework — New [PLACEHOLDER] Constants
+
+All constants below were introduced in v0.41 and set to placeholder values. Tune after the garrison mechanic has been exercised in actual play.
+
+### Fort maintenance (`engine/src/tick.ts`)
+
+| Constant | Value | What it controls |
+|---|---|---|
+| `FORT_MAINTENANCE_PER_LEVEL` | 0.08 | Per fort level per tick — a L2 fort costs 0.16/tick |
+
+**Context:** Fort L1 costs 0.08/tick vs port L1 at 0.1/tick. Fort maintenance is meant to make fortification a real ongoing cost, not just a one-time investment. At L2 fort cost of 0.16/tick and baseline production ~0.70/tick, a fort consumes ~23% of gross production.
+
+**Tuning concern:** A fully garrisoned fort provides both defense and unrest suppression. If forts are generally underbuilt, lower `FORT_MAINTENANCE_PER_LEVEL`. If fort spam is the dominant strategy, raise it.
+
+### Garrison mechanics (`engine/src/tick.ts`, `engine/src/war.ts`)
+
+| Constant | Value | What it controls |
+|---|---|---|
+| `FORT_UNGARRISONED_PENALTY` | 0.45 | Empty fort provides only 45% of face-value defense/infra bonus |
+| `GARRISON_FULL_THRESHOLD` | 8 | Garrison size for 100% effectiveness (linear interpolation from 0→1 below this) |
+| `GARRISON_CAPACITY_PER_LEVEL` | 5 | Informational — max sensible garrison per fort level (not enforced as a hard cap) |
+| `GARRISON_UPKEEP_REDUCTION` | 0.25 | Stationed armies pay 25% less upkeep — incentivizes long-term stationing |
+| `GARRISON_UNREST_SUPPRESSION` | 0.04 | Flat unrest equilibrium reduction when any army is stationed at a fort |
+| `MILITARISTIC_GARRISON_THRESHOLD` | 0.3 | `militaristic` trait must exceed this to get the suppression multiplier |
+| `MILITARISTIC_GARRISON_MULTIPLIER` | 1.5 | Militaristic territories get 1.5× suppression (−0.06 instead of −0.04) |
+| `GARRISON_RECRUITMENT_BONUS` | 0.2 | Documented bonus for garrisoned fort territories (not yet wired in recruitment) |
+
+**`effectiveFortLevel` worked example (L2 fort):**
+- Garrison=0: `2 × 0.45 = 0.9` effective level
+- Garrison=4: `2 × (0.45 + 0.55 × 0.5) = 2 × 0.725 = 1.45` effective level
+- Garrison=8: `2 × 1.0 = 2.0` effective level (full face value)
+
+**Tuning concern:** `FORT_UNGARRISONED_PENALTY=0.45` means an empty L3 fort is equivalent to a garrisoned L1.35 fort — close to worthless strategically. If players find ungarrisoned forts never worth building, raise the penalty toward 0.6–0.7. If forts are too cheap to maintain empty, lower it.
+
+### Expansionist stagnation relief (`engine/src/tick.ts`)
+
+| Constant | Value | What it controls |
+|---|---|---|
+| `EXPANSIONIST_TRADE_GROWTH_THRESHOLD` | 2.0 | Min trade route capacity growth since last reset to trigger stagnation relief |
+
+**Context:** An expansionist nation that signs any new treaty OR grows its total active trade route capacity by ≥ 2.0 since the last stagnation-timer reset will have the timer reset. The `Nation.lastExpansionistResetTick` persists across ticks (engine-only, not in DB) so the relief is durable.
+
+**Tuning concern:** With `MARKET_ROUTE_BASE_CAPACITY=5` and `ROUTE_GROWTH_RATE=0.05`, a single route grows ~0.25/cycle. Reaching the 2.0 threshold requires ~8 cycles (roughly 8 × transit-time ticks). If expansion relief via trade feels too hard, lower the threshold. If it makes stagnation too easy to avoid, raise it.
+
+**Note on treaty relief timing:** Harness-injected treaties use `tickStarted = world.tick` (pre-resolveTick world tick). The engine checks `treaty.tickStarted === world.tick` to detect "new treaty this tick." Real server treaties are created by `acceptTreaty.ts` with `tickStarted = ctx.currentTick` which equals `world.tick` at the time the engine runs — same convention.

@@ -608,6 +608,7 @@ export function run(scenario: Scenario): RunResult {
                 ...t.state,
                 hasPort: (p['hasPort'] as boolean | undefined) ?? t.state.hasPort,
                 hasMarket: (p['hasMarket'] as boolean | undefined) ?? t.state.hasMarket,
+                hasRoad: (p['hasRoad'] as boolean | undefined) ?? t.state.hasRoad,
                 portLevel: (p['portLevel'] as number | undefined) ?? (t.state as any).portLevel ?? 1,
               },
             },
@@ -1048,8 +1049,12 @@ function applyHarnessFragmentation(
         doctrineBlend: doctrine,
         completedTreatiesKept: 0,
         warsWon: 0,
+        warsLost: 0,
+        territoriesLost: 0,
         foundedAtTick: w.tick,
         isDominant: false,
+        lastStagnationCapacityBaseline: 0,
+        lastExpansionistResetTick: null,
       };
       w = {
         ...w,

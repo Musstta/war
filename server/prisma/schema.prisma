@@ -144,6 +144,8 @@ model Nation {
 
   completedTreatiesKept Int     @default(0)
   warsWon               Int     @default(0)
+  warsLost              Int     @default(0)
+  territoriesLost       Int     @default(0)
   foundedAtTick         Int     @default(0)
   isDominant            Boolean @default(false)
   underdogBuffExpiresAt Int?
@@ -195,7 +197,8 @@ model TerritoryState {
 
   hasEmbassy     Boolean @default(false)
 
-  populationTransferShockTicksLeft Int @default(0)
+  populationTransferShockTicksLeft  Int   @default(0)
+  populationTransferShockMagnitude  Float @default(0)
 
   @@index([gameId])
 }

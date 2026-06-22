@@ -1,0 +1,75 @@
+{
+  "name": "collectivist-treaty-relief",
+  "description": "Tests v0.41 broadening of collectivistIsolation trigger. Nicaragua and Honduras both start with individualist=−0.5 (collectivist). Phase 1 (T1–T3): No active treaties → collectivistIsolation fires for both. Phase 2: A non_aggression treaty is created at T4 between Nicaragua and Costa Rica → Nicaragua now has one active treaty (not a tribute_receiver clause) → collectivistIsolation should stop at T6. Honduras (control group, no treaties) continues to show isolation. Validates: 'any active treaty = 0 treaties' is the relief condition, not 'has tribute_receiver'.",
+  "ticks": 10,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 0 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 0 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 0 }
+    ],
+    "territoryOverrides": {
+      "nicaragua": { "individualist": -0.5 },
+      "honduras":  { "individualist": -0.5 }
+    }
+  },
+  "actions": [
+    {
+      "tick": 2,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "nicaragua",
+        "component": "collectivistIsolation",
+        "expectedPresent": true,
+        "comment": "T2: individualist=−0.5, activeTreatyCount=0 → isolation fires"
+      }
+    },
+    {
+      "tick": 2,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "honduras",
+        "component": "collectivistIsolation",
+        "expectedPresent": true,
+        "comment": "T2: control group — honduras also isolated, no treaties"
+      }
+    },
+    {
+      "tick": 4,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_nicaragua", "nation_costa_rica"],
+        "clauses": [
+          { "type": "non_aggression", "collateral": 0, "payload": {} }
+        ],
+        "termTicks": 20,
+        "collateralByParty": { "nation_nicaragua": 0, "nation_costa_rica": 0 }
+      }
+    },
+    {
+      "tick": 6,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "nicaragua",
+        "component": "collectivistIsolation",
+        "expectedPresent": false,
+        "comment": "T6: nicaragua has 1 active non_aggression treaty → activeTreatyCount=1 > 0 → isolation relieved (v0.41: any active treaty relieves, not just tribute_receiver)"
+      }
+    },
+    {
+      "tick": 6,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "honduras",
+        "component": "collectivistIsolation",
+        "expectedPresent": true,
+        "comment": "T6: honduras has no treaties → isolation continues (confirms relief is treaty-gated)"
+      }
+    }
+  ],
+  "metrics": [
+    "equilibrium_components_per_territory_per_tick"
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "name": "tribute-diminishing",
+  "description": "Nicaragua (poor, wealthStock=5) pays 10 Wealth/tick tribute to Honduras (rich, wealthStock=100). With TRIBUTE_DIMINISHING_SCALE=100 and TRIBUTE_DIMINISHING_CAP=0.5, Honduras's diminishFactor = min(0.5, 100/100) = 0.5, so effectiveTribute = 10 × (1−0.5) = 5. Nicaragua loses 10/tick but Honduras gains only 5/tick. Costa Rica (single territory, wealthStock=0) pays 10/tick tribute to Guatemala (wealthStock=0) — no diminishing at all (diminishFactor=0), so Guatemala gains full 10/tick. Assert: after 5 ticks, Honduras wealthStock ≈ 100 + 5×5 = 125 (vs 150 without diminishing); Guatemala wealthStock ≈ 0 + 5×10 = 50. Also: payer/receiver territory-count ratio triggers exploitation check — Nicaragua (1 territory) vs Honduras (1 territory) = ratio 1.0 ≥ threshold 0.4 → NOT exploitative. Guatemala (1 terr) vs Costa Rica (1 terr) = 1.0 → NOT exploitative.",
+  "ticks": 10,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 0, "wealthStock": 200 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 0, "wealthStock": 5 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 0, "wealthStock": 100 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 0, "wealthStock": 0 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 0 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_nicaragua", "nation_honduras"],
+        "clauses": [
+          {
+            "type": "tribute",
+            "collateral": 0,
+            "payload": { "fromNationId": "nation_nicaragua", "toNationId": "nation_honduras", "amount": 10 }
+          }
+        ],
+        "termTicks": 20,
+        "collateralByParty": { "nation_nicaragua": 0, "nation_honduras": 0 }
+      }
+    },
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 2,
+        "partyIds": ["nation_costa_rica", "nation_guatemala"],
+        "clauses": [
+          {
+            "type": "tribute",
+            "collateral": 0,
+            "payload": { "fromNationId": "nation_costa_rica", "toNationId": "nation_guatemala", "amount": 10 }
+          }
+        ],
+        "termTicks": 20,
+        "collateralByParty": { "nation_costa_rica": 0, "nation_guatemala": 0 }
+      }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick",
+    "treaty_state_per_tick"
+  ]
+}

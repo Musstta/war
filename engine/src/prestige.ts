@@ -95,6 +95,34 @@ export const DOMINANT_WAR_ATTACKER_BONUS = 1.15;
  */
 export const DOMINANT_WAR_MILITARISTIC_BONUS = -0.03;
 
+// ── Prestige decay/loss constants (v0.40) ────────────────────────────────────
+
+/**
+ * Prestige lost per tick for each territory currently in active revolt
+ * (unrest >= REVOLT_THRESHOLD = 0.80). Applied as a per-tick subtraction
+ * in computePrestige's decay term. [PLACEHOLDER]
+ */
+export const PRESTIGE_DECAY_PER_REVOLT_TICK = 1;
+
+/**
+ * Prestige lost when a nation loses a war (peace deal where they ceded territory
+ * or paid tribute without receiving anything). Symmetric counterpart to
+ * PRESTIGE_PER_WAR_WIN. Cumulative. [PLACEHOLDER]
+ */
+export const PRESTIGE_LOSS_PER_WAR_DEFEAT = 10;
+
+/**
+ * Prestige lost per territory permanently lost to another nation (conquest, cession-as-loser).
+ * Symmetric counterpart to PRESTIGE_PER_TERRITORY. Cumulative. [PLACEHOLDER]
+ */
+export const PRESTIGE_LOSS_PER_TERRITORY_LOST = 8;
+
+/**
+ * Prestige lost per tick that a nation is insolvent (wealthStock < 0 OR debtBalance > 0).
+ * Applied as a per-tick subtraction. [PLACEHOLDER]
+ */
+export const PRESTIGE_DECAY_PER_INSOLVENCY_TICK = 2;
+
 // ── Formula ───────────────────────────────────────────────────────────────────
 
 export interface PrestigeInput {
@@ -103,7 +131,15 @@ export interface PrestigeInput {
   standingTreatyCount: number;
   completedTreatiesKept: number;
   warsWon: number;
+  /** Cumulative wars-lost count (tracked on Nation same as warsWon). */
+  warsLost: number;
+  /** Cumulative territories permanently lost to other nations. */
+  territoriesLost: number;
   avgUnrest: number;
+  /** Number of owned territories currently in active revolt (unrest >= REVOLT_THRESHOLD). */
+  revoltTerritoryCount: number;
+  /** Whether the nation is currently insolvent (wealthStock < 0 OR debtBalance > 0). */
+  isInsolvent: boolean;
   nationAgeTicks: number;
   infrastructureScore: number;
   trust: number;
@@ -111,15 +147,37 @@ export interface PrestigeInput {
   tradeRouteScore: number;
 }
 
-/** Compute the raw Prestige score from inputs. Returns a non-negative integer. */
+/**
+ * Compute the raw Prestige score from inputs. Returns a non-negative integer.
+ *
+ * Full formula (v0.40):
+ *   GAINS (per tick, cumulative where noted):
+ *     + territoryCount × PRESTIGE_PER_TERRITORY (10)
+ *     + standingTreatyCount × PRESTIGE_PER_TREATY (5)
+ *     + completedTreatiesKept × PRESTIGE_PER_KEPT_TREATY (8) [cumulative]
+ *     + warsWon × PRESTIGE_PER_WAR_WIN (15) [cumulative]
+ *     + PRESTIGE_STABILITY_BONUS (20) if avgUnrest < PRESTIGE_STABILITY_THRESHOLD (0.3)
+ *     + nationAgeTicks × PRESTIGE_PER_TICK_AGE (0.1)
+ *     + infrastructureScore × PRESTIGE_PER_INFRA_POINT (0.5)
+ *     + trust × PRESTIGE_TRUST_SCALE (0.3)
+ *     + tradeRouteScore × PRESTIGE_PER_TRADE_CAPACITY (0.3)
+ *   LOSSES (per tick or cumulative):
+ *     − warsLost × PRESTIGE_LOSS_PER_WAR_DEFEAT (10) [cumulative]
+ *     − territoriesLost × PRESTIGE_LOSS_PER_TERRITORY_LOST (8) [cumulative]
+ *     − revoltTerritoryCount × PRESTIGE_DECAY_PER_REVOLT_TICK (1) [per tick, each revolting territory]
+ *     − PRESTIGE_DECAY_PER_INSOLVENCY_TICK (2) per tick if insolvent
+ *   Result clamped to ≥ 0.
+ */
 export function computePrestige(input: PrestigeInput): number {
   const {
     territoryCount, standingTreatyCount, completedTreatiesKept,
-    warsWon, avgUnrest, nationAgeTicks, infrastructureScore, trust,
+    warsWon, warsLost, territoriesLost,
+    avgUnrest, revoltTerritoryCount, isInsolvent,
+    nationAgeTicks, infrastructureScore, trust,
     tradeRouteScore,
   } = input;
 
-  const score =
+  const gains =
     territoryCount        * PRESTIGE_PER_TERRITORY +
     standingTreatyCount   * PRESTIGE_PER_TREATY +
     completedTreatiesKept * PRESTIGE_PER_KEPT_TREATY +
@@ -130,7 +188,13 @@ export function computePrestige(input: PrestigeInput): number {
     trust                 * PRESTIGE_TRUST_SCALE +
     tradeRouteScore       * PRESTIGE_PER_TRADE_CAPACITY;
 
-  return Math.max(0, Math.round(score));
+  const losses =
+    warsLost              * PRESTIGE_LOSS_PER_WAR_DEFEAT +
+    territoriesLost       * PRESTIGE_LOSS_PER_TERRITORY_LOST +
+    revoltTerritoryCount  * PRESTIGE_DECAY_PER_REVOLT_TICK +
+    (isInsolvent ? PRESTIGE_DECAY_PER_INSOLVENCY_TICK : 0);
+
+  return Math.max(0, Math.round(gains - losses));
 }
 
 

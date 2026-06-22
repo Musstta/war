@@ -44,6 +44,24 @@ export const ROUTE_LOSS_UNREST_SCALE = 0.1;
 /** Duration of the TerritoryModifier applied on route loss. [PLACEHOLDER] */
 export const ROUTE_LOSS_UNREST_TICKS = 5;
 
+/**
+ * Prestige penalty applied to the route-owning nation(s) when a grown route is severed.
+ * Scaled by (lostValue / growthCap) — same shape as unrest formula.
+ * For international routes: full penalty to owner; half penalty to partner (asymmetric — owner chose the route).
+ * [PLACEHOLDER]
+ */
+export const PRESTIGE_LOSS_PER_ROUTE_LOSS = 5;
+
+/**
+ * Wealth penalty applied to the receiving party when an in-transit shipment is lost.
+ * Represents collateral for undelivered merchandise.
+ * For domestic routes: applied to the single nation.
+ * For international routes: applied only to the destination nation (the one that would have received cargo).
+ * Formula: SHIPMENT_LOSS_WEALTH_VALUE × (lostValue / growthCap) — scales with how much the route had grown.
+ * [PLACEHOLDER]
+ */
+export const SHIPMENT_LOSS_WEALTH_VALUE = 3;
+
 // ── Cultural pressure ─────────────────────────────────────────────────────────
 
 /** merchantPressure per route = (currentCapacity / nationOutput) × this weight. [PLACEHOLDER] */

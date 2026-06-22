@@ -425,6 +425,7 @@ export function computeUnrestEquilibrium(
   populationTransferShock = 0,      // temporary spike from population transfer event [PLACEHOLDER]
   tradeRouteStability = 0,          // negative — grown trade route flowing to/through this territory [PLACEHOLDER]
   tradeRouteLossSpike = 0,          // temporary positive spike when a grown route is severed [PLACEHOLDER]
+  garrisonSuppression = 0,          // negative — garrisoned army at fort reduces equilibrium [PLACEHOLDER]
 ): UnrestCauses {
   const base = BASE_UNREST_FLOOR;
 
@@ -451,7 +452,8 @@ export function computeUnrestEquilibrium(
     treatyCulturalClash + insolvencyPressure + tradeStability +
     isolationistEntanglement + expansionistStagnation + collectivistIsolation +
     individualistObligation + traditionalErosion + progressiveStagnation +
-    populationTransferShock + tradeRouteStability + tradeRouteLossSpike,
+    populationTransferShock + tradeRouteStability + tradeRouteLossSpike +
+    garrisonSuppression,
   ));
 
   return {
@@ -475,6 +477,7 @@ export function computeUnrestEquilibrium(
     populationTransferShock,
     tradeRouteStability,
     tradeRouteLossSpike,
+    garrisonSuppression,
     equilibrium,
   };
 }

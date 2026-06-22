@@ -1,0 +1,75 @@
+{
+  "name": "expansionist-stagnation-relief",
+  "description": "Tests v0.41 expansionist stagnation relief via new treaty signing. Nicaragua and Guatemala both have expansionist=0.7. No territory acquired. Phase 1 (T12+): With EXPANSIONIST_GROWTH_WINDOW=10, stagnation fires at harness T12 (engine processes world.tick=11 > 10). Phase 2: A non_aggression treaty is created at T13 — harness injects it with tickStarted=world.tick=12; engine runs with world.tick=12 and detects tickStarted===world.tick → relief fires → latestAcquisitionTickByNation[nic]=12. T14: ticksSinceGrowth=13−12=1 ≤ 10 → stagnation GONE for Nicaragua. Guatemala (no treaty) continues stagnating (ticksSinceGrowth=13 > 10). Validates: treaty relief check uses world.tick (pre-tick) not world.tick+1.",
+  "ticks": 16,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 0 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 0 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 0 }
+    ],
+    "territoryOverrides": {
+      "nicaragua": { "expansionist": 0.7 },
+      "guatemala": { "expansionist": 0.7 }
+    }
+  },
+  "actions": [
+    {
+      "tick": 12,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "nicaragua",
+        "component": "expansionistStagnation",
+        "expectedPresent": true,
+        "comment": "T12: engine processes world.tick=11 > EXPANSIONIST_GROWTH_WINDOW=10 → stagnation fires first time (no acquisitions, no treaties yet)"
+      }
+    },
+    {
+      "tick": 12,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "guatemala",
+        "component": "expansionistStagnation",
+        "expectedPresent": true,
+        "comment": "T12: control group — also stagnating"
+      }
+    },
+    {
+      "tick": 13,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_nicaragua", "nation_costa_rica"],
+        "clauses": [
+          { "type": "non_aggression", "collateral": 0, "payload": {} }
+        ],
+        "termTicks": 10,
+        "collateralByParty": { "nation_nicaragua": 0, "nation_costa_rica": 0 }
+      }
+    },
+    {
+      "tick": 14,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "nicaragua",
+        "component": "expansionistStagnation",
+        "expectedPresent": false,
+        "comment": "T14: treaty injected at T13 had tickStarted=world.tick=12; engine runs T13 with world.tick=12, detects tickStarted===world.tick → relief fires → latestAcq[nic]=12. At T14 engine sees world.tick=13, ticksSinceGrowth=13−12=1 ≤ 10 → NO stagnation"
+      }
+    },
+    {
+      "tick": 14,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "guatemala",
+        "component": "expansionistStagnation",
+        "expectedPresent": true,
+        "comment": "T14: control group — guatemala has no treaty, ticksSinceGrowth=13 > 10 → still stagnating"
+      }
+    }
+  ],
+  "metrics": [
+    "equilibrium_components_per_territory_per_tick"
+  ]
+}

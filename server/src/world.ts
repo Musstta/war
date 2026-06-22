@@ -61,6 +61,7 @@ export async function loadWorldState(
         localWltStock: s.localWltStock,
         hasEmbassy: (s as any).hasEmbassy ?? false,
         populationTransferShockTicksLeft: (s as any).populationTransferShockTicksLeft ?? 0,
+        populationTransferShockMagnitude: (s as any).populationTransferShockMagnitude ?? 0,
       },
     };
   }
@@ -88,8 +89,12 @@ export async function loadWorldState(
       doctrineBlend: ((n as any).doctrineBlend as import('@war/engine').DoctrineBlend | null) ?? null,
       completedTreatiesKept: (n as any).completedTreatiesKept ?? 0,
       warsWon: (n as any).warsWon ?? 0,
+      warsLost: (n as any).warsLost ?? 0,
+      territoriesLost: (n as any).territoriesLost ?? 0,
       foundedAtTick: (n as any).foundedAtTick ?? 0,
       isDominant: (n as any).isDominant ?? false,
+      lastStagnationCapacityBaseline: 0, // engine-only; not persisted to DB; reset each server load
+      lastExpansionistResetTick: null,   // engine-only; not persisted to DB; reset each server load
     };
   }
 
@@ -379,6 +384,8 @@ export async function saveWorldState(tx: TxClient, world: WorldState, gameId?: s
         doctrineBlend: nation.doctrineBlend != null ? nation.doctrineBlend as unknown as Prisma.InputJsonValue : Prisma.JsonNull,
         completedTreatiesKept: nation.completedTreatiesKept,
         warsWon: nation.warsWon,
+        warsLost: nation.warsLost,
+        territoriesLost: nation.territoriesLost,
         foundedAtTick: nation.foundedAtTick,
         isDominant: nation.isDominant,
       },
@@ -469,6 +476,7 @@ export async function saveWorldState(tx: TxClient, world: WorldState, gameId?: s
         localWltStock: state.localWltStock,
         hasEmbassy: state.hasEmbassy,
         populationTransferShockTicksLeft: state.populationTransferShockTicksLeft,
+        populationTransferShockMagnitude: state.populationTransferShockMagnitude,
         portLevel: (state as any).portLevel ?? 1,
       },
     });
@@ -766,19 +774,23 @@ export async function saveWorldState(tx: TxClient, world: WorldState, gameId?: s
   // All weights [PLACEHOLDER] — see engine/src/prestige.ts and tuning-notes.md.
 
   const [allTerritories, allTreaties, allNationsForPrestige] = await Promise.all([
-    tx.territoryState.findMany({ where: { gameId: effectiveGameId }, select: { ownerId: true, unrest: true, hasRoad: true, hasPort: true, fortificationLevel: true } }),
+    tx.territoryState.findMany({ where: { gameId: effectiveGameId }, select: { ownerId: true, unrest: true, isInRevolt: true, hasRoad: true, hasPort: true, fortificationLevel: true } }),
     tx.treaty.findMany({ where: { status: { in: ['active', 'degraded'] }, gameId: effectiveGameId }, include: { parties: true } }),
-    tx.nation.findMany({ where: { gameId: effectiveGameId }, select: { id: true, completedTreatiesKept: true, warsWon: true, foundedAtTick: true, trust: true } }),
+    tx.nation.findMany({ where: { gameId: effectiveGameId }, select: { id: true, completedTreatiesKept: true, warsWon: true, warsLost: true, territoriesLost: true, foundedAtTick: true, trust: true, wealthStock: true, debtBalance: true } }),
   ]);
 
-  // Territory count, average unrest, and infrastructure score per nation.
+  // Territory count, average unrest, revolt count, and infrastructure score per nation.
   const territoryCounts: Record<string, number> = {};
   const unrestSumByNation: Record<string, number> = {};
+  const revoltCountByNation: Record<string, number> = {};
   const infraScoreByNation: Record<string, number> = {};
   for (const t of allTerritories) {
     if (!t.ownerId) continue;
     territoryCounts[t.ownerId] = (territoryCounts[t.ownerId] ?? 0) + 1;
     unrestSumByNation[t.ownerId] = (unrestSumByNation[t.ownerId] ?? 0) + t.unrest;
+    if (t.isInRevolt) {
+      revoltCountByNation[t.ownerId] = (revoltCountByNation[t.ownerId] ?? 0) + 1;
+    }
     const infraPoints = (t.hasRoad ? 1 : 0) + (t.hasPort || t.hasMarket ? 1 : 0) + t.fortificationLevel;
     infraScoreByNation[t.ownerId] = (infraScoreByNation[t.ownerId] ?? 0) + infraPoints;
   }
@@ -810,13 +822,20 @@ export async function saveWorldState(tx: TxClient, world: WorldState, gameId?: s
     const inputs = nationPrestigeInputs.get(nation.id);
     const tCount = territoryCounts[nation.id] ?? 0;
     const avgUnrest = tCount > 0 ? (unrestSumByNation[nation.id] ?? 0) / tCount : 0;
+    const isInsolvent = inputs
+      ? (inputs.wealthStock < 0 || inputs.debtBalance > 0)
+      : false;
     const score = computePrestige({
       nationId: nation.id,
       territoryCount: tCount,
       standingTreatyCount: treatyCountByNation[nation.id] ?? 0,
       completedTreatiesKept: inputs?.completedTreatiesKept ?? 0,
       warsWon: inputs?.warsWon ?? 0,
+      warsLost: inputs?.warsLost ?? 0,
+      territoriesLost: inputs?.territoriesLost ?? 0,
       avgUnrest,
+      revoltTerritoryCount: revoltCountByNation[nation.id] ?? 0,
+      isInsolvent,
       nationAgeTicks: world.tick - (inputs?.foundedAtTick ?? 0),
       infrastructureScore: infraScoreByNation[nation.id] ?? 0,
       trust: inputs?.trust ?? 50,

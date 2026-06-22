@@ -37,7 +37,7 @@
 
 | Tick | Event |
 |------|-------|
-| T16 | The trade route between Nicaragua and Costa Rica (grown to 93% over 8 cycles) has been severed. |
+| T16 | The trade route between Nicaragua and Costa Rica (grown to 93% over 8 cycles) has been severed. Prestige −1. Wealth −0.8 (undelivered cargo). |
 
 ---
 

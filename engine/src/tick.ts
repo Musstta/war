@@ -41,6 +41,11 @@ import {
   LOW_TRUST_FINE_PER_TREATY,
   DEGRADATION_REFUND_TICKS,
   PROPOSAL_EXPIRY_TICKS,
+  TRIBUTE_DIMINISHING_SCALE,
+  TRIBUTE_DIMINISHING_CAP,
+  TRIBUTE_EXPLOITATION_THRESHOLD,
+  TRIBUTE_EXPLOITATION_UNREST,
+  TRIBUTE_EXPLOITATION_PRESTIGE_PENALTY,
   applyPassiveTrustRecovery,
   computeTributeTransfers,
   computeTreatyCulturalClash,
@@ -61,6 +66,8 @@ import {
   computeBattleStrengths,
   siegeTicksRequired,
   computeOverextensionPressure,
+  computeEffectiveFortLevel,
+  computeGarrisonSize,
   areAtWar,
   WAR_INSOLVENCY_UNREST_PER_TICK,
   WAR_MILITARISTIC_HAPPINESS_BONUS,
@@ -109,6 +116,8 @@ import {
   ROUTE_INTERNATIONAL_UPKEEP_SPLIT,
   ROUTE_LOSS_UNREST_SCALE,
   ROUTE_LOSS_UNREST_TICKS,
+  PRESTIGE_LOSS_PER_ROUTE_LOSS,
+  SHIPMENT_LOSS_WEALTH_VALUE,
   ROUTE_MERCHANT_PRESSURE_WEIGHT,
   ROUTE_ISOLATIONIST_THRESHOLD,
   ROUTE_ISOLATIONIST_COUNT_WEIGHT,
@@ -121,6 +130,79 @@ import type { TradeRouteAgreement, TradeShipment } from './types';
 // These numbers are not final. All tuning happens via the simulation harness
 // once enough systems are in place. Do not balance these by hand. (design doc §17)
 const UPKEEP_PER_SOLDIER = 0.05; // [PLACEHOLDER] Wealth cost per soldier per tick
+
+// ── Infrastructure maintenance (v0.40 + v0.41) ───────────────────────────────
+// Per-tick Wealth cost per territory, deducted from nation general stockpile alongside army upkeep.
+// Deducted AFTER production flush, same order as army upkeep and trade route upkeep.
+// Insolvency from these deductions triggers PRESTIGE_DECAY_PER_INSOLVENCY_TICK next tick
+// (insolvency is detected in saveWorldState after the tick, when prestige is computed).
+
+/** Per-tick Wealth cost per port level (multiplied by portLevel, so L2 port costs 2× L1). [PLACEHOLDER] */
+const PORT_MAINTENANCE_PER_LEVEL = 0.1; // [PLACEHOLDER]
+
+/** Per-tick Wealth cost per territory with hasMarket = true. [PLACEHOLDER] */
+const MARKET_MAINTENANCE_FLAT = 0.05; // [PLACEHOLDER]
+
+/** Per-tick Wealth cost per territory with hasRoad = true. [PLACEHOLDER] */
+const ROAD_MAINTENANCE_FLAT = 0.02; // [PLACEHOLDER]
+
+/** Per-tick Wealth cost per fortification level (multiplied by fortificationLevel). [PLACEHOLDER] */
+const FORT_MAINTENANCE_PER_LEVEL = 0.08; // [PLACEHOLDER]
+
+// ── Garrison constants (v0.41) ────────────────────────────────────────────────
+// A garrison = any army with status 'stationed' in a territory with fortificationLevel >= 1.
+// No new DB row needed — derived from existing Army rows each tick.
+
+/**
+ * Fort effectiveness when completely ungarrisoned (garrisonSize === 0).
+ * Empty fort = FORT_UNGARRISONED_PENALTY × fortificationLevel effective level.
+ * Target: 0.4–0.5 (40–50% of full value). [PLACEHOLDER]
+ */
+const FORT_UNGARRISONED_PENALTY = 0.45; // [PLACEHOLDER]
+
+/**
+ * Garrison unit count at/above which the fort operates at 100% effectiveness.
+ * Below this, effectiveness scales linearly: (garrisonSize / GARRISON_FULL_THRESHOLD).
+ * [PLACEHOLDER]
+ */
+const GARRISON_FULL_THRESHOLD = 8; // [PLACEHOLDER]
+
+/**
+ * Maximum garrison size for capacity validation in station_garrison action.
+ * Per fortification level: garrisonCapacity = GARRISON_CAPACITY_PER_LEVEL × fortificationLevel.
+ * [PLACEHOLDER]
+ */
+const GARRISON_CAPACITY_PER_LEVEL = 5; // [PLACEHOLDER]
+
+/** Fraction by which garrisoned units' effective upkeep is reduced (0.25 = 25% discount). [PLACEHOLDER] */
+const GARRISON_UPKEEP_REDUCTION = 0.25; // [PLACEHOLDER]
+
+/** Equilibrium reduction while a garrison is present (garrisonSize > 0). [PLACEHOLDER] */
+const GARRISON_UNREST_SUPPRESSION = 0.04; // [PLACEHOLDER]
+
+/**
+ * When nation's militaristic trait > this threshold, garrison suppression is multiplied
+ * by MILITARISTIC_GARRISON_MULTIPLIER. Culturally compatible presence = stronger effect.
+ * [PLACEHOLDER]
+ */
+const MILITARISTIC_GARRISON_THRESHOLD = 0.3; // [PLACEHOLDER]
+
+/** Multiplier applied to GARRISON_UNREST_SUPPRESSION for militaristic territories. [PLACEHOLDER] */
+const MILITARISTIC_GARRISON_MULTIPLIER = 1.5; // [PLACEHOLDER]
+
+/**
+ * Fraction added to create_army output when the action fires in a garrisoned fort territory.
+ * Output = floor(baseSize × (1 + GARRISON_RECRUITMENT_BONUS)). [PLACEHOLDER]
+ */
+const GARRISON_RECRUITMENT_BONUS = 0.2; // [PLACEHOLDER]
+
+// ── Expansionist stagnation relief (v0.41) ────────────────────────────────────
+/**
+ * Minimum increase in total active trade route currentCapacity (across all of a nation's routes)
+ * since the last stagnation-timer reset to reset the expansionist stagnation timer.
+ * [PLACEHOLDER]
+ */
+const EXPANSIONIST_TRADE_GROWTH_THRESHOLD = 2.0; // [PLACEHOLDER]
 
 /**
  * Base population at which production multiplier is 1.0.
@@ -168,13 +250,26 @@ function sumProduction(world: WorldState, nationId: string): Stockpiles {
 }
 
 /**
- * Fire a trade route loss event: log, apply TerritoryModifier unrest spike, mark route ended.
+ * Fire a trade route loss event: log, apply TerritoryModifier unrest spike, Prestige reduction,
+ * and wealth penalty for the receiving party. Mark route ended.
  * Only applies if the route grew beyond baseCapacity. Called from treaty expiry, ownership change,
  * and infra destruction paths.
+ *
+ * Prestige penalty: PRESTIGE_LOSS_PER_ROUTE_LOSS × (lostValue / growthCap), applied to ownerNationId.
+ * For international routes: half penalty also applied to partnerNationId.
+ * Wealth penalty: SHIPMENT_LOSS_WEALTH_VALUE × (lostValue / growthCap), applied to the destination nation.
+ * For domestic routes: destination nation = ownerNationId.
+ * For international routes: destination = partnerNationId (the one receiving cargo from source).
+ * If route is symmetric and direction unclear, apply to partnerNationId; if no partner, apply to owner.
  */
 function applyRouteLossEvent(
   route: TradeRouteAgreement,
-  draft: { territories: WorldState['territories']; territoryModifiers: WorldState['territoryModifiers']; eventLog: WorldState['eventLog']; },
+  draft: {
+    territories: WorldState['territories'];
+    territoryModifiers: WorldState['territoryModifiers'];
+    eventLog: WorldState['eventLog'];
+    nations: WorldState['nations'];
+  },
   currentTick: number,
 ): void {
   const lostValue = route.currentCapacity - route.baseCapacity;
@@ -183,15 +278,44 @@ function applyRouteLossEvent(
     return;
   }
 
+  const lossFraction = lostValue / route.growthCap;
   const pctGrown = Math.round((route.currentCapacity / route.growthCap) * 100);
   const srcName = draft.territories[route.sourceTerritoryId]?.def.name ?? route.sourceTerritoryId;
   const dstName = draft.territories[route.destinationTerritoryId]?.def.name ?? route.destinationTerritoryId;
+
+  // Prestige penalty for owner; half-penalty for partner on international routes.
+  const prestigePenalty = Math.round(lossFraction * PRESTIGE_LOSS_PER_ROUTE_LOSS);
+  const ownerNation = draft.nations[route.ownerNationId];
+  if (ownerNation && prestigePenalty > 0) {
+    ownerNation.prestige = Math.max(0, ownerNation.prestige - prestigePenalty);
+  }
+  if (route.partnerNationId) {
+    const partnerNation = draft.nations[route.partnerNationId];
+    const partnerPenalty = Math.max(1, Math.round(prestigePenalty * 0.5));
+    if (partnerNation && partnerPenalty > 0) {
+      partnerNation.prestige = Math.max(0, partnerNation.prestige - partnerPenalty);
+    }
+  }
+
+  // Wealth penalty for the receiving (destination) party — collateral for lost shipment.
+  const wealthPenalty = lossFraction * SHIPMENT_LOSS_WEALTH_VALUE;
+  // For international routes, the destination territory's owner is the receiving nation.
+  // For domestic routes, the owner is the same nation on both ends.
+  const destTerr = draft.territories[route.destinationTerritoryId];
+  const receivingNationId = destTerr?.state.ownerId
+    ?? route.partnerNationId
+    ?? route.ownerNationId;
+  const receivingNation = draft.nations[receivingNationId];
+  if (receivingNation && wealthPenalty > 0) {
+    receivingNation.stockpiles.wealth -= wealthPenalty;
+  }
+
   draft.eventLog.push({
     tick: currentTick,
-    message: `The trade route between ${srcName} and ${dstName} (grown to ${pctGrown}% over ${route.cyclesCompleted} cycles) has been severed.`,
+    message: `The trade route between ${srcName} and ${dstName} (grown to ${pctGrown}% over ${route.cyclesCompleted} cycles) has been severed. Prestige −${prestigePenalty}. Wealth −${wealthPenalty.toFixed(1)} (undelivered cargo).`,
   });
 
-  const unrestSpike = (lostValue / route.growthCap) * ROUTE_LOSS_UNREST_SCALE;
+  const unrestSpike = lossFraction * ROUTE_LOSS_UNREST_SCALE;
   for (const endpointId of [route.sourceTerritoryId, route.destinationTerritoryId]) {
     const endpointTerr = draft.territories[endpointId];
     if (!endpointTerr) continue;
@@ -521,6 +645,42 @@ export function resolveTick(
           break;
         }
 
+        case 'station_garrison': {
+          // Station an army (or portion) as a garrison in a fort territory.
+          // Garrison = the army remains stationed; this action validates and registers intent.
+          // garrisonUnits: how many units of the army to designate as garrison (≤ army.size).
+          const { armyId: garrisonArmyId, garrisonUnits } = action.payload as { armyId: number; garrisonUnits: number };
+          const garrisonArmy = draft.armies.find((a) => a.id === garrisonArmyId && a.nationId === action.nationId);
+          if (!garrisonArmy) { discard(action, 'army not found or not owned by this nation'); break; }
+          if (garrisonArmy.status !== 'stationed') { discard(action, 'army must be stationed to garrison'); break; }
+          const garrisonTerr = draft.territories[garrisonArmy.territoryId];
+          if (!garrisonTerr) { discard(action, 'territory not found'); break; }
+          if (garrisonTerr.state.ownerId !== action.nationId) { discard(action, 'must own the territory to garrison it'); break; }
+          if (garrisonTerr.state.fortificationLevel < 1) { discard(action, 'territory has no fort (fortificationLevel must be >= 1)'); break; }
+          const maxGarrison = GARRISON_CAPACITY_PER_LEVEL * garrisonTerr.state.fortificationLevel; // [PLACEHOLDER callsite: GARRISON_CAPACITY_PER_LEVEL]
+          const units = Math.min(garrisonUnits ?? garrisonArmy.size, garrisonArmy.size, maxGarrison);
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `${draft.nations[action.nationId]?.name ?? action.nationId} garrisoned ${units} units in ${garrisonTerr.def.name} (fort L${garrisonTerr.state.fortificationLevel}).`,
+          });
+          apply(action);
+          break;
+        }
+
+        case 'unstation_garrison': {
+          // Release garrisoned units back to active army status (they remain stationed but ungarrisoned).
+          const { armyId: ungArmyId } = action.payload as { armyId: number };
+          const ungArmy = draft.armies.find((a) => a.id === ungArmyId && a.nationId === action.nationId);
+          if (!ungArmy) { discard(action, 'army not found or not owned by this nation'); break; }
+          const ungTerr = draft.territories[ungArmy.territoryId];
+          draft.eventLog.push({
+            tick: world.tick + 1,
+            message: `${draft.nations[action.nationId]?.name ?? action.nationId} released garrison in ${ungTerr?.def.name ?? ungArmy.territoryId}.`,
+          });
+          apply(action);
+          break;
+        }
+
         case 'build_barricade': {
           // §1.4 Barricade: temporary movement debuff + defense bonus on a territory.
           const { territoryId: barricadeTid } = action.payload as { territoryId: string };
@@ -728,10 +888,18 @@ export function resolveTick(
             ? DOMINANT_WAR_ATTACKER_BONUS
             : 1.0;
 
+          // Garrison-gated effective fort level: empty fort = FORT_UNGARRISONED_PENALTY × level.
+          const defenderGarrisonSize = computeGarrisonSize(draft.armies, targetTerr.def.id);
+          const effectiveFortLevelBattle = computeEffectiveFortLevel(
+            targetTerr.state.fortificationLevel,
+            defenderGarrisonSize,
+            FORT_UNGARRISONED_PENALTY,   // [PLACEHOLDER callsite: FORT_UNGARRISONED_PENALTY]
+            GARRISON_FULL_THRESHOLD,     // [PLACEHOLDER callsite: GARRISON_FULL_THRESHOLD]
+          );
           const { attackStrength: rawAttackStrength, defendStrength } = computeBattleStrengths(
             attackingArmySize,
             defendingArmySize,
-            targetTerr.state.fortificationLevel,
+            effectiveFortLevelBattle,
             targetTerr.def.geography,
             attackerHasRoad,
             rngVal,
@@ -791,11 +959,14 @@ export function resolveTick(
               // Continuing siege — increment progress.
               const occ = war.occupiedTerritories[existingOccIdx]!;
               occ.siegeProgress += 1;
-              const required = siegeTicksRequired(targetTerr.state.fortificationLevel);
+              const required = siegeTicksRequired(effectiveFortLevelBattle); // garrison-gated
 
               if (occ.siegeProgress >= required) {
                 // Territory fully captured — transfer ownership.
                 war.occupiedTerritories.splice(existingOccIdx, 1);
+                // Track territory loss on the defender for Prestige decay.
+                const previousOwner = draft.nations[war.defenderId];
+                if (previousOwner) previousOwner.territoriesLost += 1;
                 targetTerr.state.ownerId = attackingNationId;
                 targetTerr.state.acquiredTick = world.tick;
                 // Conquest shock: base 0.50 × geography multiplier. [PLACEHOLDER callsite: GEOGRAPHY_SHOCK_MULTIPLIER]
@@ -917,12 +1088,14 @@ export function resolveTick(
         });
       }
 
-      // 3b. Prestige warsWon increment.
+      // 3b. Prestige warsWon / warsLost / territoriesLost increments.
       // A nation wins if territory was ceded to them, OR tribute flows to them (defender extracts tribute).
       // White peace (no cessions, no tribute) = no winner; neither increments.
       const attackerGainedTerritory = deal.territoryCessions.some((c) => c.toNationId === war.attackerId);
       const defenderGainedTerritory = deal.territoryCessions.some((c) => c.toNationId === war.defenderId);
       const defenderExtractedTribute = deal.tributeWealth > 0 && deal.tributeTicks > 0;
+      const attackerLostTerritory = deal.territoryCessions.some((c) => c.toNationId === war.defenderId);
+      const defenderLostTerritory = deal.territoryCessions.some((c) => c.toNationId === war.attackerId);
       // Tribute flows attacker→defender, so defender wins by extracting tribute.
       if (attackerGainedTerritory) {
         const attacker = draft.nations[war.attackerId];
@@ -931,6 +1104,23 @@ export function resolveTick(
       if (defenderGainedTerritory || defenderExtractedTribute) {
         const defender = draft.nations[war.defenderId];
         if (defender) defender.warsWon += 1;
+      }
+      // Symmetric losses — loser is the one who ceded territory or paid tribute.
+      if (attackerLostTerritory || defenderExtractedTribute) {
+        const attacker = draft.nations[war.attackerId];
+        if (attacker) {
+          attacker.warsLost += 1;
+          const cededCount = deal.territoryCessions.filter((c) => c.toNationId === war.defenderId).length;
+          attacker.territoriesLost += cededCount;
+        }
+      }
+      if (defenderLostTerritory) {
+        const defender = draft.nations[war.defenderId];
+        if (defender) {
+          defender.warsLost += 1;
+          const cededCount = deal.territoryCessions.filter((c) => c.toNationId === war.attackerId).length;
+          defender.territoriesLost += cededCount;
+        }
       }
 
       // 4. Trust bonus for peaceful resolution.
@@ -1331,7 +1521,15 @@ export function resolveTick(
             // Continuing siege — auto-advance.
             const occ = war.occupiedTerritories[occIdx]!;
             occ.siegeProgress += 1;
-            const required = siegeTicksRequired(targetTerr.state.fortificationLevel);
+            // Garrison-gated siege requirement: a garrisoned fort takes longer to capture.
+            const siegeGarrisonSize = computeGarrisonSize(draft.armies, army.territoryId);
+            const siegeEffectiveFortLevel = computeEffectiveFortLevel(
+              targetTerr.state.fortificationLevel,
+              siegeGarrisonSize,
+              FORT_UNGARRISONED_PENALTY,
+              GARRISON_FULL_THRESHOLD,
+            );
+            const required = siegeTicksRequired(siegeEffectiveFortLevel);
             if (occ.siegeProgress >= required) {
               war.occupiedTerritories.splice(occIdx, 1);
               targetTerr.state.ownerId = attackingNationId;
@@ -1509,7 +1707,59 @@ export function resolveTick(
           // No territories — fall back to direct stockpile deduction (original path).
           from.stockpiles.wealth -= amount;
         }
-        to.stockpiles.wealth += amount;
+
+        // §v0.40 Diminishing returns: receiver's effective gain scales down as they get wealthier.
+        // tributeEffectiveValue = amount × (1 − min(CAP, receiverWealth / SCALE))
+        // [PLACEHOLDER callsite: TRIBUTE_DIMINISHING_SCALE, TRIBUTE_DIMINISHING_CAP]
+        const receiverWealth = to.stockpiles.wealth;
+        const diminishFactor = Math.min(TRIBUTE_DIMINISHING_CAP, Math.max(0, receiverWealth / TRIBUTE_DIMINISHING_SCALE));
+        const effectiveTribute = amount * (1 - diminishFactor);
+        to.stockpiles.wealth += effectiveTribute;
+        // Remainder of the tribute (the diminished portion) is lost — models diminishing marginal value,
+        // not a transfer back to the payer. The payer still loses the full amount.
+
+        // §v0.40 Exploitation cost: if payer is much smaller than receiver (territory count),
+        // the receiver incurs unrest + Prestige penalty for the exploitation optics.
+        // Metric: territory count (stable proxy for power; stockpiles fluctuate too much).
+        // [PLACEHOLDER callsite: TRIBUTE_EXPLOITATION_THRESHOLD, TRIBUTE_EXPLOITATION_UNREST, TRIBUTE_EXPLOITATION_PRESTIGE_PENALTY]
+        const payerTerritoryCount = Object.values(draft.territories).filter(
+          (t) => t.state.ownerId === fromId,
+        ).length;
+        const receiverTerritoryCount = Object.values(draft.territories).filter(
+          (t) => t.state.ownerId === toId,
+        ).length;
+        const isExploitative = receiverTerritoryCount > 0
+          && (payerTerritoryCount / receiverTerritoryCount) < TRIBUTE_EXPLOITATION_THRESHOLD;
+        if (isExploitative) {
+          // Prestige penalty for receiver (exploitation stigma).
+          to.prestige = Math.max(0, to.prestige - TRIBUTE_EXPLOITATION_PRESTIGE_PENALTY);
+          // Unrest pressure on all receiver territories.
+          for (const t of Object.values(draft.territories)) {
+            if (t.state.ownerId !== toId) continue;
+            // Applied via TerritoryModifier with 1-tick duration so it renews each tick the clause is active.
+            const modId = -(world.tick * 1000000 + Math.abs(treaty.id) * 10 + 7);
+            const existingMod = draft.territoryModifiers.find(
+              (m) => m.id === modId && m.territoryId === t.def.id,
+            );
+            if (existingMod) {
+              existingMod.expiresAtTick = world.tick + 2; // extend by 1 tick
+            } else {
+              draft.territoryModifiers.push({
+                id: modId - draft.territoryModifiers.length,
+                territoryId: t.def.id,
+                source: 'tribute_exploitation',
+                movementMultiplier: 1.0,
+                productionMultiplier: 1.0,
+                unrestEquilibriumAdj: TRIBUTE_EXPLOITATION_UNREST,
+                driftRateMultiplier: 1.0,
+                defenseBonus: 0,
+                startTick: world.tick + 1,
+                durationTicks: 2,
+                expiresAtTick: world.tick + 3,
+              });
+            }
+          }
+        }
       }
 
       // Trade clause flows — §1.10 auto-assign and manual pin.
@@ -1716,10 +1966,14 @@ export function resolveTick(
         fromNation.stockpiles.population -= pp.amount;
         toNation.stockpiles.population += pp.amount;
 
-        // Compute compatibility-scaled unrest hit. [PLACEHOLDER callsite: POPULATION_TRANSFER_UNREST_SCALE]
+        // Compute compatibility-scaled unrest shock per territory and store the per-territory magnitude.
+        // (v0.40 fix: previously shockMagnitude was computed but discarded via `void shockMagnitude`;
+        //  this fix stores it in TerritoryState.populationTransferShockMagnitude so the territory loop
+        //  uses the correct compat-scaled value rather than the fixed POPULATION_TRANSFER_UNREST_SCALE.)
         // Use nation culture of the receiver; apply to all territories of both nations.
-        const receiverCulture = nationCultures[pp.toNationId];
-        // Apply shock to all territories of both nations for POPULATION_TRANSFER_SHOCK_DURATION ticks.
+        // Computed inline to avoid forward reference — nationCultures is declared later in tick.ts.
+        const receiverCapital = draft.nations[pp.toNationId]?.capitalTerritoryId ?? null;
+        const receiverCulture = computeNationCulture(pp.toNationId, draft.territories as WorldState['territories'], receiverCapital);
         for (const t of Object.values(draft.territories)) {
           if (t.state.ownerId !== pp.fromNationId && t.state.ownerId !== pp.toNationId) continue;
           let compatScore = 0.5; // default if culture not computed yet
@@ -1727,22 +1981,16 @@ export function resolveTick(
             const compat = computeCompatibility(t.state.valueTraits, t.def.culturalFamily, receiverCulture);
             compatScore = compat.total;
           }
+          // shockMagnitude: high compat → small shock (near 0); low compat → large shock (up to SCALE).
           const shockMagnitude = (1 - compatScore) * POPULATION_TRANSFER_UNREST_SCALE; // [PLACEHOLDER callsite]
           t.state.populationTransferShockTicksLeft = POPULATION_TRANSFER_SHOCK_DURATION; // [PLACEHOLDER callsite]
-          // The actual shock value is applied per-territory in the territory loop via the
-          // populationTransferShockTicksLeft counter. Store shock amount in payload for retrieval.
-          // We use a per-territory approach: set ticksLeft and a stored magnitude.
-          // For simplicity: we emit the shock into the equilibrium via populationTransferShockTicksLeft;
-          // the territory loop reads it and applies a fixed POPULATION_TRANSFER_UNREST_SCALE hit.
-          // The full compat-scaled magnitude requires the compat score at tick time (computed above),
-          // but we can't store it per-territory easily. Use the fixed SCALE as a [PLACEHOLDER] approximation.
-          void shockMagnitude; // suppress unused-var; compat scaling is TODO once per-territory storage exists
+          t.state.populationTransferShockMagnitude = shockMagnitude; // stored for territory loop use
         }
 
         clause.clauseStatus = 'degraded'; // one-time transfer, consume clause
         draft.eventLog.push({
           tick: world.tick + 1,
-          message: `Population transfer: ${pp.amount} population from ${fromNation.name} to ${toNation.name}. Unrest spike applied for ${POPULATION_TRANSFER_SHOCK_DURATION} ticks. [PLACEHOLDER: POPULATION_TRANSFER_UNREST_SCALE=${POPULATION_TRANSFER_UNREST_SCALE}]`,
+          message: `Population transfer: ${pp.amount} population from ${fromNation.name} to ${toNation.name}. Unrest spike applied for ${POPULATION_TRANSFER_SHOCK_DURATION} ticks (compat-scaled). [PLACEHOLDER: POPULATION_TRANSFER_UNREST_SCALE=${POPULATION_TRANSFER_UNREST_SCALE}]`,
         });
       }
 
@@ -2125,6 +2373,71 @@ export function resolveTick(
       }
     }
 
+    // ── Expansionist stagnation relief (v0.41) ────────────────────────────────
+    // Two additional reset conditions for the expansionist stagnation timer:
+    // 1. New treaty signed this tick: treaty.tickStarted === world.tick + 1 (treaties activate next tick).
+    // 2. Trade route capacity growth >= EXPANSIONIST_TRADE_GROWTH_THRESHOLD since last reset.
+    //
+    // Both update latestAcquisitionTickByNation (the stagnation timer) to current tick.
+    // No separate timer — the acquisition tick is the unified stagnation timer.
+
+    // Relief condition 1: new treaty signed this tick.
+    // Treaties created before this tick run have tickStarted = world.tick (the pre-tick world tick).
+    for (const treaty of draft.treaties) {
+      if (treaty.tickStarted !== world.tick) continue;
+      if (treaty.status !== 'active') continue;
+      for (const partyId of treaty.partyIds) {
+        // Reset stagnation timer for each treaty party — both in the local map and persisted on the nation.
+        const prev = latestAcquisitionTickByNation[partyId];
+        if (prev === undefined || world.tick > prev) {
+          latestAcquisitionTickByNation[partyId] = world.tick;
+        }
+        const nation = draft.nations[partyId];
+        if (nation) {
+          const prevReset = nation.lastExpansionistResetTick;
+          if (prevReset === null || world.tick > prevReset) {
+            nation.lastExpansionistResetTick = world.tick;
+          }
+        }
+      }
+    }
+
+    // Relief condition 2: trade route capacity growth.
+    // Compute total active route capacity per nation this tick.
+    const totalTradeCapacityByNation: Record<string, number> = {};
+    for (const route of draft.tradeRouteAgreements) {
+      if (route.status !== 'active') continue;
+      const parties = [route.ownerNationId, ...(route.partnerNationId ? [route.partnerNationId] : [])];
+      for (const nid of parties) {
+        totalTradeCapacityByNation[nid] = (totalTradeCapacityByNation[nid] ?? 0) + route.currentCapacity;
+      }
+    }
+    for (const [nid, currentCapacity] of Object.entries(totalTradeCapacityByNation)) {
+      const nation = draft.nations[nid];
+      if (!nation) continue;
+      const baseline = nation.lastStagnationCapacityBaseline;
+      const growth = currentCapacity - baseline;
+      if (growth >= EXPANSIONIST_TRADE_GROWTH_THRESHOLD) { // [PLACEHOLDER callsite: EXPANSIONIST_TRADE_GROWTH_THRESHOLD]
+        // Reset stagnation timer — both in local map and persisted on nation.
+        const prev = latestAcquisitionTickByNation[nid];
+        if (prev === undefined || world.tick > prev) {
+          latestAcquisitionTickByNation[nid] = world.tick;
+        }
+        const prevReset = nation.lastExpansionistResetTick;
+        if (prevReset === null || world.tick > prevReset) {
+          nation.lastExpansionistResetTick = world.tick;
+        }
+        // Update baseline so we measure growth from the new level.
+        nation.lastStagnationCapacityBaseline = currentCapacity;
+      }
+    }
+    // Initialize baseline for nations without routes (capacity = 0).
+    for (const [nid, nation] of Object.entries(draft.nations)) {
+      if (totalTradeCapacityByNation[nid] === undefined) {
+        nation.lastStagnationCapacityBaseline = 0;
+      }
+    }
+
     const nationCultures: Record<string, ReturnType<typeof computeNationCulture>> = {};
     for (const nationId of Object.keys(draft.nations)) {
       const cap = draft.nations[nationId]?.capitalTerritoryId ?? null;
@@ -2288,6 +2601,20 @@ export function resolveTick(
           + (dominantWarAttackers.has(ownerId) ? DOMINANT_WAR_MILITARISTIC_BONUS : 0)
         : 0;
 
+      // ── Garrison size for this territory ────────────────────────────────────
+      // Sum of stationed army sizes owned by this nation at this territory.
+      // Used for: effectiveFortLevel in unrest equilibrium, garrison upkeep reduction, and
+      // garrison unrest suppression (Part 4).
+      const garrisonSize = computeGarrisonSize(draft.armies, t.def.id);
+      // Garrison-gated effective fort level for passive unrest contribution.
+      // A fort with no garrison provides less stability protection than a garrisoned one.
+      const effectiveFortLevelUnrest = computeEffectiveFortLevel(
+        t.state.fortificationLevel,
+        garrisonSize,
+        FORT_UNGARRISONED_PENALTY,   // [PLACEHOLDER callsite: FORT_UNGARRISONED_PENALTY]
+        GARRISON_FULL_THRESHOLD,     // [PLACEHOLDER callsite: GARRISON_FULL_THRESHOLD]
+      );
+
       // General insolvency pressure: applies when wealthStock < 0, even outside war.
       const insolvencyPressure = generalInsolventNations.has(ownerId)
         ? INSOLVENCY_GENERAL_UNREST_PER_TICK
@@ -2327,17 +2654,28 @@ export function resolveTick(
       let expansionistStagnation = 0;
       if (t.state.valueTraits.expansionist > 0.3) {
         const latestAcq = latestAcquisitionTickByNation[ownerId];
-        const ticksSinceGrowth = latestAcq !== undefined ? world.tick - latestAcq : world.tick;
+        const nationResetTick = draft.nations[ownerId]?.lastExpansionistResetTick ?? null;
+        // Use whichever is more recent: last territory acquired or last explicit reset (treaty/trade growth).
+        const latestReset = latestAcq !== undefined && nationResetTick !== null
+          ? Math.max(latestAcq, nationResetTick)
+          : latestAcq !== undefined ? latestAcq : nationResetTick;
+        const ticksSinceGrowth = latestReset !== null ? world.tick - latestReset : world.tick;
         if (ticksSinceGrowth > EXPANSIONIST_GROWTH_WINDOW) { // [PLACEHOLDER callsite: EXPANSIONIST_GROWTH_WINDOW]
           expansionistStagnation = EXPANSIONIST_STAGNATION_WEIGHT; // [PLACEHOLDER callsite: EXPANSIONIST_STAGNATION_WEIGHT]
         }
       }
 
-      // collectivist_isolation: collectivist (individualist < −0.3) AND no tribute receiver obligations.
-      // [PLACEHOLDER callsite: COLLECTIVIST_ISOLATION_WEIGHT]
+      // collectivist_isolation: collectivist (individualist < −0.3) AND no active treaties of any kind.
+      // v0.41 broadening: original condition was "no tribute_receiver obligations only".
+      // New condition: zero active treaties (any clause type). A collectivist nation that is
+      // diplomatically engaged (any treaty) is not considered isolated.
+      // activeTreatyCountByNation already computed above — reuse it. [PLACEHOLDER callsite: COLLECTIVIST_ISOLATION_WEIGHT]
       let collectivistIsolation = 0;
-      if (t.state.valueTraits.individualist < -0.3 && !tributeObligationsAsReceiver[ownerId]) {
-        collectivistIsolation = COLLECTIVIST_ISOLATION_WEIGHT; // [PLACEHOLDER callsite: COLLECTIVIST_ISOLATION_WEIGHT]
+      if (t.state.valueTraits.individualist < -0.3) {
+        const activeTreatyCount = activeTreatyCountByNation[ownerId] ?? 0;
+        if (activeTreatyCount === 0) {
+          collectivistIsolation = COLLECTIVIST_ISOLATION_WEIGHT; // [PLACEHOLDER callsite: COLLECTIVIST_ISOLATION_WEIGHT]
+        }
       }
 
       // individualist_obligation: individualist > 0.3 AND nation has tribute clauses as payer.
@@ -2402,9 +2740,20 @@ export function resolveTick(
       );
       const tradeRouteStability = isEndpointTerritory ? -0.01 : 0; // [PLACEHOLDER: minor stability bonus for grown routes]
 
+      // Garrison suppression: negative when garrisoned army at a fort territory.
+      // Militaristic territories get extra suppression (culturally compatible presence).
+      // [PLACEHOLDER callsite: GARRISON_UNREST_SUPPRESSION, MILITARISTIC_GARRISON_THRESHOLD, MILITARISTIC_GARRISON_MULTIPLIER]
+      let garrisonUnrestAdj = 0;
+      if (garrisonSize > 0 && t.state.fortificationLevel >= 1) {
+        const militaristicMultiplier = t.state.valueTraits.militaristic > MILITARISTIC_GARRISON_THRESHOLD
+          ? MILITARISTIC_GARRISON_MULTIPLIER
+          : 1.0;
+        garrisonUnrestAdj = -GARRISON_UNREST_SUPPRESSION * militaristicMultiplier;
+      }
+
       const causes = computeUnrestEquilibrium(
         compat, hops,
-        t.state.hasRoad, t.state.hasPort, t.state.fortificationLevel,
+        t.state.hasRoad, t.state.hasPort, effectiveFortLevelUnrest,
         tcount, t.state.ownershipShock, recentWeight, clashPressure,
         militaryBonus, insolvencyPressure,
         tradeStability,
@@ -2414,10 +2763,12 @@ export function resolveTick(
         individualistObligation,
         traditionalErosion,
         progressiveStagnation,
-        // §1.2 Population transfer shock: active while ticksLeft > 0. [PLACEHOLDER callsite: POPULATION_TRANSFER_UNREST_SCALE]
-        t.state.populationTransferShockTicksLeft > 0 ? POPULATION_TRANSFER_UNREST_SCALE : 0,
+        // §1.2 Population transfer shock: active while ticksLeft > 0.
+        // v0.40 fix: use compat-scaled magnitude stored per-territory instead of fixed POPULATION_TRANSFER_UNREST_SCALE.
+        t.state.populationTransferShockTicksLeft > 0 ? t.state.populationTransferShockMagnitude : 0,
         tradeRouteStability,
         0, // tradeRouteLossSpike — applied via TerritoryModifier (modUnrestAdj), not equilibrium formula
+        garrisonUnrestAdj, // [PLACEHOLDER callsite: GARRISON_UNREST_SUPPRESSION] — negative when garrisoned
       );
 
       // Store causes for assert_equilibrium_component harness assertions.
@@ -2450,6 +2801,9 @@ export function resolveTick(
       if (warExhaustionNations.has(ownerId)) {
         warEquilibriumAdj += PEACE_DECLINE_EXHAUSTION_BUMP;
       }
+
+      // Garrison unrest suppression: computed inline and passed to computeUnrestEquilibrium above.
+      // garrisonUnrestAdj is stored inside causes.garrisonSuppression and included in causes.equilibrium.
 
       const effectiveEquilibrium = Math.min(1, Math.max(0,
         causes.equilibrium + warEquilibriumAdj + modUnrestAdj, // [PLACEHOLDER callsite: §1.4 TerritoryModifier unrestEquilibriumAdj]
@@ -2549,14 +2903,52 @@ export function resolveTick(
       t.state.localWltStock = 0;
     }
 
-    // Upkeep paid from nation general Wealth after flush. Wealth may go negative (insolvency).
+    // ── Army upkeep + infrastructure maintenance ─────────────────────────────
+    // All deducted from nation general Wealth after production flush. Wealth may go negative (insolvency).
+    // Insolvency from these deductions triggers PRESTIGE_DECAY_PER_INSOLVENCY_TICK next tick
+    // (prestige is computed in saveWorldState after the tick completes, reading fresh DB state).
     for (const nation of Object.values(draft.nations)) {
       // Use total of all positioned armies if available; fall back to nation.armySize. // migrated from armySize
       const effectiveArmySize = draft.armies.length > 0
         ? totalArmySize(draft.armies, nation.id)
         : nation.armySize;
-      const upkeep = effectiveArmySize * UPKEEP_PER_SOLDIER;
-      nation.stockpiles.wealth -= upkeep;
+      let armyUpkeep = effectiveArmySize * UPKEEP_PER_SOLDIER;
+
+      // Garrison upkeep reduction: stationed armies at fort territories pay GARRISON_UPKEEP_REDUCTION
+      // fraction less upkeep. Only applies to the garrison units themselves, not other armies.
+      // [PLACEHOLDER callsite: GARRISON_UPKEEP_REDUCTION]
+      if (draft.armies.length > 0) {
+        for (const army of draft.armies) {
+          if (army.nationId !== nation.id) continue;
+          if (army.status !== 'stationed') continue;
+          const fortTerr = draft.territories[army.territoryId];
+          if (!fortTerr || fortTerr.state.fortificationLevel < 1) continue;
+          const discount = army.size * UPKEEP_PER_SOLDIER * GARRISON_UPKEEP_REDUCTION; // [PLACEHOLDER callsite: GARRISON_UPKEEP_REDUCTION]
+          armyUpkeep = Math.max(0, armyUpkeep - discount);
+        }
+      }
+
+      nation.stockpiles.wealth -= armyUpkeep;
+
+      // Infrastructure maintenance (v0.40 port/market/road + v0.41 fort): all deducted together.
+      // Fort maintenance applies regardless of garrison status — owning a fort costs wealth every tick.
+      let infraMaintenance = 0;
+      for (const t of Object.values(draft.territories)) {
+        if (t.state.ownerId !== nation.id) continue;
+        if (t.state.hasPort) {
+          infraMaintenance += t.state.portLevel * PORT_MAINTENANCE_PER_LEVEL; // [PLACEHOLDER callsite: PORT_MAINTENANCE_PER_LEVEL]
+        }
+        if (t.state.hasMarket) {
+          infraMaintenance += MARKET_MAINTENANCE_FLAT; // [PLACEHOLDER callsite: MARKET_MAINTENANCE_FLAT]
+        }
+        if (t.state.hasRoad) {
+          infraMaintenance += ROAD_MAINTENANCE_FLAT; // [PLACEHOLDER callsite: ROAD_MAINTENANCE_FLAT]
+        }
+        if (t.state.fortificationLevel >= 1) {
+          infraMaintenance += t.state.fortificationLevel * FORT_MAINTENANCE_PER_LEVEL; // [PLACEHOLDER callsite: FORT_MAINTENANCE_PER_LEVEL]
+        }
+      }
+      nation.stockpiles.wealth -= infraMaintenance;
     }
 
     // ── Trade route upkeep deduction ─────────────────────────────────────────

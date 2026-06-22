@@ -55,6 +55,7 @@ function initialState(def: TerritoryDef): TerritoryState {
     localWltStock: 0,
     hasEmbassy: false,
     populationTransferShockTicksLeft: 0,
+    populationTransferShockMagnitude: 0,
   };
 }
 
@@ -102,8 +103,12 @@ export function buildWorldState(
       doctrineBlend: null,
       completedTreatiesKept: 0,
       warsWon: 0,
+      warsLost: 0,
+      territoriesLost: 0,
       foundedAtTick: 0,
       isDominant: false,
+      lastStagnationCapacityBaseline: 0,
+      lastExpansionistResetTick: null,
     };
   }
 

@@ -1,0 +1,32 @@
+{
+  "name": "fort-maintenance",
+  "description": "Costa Rica owns costa_rica with fortificationLevel=2 set at T0 via set_fort_level. No army (armySize=0), no port, no market, no road. Fort maintenance = fortificationLevel × FORT_MAINTENANCE_PER_LEVEL = 2 × 0.08 = 0.16/tick deducted from nation wealth. Costa Rica starts at wealthStock=3. nicaragua has no fort (control group). Over 10 ticks, costa_rica's wealth trajectory should show the 0.16/tick deduction vs nicaragua's production-only trajectory. Metric output (stockpiles_per_nation_per_tick) confirms fort maintenance is being deducted. The scenario validates v0.41 fort maintenance integration into the infrastructure maintenance block.",
+  "ticks": 10,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 0, "wealthStock": 3 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 0, "wealthStock": 3 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "set_fort_level",
+      "payload": { "territoryId": "costa_rica", "level": 2 }
+    },
+    {
+      "tick": 5,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "costa_rica",
+        "component": "infrastructureBonus",
+        "expectedPresent": true,
+        "comment": "Fort L2 contributes FORT_INFRA_CONTRIBUTION_PER_LEVEL × effectiveFortLevel to infrastructure bonus — verifies fort level is being counted in equilibrium (even ungarrisoned at FORT_UNGARRISONED_PENALTY)"
+      }
+    }
+  ],
+  "metrics": [
+    "stockpiles_per_nation_per_tick"
+  ]
+}

@@ -1,0 +1,9 @@
+tick,message
+1,"Costa Rica declared war on Nicaragua."
+1,"Costa Rica won a battle in Nicaragua (att 89 vs def 20). Siege begun. Casualties: Costa Rica −4, Nicaragua −2."
+1,"Nicaragua has become insolvent (wealth -8.5)."
+1,"Guatemala has become insolvent (wealth -1.1)."
+1,"Panamá has become insolvent (wealth -1.9)."
+2,"Costa Rica captured Nicaragua from Nicaragua after 2 tick siege. Casualties: Costa Rica −4, Nicaragua −1."
+5,"Costa Rica received Nicaragua via peace treaty."
+5,"Peace of tick 5 signed between Costa Rica and Nicaragua."

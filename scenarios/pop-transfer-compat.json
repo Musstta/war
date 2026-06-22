@@ -1,0 +1,91 @@
+{
+  "name": "pop-transfer-compat",
+  "description": "Two simultaneous population transfers with contrasting cultural compatibility. Pair A: Nicaragua sends 20 pop to Costa Rica (both Latin family, similar traits) — receiver culture similar to nicaragua → high compat → small populationTransferShock. Pair B: Belize (European family, individualist/progressive) sends 20 pop to Guatemala (Latin family, militaristic/collectivist) — different family (latin|european closeness=0.60) + divergent value traits → lower compat → larger populationTransferShock. Both transfers fire at T2 (transferAtTick=2). Expected: shock component present at T3 (SHOCK_DURATION=5 ticks, fired T2, gone T7+). Metric output confirms shock magnitude on belize/guatemala > shock on costa_rica/nicaragua, validating the v0.40 fix: populationTransferShockMagnitude is stored per-territory (instead of the discarded `void shockMagnitude` that used a uniform fixed shock).",
+  "ticks": 10,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 0, "wealthStock": 50, "populationStock": 100 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 0, "wealthStock": 50, "populationStock": 100 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 0, "wealthStock": 50, "populationStock": 100 },
+      { "id": "nation_belize",     "name": "Belize",     "territories": ["belize"],     "armySize": 0, "wealthStock": 50, "populationStock": 100 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 0 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_nicaragua", "nation_costa_rica"],
+        "clauses": [
+          {
+            "type": "population_transfer",
+            "collateral": 0,
+            "payload": { "fromNationId": "nation_nicaragua", "toNationId": "nation_costa_rica", "amount": 20, "transferAtTick": 2 }
+          }
+        ],
+        "termTicks": 10,
+        "collateralByParty": { "nation_nicaragua": 0, "nation_costa_rica": 0 }
+      }
+    },
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 2,
+        "partyIds": ["nation_belize", "nation_guatemala"],
+        "clauses": [
+          {
+            "type": "population_transfer",
+            "collateral": 0,
+            "payload": { "fromNationId": "nation_belize", "toNationId": "nation_guatemala", "amount": 20, "transferAtTick": 2 }
+          }
+        ],
+        "termTicks": 10,
+        "collateralByParty": { "nation_belize": 0, "nation_guatemala": 0 }
+      }
+    },
+    {
+      "tick": 3,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "nicaragua",
+        "component": "populationTransferShock",
+        "expectedPresent": true
+      }
+    },
+    {
+      "tick": 3,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "belize",
+        "component": "populationTransferShock",
+        "expectedPresent": true
+      }
+    },
+    {
+      "tick": 8,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "nicaragua",
+        "component": "populationTransferShock",
+        "expectedPresent": false
+      }
+    },
+    {
+      "tick": 8,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "belize",
+        "component": "populationTransferShock",
+        "expectedPresent": false
+      }
+    }
+  ],
+  "metrics": [
+    "equilibrium_components_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick"
+  ]
+}

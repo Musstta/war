@@ -383,9 +383,45 @@ export function computeBattleStrengths(
 /**
  * Returns the number of siege ticks required to fully capture a territory.
  * fortificationLevel 0 → 1 tick, L1 → 2, L2 → 3, L3 → 4.
+ * Pass effectiveFortLevel (garrison-gated) rather than raw fortificationLevel.
  */
 export function siegeTicksRequired(fortLevel: number): number {
-  return fortLevel + SIEGE_TICKS_BASE;
+  return Math.max(1, Math.ceil(fortLevel) + SIEGE_TICKS_BASE);
+}
+
+/**
+ * Compute the effective fort level for a territory, gated by garrison size.
+ *
+ * An ungarrisoned fort (garrisonSize === 0) operates at FORT_UNGARRISONED_PENALTY of full value.
+ * A fully-garrisoned fort (garrisonSize >= GARRISON_FULL_THRESHOLD) operates at 100%.
+ * Linear interpolation between the two.
+ *
+ * fortLevel           — raw fortificationLevel (0–3).
+ * garrisonSize        — sum of stationed army sizes in this territory.
+ * ungarrisonedPenalty — FORT_UNGARRISONED_PENALTY constant from tick.ts (passed to avoid import cycle).
+ * garrisonFullThreshold — GARRISON_FULL_THRESHOLD constant from tick.ts.
+ */
+export function computeEffectiveFortLevel(
+  fortLevel: number,
+  garrisonSize: number,
+  ungarrisonedPenalty: number,
+  garrisonFullThreshold: number,
+): number {
+  if (fortLevel === 0) return 0;
+  if (garrisonSize <= 0) return fortLevel * ungarrisonedPenalty;
+  const garrisonFraction = Math.min(1, garrisonSize / garrisonFullThreshold);
+  const effectiveness = ungarrisonedPenalty + (1 - ungarrisonedPenalty) * garrisonFraction;
+  return fortLevel * effectiveness;
+}
+
+/**
+ * Sum of all stationed army sizes in a given territory — the garrison size.
+ * Armies that are moving/besieging/occupying are not counted.
+ */
+export function computeGarrisonSize(armies: import('./types').Army[], territoryId: string): number {
+  return armies
+    .filter((a) => a.territoryId === territoryId && a.status === 'stationed')
+    .reduce((sum, a) => sum + a.size, 0);
 }
 
 /**

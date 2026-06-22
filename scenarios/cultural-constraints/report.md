@@ -14,8 +14,8 @@
 |---|---|---|---|---|
 | Costa Rica | costa_rica | 1.5% | 1.5% | 0 |
 | Nicaragua | nicaragua | 2.6% | 2.6% | 0 |
-| Honduras | honduras | 3.7% | 3.7% | 0 |
-| Guatemala | guatemala | 5.0% | 5.0% | 0 |
+| Honduras | honduras | 2.5% | 2.5% | 0 |
+| Guatemala | guatemala | 3.9% | 3.9% | 0 |
 | Panamá | panama | 2.5% | 2.5% | 0 |
 
 ---

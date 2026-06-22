@@ -1,0 +1,77 @@
+{
+  "name": "prestige-decay-insolvency",
+  "description": "Nicaragua pays 8 Wealth/tick tribute to Honduras while earning ~5 Wealth/tick production — going net-negative from T1. Expected: insolvencyPressure appears in Nicaragua's territory equilibrium breakdown by T2 (engine sets insolvencyPressure > 0 when wealthStock < 0). Costa Rica then conquers Nicaragua in a short war (T1–T4), and peace cedes nicaragua at T5 — asserts warsLost incremented on Nicaragua (engine side of Prestige decay formula). After peace Nicaragua has warsLost=1, territoriesLost=1 stored in nation state.",
+  "ticks": 10,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 80, "wealthStock": 50 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 20, "wealthStock": 0 },
+      { "id": "nation_honduras",   "name": "Honduras",   "territories": ["honduras"],   "armySize": 50, "wealthStock": 10 },
+      { "id": "nation_guatemala",  "name": "Guatemala",  "territories": ["guatemala"],  "armySize": 50 },
+      { "id": "nation_panama",     "name": "Panamá",     "territories": ["panama"],     "armySize": 50 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "create_treaty",
+      "payload": {
+        "id": 1,
+        "partyIds": ["nation_nicaragua", "nation_honduras"],
+        "clauses": [
+          {
+            "type": "tribute",
+            "collateral": 0,
+            "payload": { "fromNationId": "nation_nicaragua", "toNationId": "nation_honduras", "amount": 8 }
+          }
+        ],
+        "termTicks": 20,
+        "collateralByParty": { "nation_nicaragua": 0, "nation_honduras": 0 }
+      }
+    },
+    {
+      "tick": 1,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "nicaragua",
+        "component": "insolvencyPressure",
+        "expectedPresent": true
+      }
+    },
+    {
+      "tick": 1,
+      "type": "declare_war",
+      "payload": { "warId": 2, "attackerId": "nation_costa_rica", "defenderId": "nation_nicaragua", "hasCasusBelli": true }
+    },
+    { "tick": 1, "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 2, "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 3, "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    { "tick": 4, "type": "attack_territory", "payload": { "nationId": "nation_costa_rica", "targetTerritoryId": "nicaragua" } },
+    {
+      "tick": 5,
+      "type": "propose_peace",
+      "payload": {
+        "warId": 2,
+        "proposingNationId": "nation_costa_rica",
+        "terms": {
+          "warType": "negotiated",
+          "territoryCessions": [
+            { "territoryId": "nicaragua", "fromNationId": "nation_nicaragua", "toNationId": "nation_costa_rica" }
+          ],
+          "tributeWealth": 0,
+          "tributeTicks": 0
+        }
+      }
+    },
+    {
+      "tick": 5,
+      "type": "accept_peace",
+      "payload": { "nationId": "nation_nicaragua", "warId": 2 }
+    }
+  ],
+  "metrics": [
+    "equilibrium_components_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick"
+  ]
+}

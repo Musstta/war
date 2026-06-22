@@ -14,7 +14,7 @@
 |---|---|---|---|---|
 | Merchant AI | panama | 2.1% | 2.1% | 0 |
 | Costa Rica | costa_rica | 1.6% | 1.6% | 0 |
-| Guatemala | guatemala | 4.3% | 4.3% | 0 |
+| Guatemala | guatemala | 3.3% | 3.3% | 0 |
 | Honduras | honduras | 4.3% | 4.3% | 0 |
 | Nicaragua | nicaragua | 3.1% | 3.1% | 0 |
 | Expansionist AI | mexico_yucatan, belize | 13.2% | 21.3% | 0 |

@@ -1,0 +1,48 @@
+{
+  "name": "garrison-effectiveness",
+  "description": "Two nations: Costa Rica owns costa_rica (fortificationLevel=2, army size=8 stationed = garrisoned). Nicaragua owns nicaragua (fortificationLevel=2, armySize=0 = ungarrisoned fort). Expected: costa_rica shows garrisonSuppression component in equilibrium causes (negative, ~−0.04) because its army is stationed at a fort. nicaragua shows NO garrisonSuppression (army size=0, ungarrisoned). Also validates effectiveFortLevel: costa_rica's fort provides more infrastructure bonus due to garrison fraction. Garrison upkeep reduction applies to Costa Rica's army (25% discount). No war — pure garrison mechanics validation.",
+  "ticks": 5,
+  "rngSeed": 42,
+  "world": {
+    "nations": [
+      { "id": "nation_costa_rica", "name": "Costa Rica", "territories": ["costa_rica"], "armySize": 8, "wealthStock": 20 },
+      { "id": "nation_nicaragua",  "name": "Nicaragua",  "territories": ["nicaragua"],  "armySize": 0, "wealthStock": 20 }
+    ]
+  },
+  "actions": [
+    {
+      "tick": 1,
+      "type": "set_fort_level",
+      "payload": { "territoryId": "costa_rica", "level": 2 }
+    },
+    {
+      "tick": 1,
+      "type": "set_fort_level",
+      "payload": { "territoryId": "nicaragua", "level": 2 }
+    },
+    {
+      "tick": 2,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "costa_rica",
+        "component": "garrisonSuppression",
+        "expectedPresent": true,
+        "comment": "Costa Rica has 8 stationed soldiers at fort L2 (GARRISON_FULL_THRESHOLD=8 = 100% garrison) → garrisonSuppression = −GARRISON_UNREST_SUPPRESSION = −0.04 (non-zero → present)"
+      }
+    },
+    {
+      "tick": 2,
+      "type": "assert_equilibrium_component",
+      "payload": {
+        "territoryId": "nicaragua",
+        "component": "garrisonSuppression",
+        "expectedPresent": false,
+        "comment": "Nicaragua has armySize=0, no garrison → garrisonSuppression = 0 → not present"
+      }
+    }
+  ],
+  "metrics": [
+    "equilibrium_components_per_territory_per_tick",
+    "stockpiles_per_nation_per_tick"
+  ]
+}
